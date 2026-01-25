@@ -176,6 +176,11 @@ scripts/venv/
 scripts/env/
 scripts/ENV/
 
+# Specific virtual environment folders for each script
+scripts/download/venv/
+scripts/extract_frames/venv_frames/
+scripts/training/venv_training/
+
 # IDE files
 scripts/.idea/
 scripts/.vscode/

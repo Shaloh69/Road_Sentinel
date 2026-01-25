@@ -87,15 +87,48 @@ python scripts/download/auto_download_coco.py
 
 ## 📦 Installation
 
-### Install Dependencies
+### ⚡ Quick Setup (Global Environment)
 
 ```bash
-# Install all required packages
+# Install all required packages globally
 pip install -r requirements.txt
 
 # Verify installation
 python verify_setup.py
 ```
+
+### 🎯 Recommended Setup (Isolated Environments)
+
+**Each script folder has its own virtual environment to avoid conflicts:**
+
+```bash
+# Setup all environments automatically
+./setup_all_environments.sh
+```
+
+**Or setup individually:**
+
+```bash
+# 1. Frame Extraction (lightweight, ~150MB)
+cd scripts/extract_frames
+python3 -m venv venv_frames
+source venv_frames/bin/activate
+pip install -r requirements.txt
+
+# 2. Speed Detection (~2-3GB)
+cd scripts/download
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 3. Model Training (~3GB)
+cd scripts/training
+python3 -m venv venv_training
+source venv_training/bin/activate
+pip install -r requirements.txt
+```
+
+See **[ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md)** for detailed instructions.
 
 **What gets installed:**
 - `ultralytics` - YOLOv8 framework

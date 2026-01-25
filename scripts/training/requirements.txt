@@ -1,0 +1,33 @@
+# Requirements for YOLOv8 Training Pipeline (training folder)
+# For training vehicle detection models on COCO dataset
+
+# YOLOv8 - Training and Validation
+ultralytics>=8.0.0
+
+# Deep Learning Framework
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Computer Vision
+opencv-python>=4.8.0
+
+# Numerical Computing and Data Processing
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Visualization and Plotting
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Image Processing
+pillow>=10.0.0
+
+# Progress Bars
+tqdm>=4.65.0
+
+# Configuration Files
+PyYAML>=6.0
+
+# Optional: Dataset Management
+# Uncomment if you want to use Roboflow
+# roboflow>=1.0.0

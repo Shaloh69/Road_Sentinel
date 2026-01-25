@@ -1,0 +1,22 @@
+# Requirements for Vehicle Speed Detection System (download folder)
+# This script runs the actual speed detection using pre-trained YOLO models
+
+# YOLOv8 - Object Detection and Tracking
+ultralytics>=8.0.0
+
+# Computer Vision
+opencv-python>=4.8.0
+
+# Numerical Computing
+numpy>=1.24.0
+
+# Deep Learning Framework (required by ultralytics)
+# Note: Install with CUDA support if you have a GPU
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Optional: For better performance
+# Uncomment if you need these features
+# pillow>=10.0.0          # Image processing
+# pandas>=2.0.0           # Data logging/export
+# matplotlib>=3.7.0       # Visualization
