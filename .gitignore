@@ -1,6 +1,3 @@
-NORE
-Copy
-
 # ============================================
 # GLOBAL IGNORES
 # ============================================
@@ -165,56 +162,32 @@ flutterApp/*.keystore
 # SCRIPTS - PYTHON (AI Training & Data Processing)
 # ============================================
 
+# Python cache files only
 scripts/__pycache__/
+scripts/**/__pycache__/
 scripts/*.py[cod]
+scripts/**/*.py[cod]
 scripts/*$py.class
-scripts/*.so
-scripts/.Python
+scripts/**/*$py.class
 
-# Distribution / packaging
-scripts/build/
-scripts/develop-eggs/
-scripts/dist/
-scripts/downloads/
-scripts/eggs/
-scripts/.eggs/
-scripts/lib/
-scripts/lib64/
-scripts/parts/
-scripts/sdist/
-scripts/var/
-scripts/wheels/
-scripts/share/python-wheels/
-scripts/*.egg-info/
-scripts/.installed.cfg
-scripts/*.egg
-
-# Virtual environments
+# Virtual environment ONLY - keep all code visible
+scripts/.venv/
 scripts/venv/
 scripts/env/
 scripts/ENV/
-scripts/.venv/
 
-# Jupyter Notebook
+# IDE files
+scripts/.idea/
+scripts/.vscode/
+
+# Jupyter Notebook checkpoints
 scripts/.ipynb_checkpoints
 scripts/**/.ipynb_checkpoints/
 
-# PyCharm
-scripts/.idea/
+# Keep dataset/, download/, extract_frames/ folders visible but ignore their contents
+# This way the folder structure is tracked but not the large files inside
 
-# Dataset folder - IMPORTANT: Large video/image datasets
-scripts/dataset/
-scripts/dataset/**/*
-
-# Download folder - Downloaded videos and files
-scripts/download/
-scripts/download/**/*
-
-# Extract frames folder - Extracted video frames (can be huge)
-scripts/extract_frames/
-scripts/extract_frames/**/*
-
-# Common video formats
+# Ignore large video files in any subfolder
 scripts/**/*.mp4
 scripts/**/*.avi
 scripts/**/*.mov
@@ -223,41 +196,36 @@ scripts/**/*.flv
 scripts/**/*.wmv
 scripts/**/*.webm
 
-# Data files
-scripts/**/*.csv
+# Ignore large datasets in download folder
+scripts/download/*.mp4
+scripts/download/*.avi
+scripts/download/*.mov
+scripts/download/*.mkv
+scripts/download/*.webm
+
+# Ignore extracted frames (images can be huge in quantity)
+scripts/extract_frames/**/*.jpg
+scripts/extract_frames/**/*.jpeg
+scripts/extract_frames/**/*.png
+
+# Ignore large data files
 scripts/**/*.h5
 scripts/**/*.hdf5
-scripts/**/*.pkl
-scripts/**/*.pickle
 scripts/**/*.npy
 scripts/**/*.npz
 
-# Model files (large trained models)
-scripts/models/*.h5
-scripts/models/*.pt
-scripts/models/*.pth
-scripts/models/*.onnx
-scripts/models/*.pb
-scripts/models/*.tflite
-scripts/checkpoints/
-scripts/saved_models/
+# Ignore trained model weights (but keep training scripts)
+scripts/**/*.pt
+scripts/**/*.pth
+scripts/**/*.onnx
+scripts/**/*.weights
 
-# ML/AI specific
-scripts/tensorboard/
+# ML tracking/logs
 scripts/wandb/
 scripts/mlruns/
 scripts/.neptune/
 scripts/runs/
-
-# YOLO/Object Detection specific
-scripts/**/weights/
-scripts/**/*.weights
-scripts/**/*.pt
-scripts/**/runs/
-
-# TensorFlow specific
-scripts/**/*.tfrecord
-scripts/**/*.tfevents.*
+scripts/tensorboard/
 
 # ============================================
 # SERVER_MAIN - NODE.JS
@@ -407,26 +375,15 @@ htmlcov/
 # Keep README files but ignore generated docs
 docs/_build/
 site/
+
 # ============================================
-# OPTIONAL: Uncomment based on needs
+# OPTIONAL: Uncomment if needed
 # ============================================
 
-# If you want to ignore all video files (for AI training datasets)
-# *.mp4
-# *.avi
-# *.mov
-# *.mkv
+# If you need to ignore CSV files (uncomment if datasets are in CSV)
+# scripts/**/*.csv
+# server_AI/**/*.csv
 
-# If you want to ignore image datasets
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.bmp
-
-# Weights & Biases
-# wandb/
-
-# TensorFlow
-*.tfrecord
-*.tfevents.*
+# If you need to ignore pickle files
+# scripts/**/*.pkl
+# scripts/**/*.pickle
