@@ -1,0 +1,432 @@
+NORE
+Copy
+
+# ============================================
+# GLOBAL IGNORES
+# ============================================
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+*.env
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+pip-log.txt
+
+# ============================================
+# WEB (Next.js Web Client)
+# ============================================
+
+web/.next/
+web/out/
+web/build/
+web/dist/
+web/.cache/
+web/node_modules/
+web/.turbo/
+web/.swc/
+
+# Next.js specific
+web/**/.next/
+web/**/out/
+web/**/*.tsbuildinfo
+web/next-env.d.ts
+
+# ============================================
+# FLUTTERAPP (Flutter/Dart Mobile Client)
+# ============================================
+
+# Flutter/Dart specific
+flutterApp/.dart_tool/
+flutterApp/.flutter-plugins
+flutterApp/.flutter-plugins-dependencies
+flutterApp/.packages
+flutterApp/.pub-cache/
+flutterApp/.pub/
+flutterApp/build/
+flutterApp/flutter_*.log
+
+# Flutter iOS
+flutterApp/ios/Pods/
+flutterApp/ios/.symlinks/
+flutterApp/ios/Flutter/Flutter.framework
+flutterApp/ios/Flutter/Flutter.podspec
+flutterApp/ios/Flutter/Generated.xcconfig
+flutterApp/ios/Flutter/app.flx
+flutterApp/ios/Flutter/app.zip
+flutterApp/ios/Flutter/flutter_assets/
+flutterApp/ios/ServiceDefinitions.json
+flutterApp/ios/Runner/GeneratedPluginRegistrant.*
+flutterApp/ios/**/*.mode1v3
+flutterApp/ios/**/*.mode2v3
+flutterApp/ios/**/*.moved-aside
+flutterApp/ios/**/*.pbxuser
+flutterApp/ios/**/*.perspectivev3
+flutterApp/ios/**/*sync/
+flutterApp/ios/**/.sconsign.dblite
+flutterApp/ios/**/.tags*
+flutterApp/ios/**/.vagrant/
+flutterApp/ios/**/DerivedData/
+flutterApp/ios/**/Icon?
+flutterApp/ios/**/Pods/
+flutterApp/ios/**/.symlinks/
+flutterApp/ios/**/profile
+flutterApp/ios/**/xcuserdata
+flutterApp/ios/.generated/
+flutterApp/ios/Flutter/App.framework
+flutterApp/ios/Flutter/Flutter.framework
+flutterApp/ios/Flutter/Flutter.podspec
+flutterApp/ios/Flutter/Generated.xcconfig
+flutterApp/ios/Flutter/ephemeral/
+flutterApp/ios/Flutter/app.flx
+flutterApp/ios/Flutter/app.zip
+flutterApp/ios/Flutter/flutter_assets/
+
+# Flutter Android
+flutterApp/android/.gradle/
+flutterApp/android/gradle/
+flutterApp/android/captures/
+flutterApp/android/gradlew
+flutterApp/android/gradlew.bat
+flutterApp/android/local.properties
+flutterApp/android/**/GeneratedPluginRegistrant.java
+flutterApp/android/.idea/
+flutterApp/android/.settings/
+flutterApp/android/app/debug
+flutterApp/android/app/profile
+flutterApp/android/app/release
+flutterApp/android/**/*.iml
+flutterApp/android/**/.gradle/
+flutterApp/android/**/build/
+
+# Flutter Web
+flutterApp/web/flutter_bootstrap.js
+
+# Coverage
+flutterApp/coverage/
+
+# ============================================
+# FLUTTERAPP - KOTLIN (Android)
+# ============================================
+
+flutterApp/*.iml
+flutterApp/.gradle
+flutterApp/local.properties
+flutterApp/.idea/caches
+flutterApp/.idea/libraries
+flutterApp/.idea/modules.xml
+flutterApp/.idea/workspace.xml
+flutterApp/.idea/navEditor.xml
+flutterApp/.idea/assetWizardSettings.xml
+flutterApp/.externalNativeBuild
+flutterApp/.cxx
+flutterApp/*.apk
+flutterApp/*.ap_
+flutterApp/*.aab
+
+# Keystore files
+flutterApp/*.jks
+flutterApp/*.keystore
+
+# ============================================
+# SCRIPTS - PYTHON (AI Training & Data Processing)
+# ============================================
+
+scripts/__pycache__/
+scripts/*.py[cod]
+scripts/*$py.class
+scripts/*.so
+scripts/.Python
+
+# Distribution / packaging
+scripts/build/
+scripts/develop-eggs/
+scripts/dist/
+scripts/downloads/
+scripts/eggs/
+scripts/.eggs/
+scripts/lib/
+scripts/lib64/
+scripts/parts/
+scripts/sdist/
+scripts/var/
+scripts/wheels/
+scripts/share/python-wheels/
+scripts/*.egg-info/
+scripts/.installed.cfg
+scripts/*.egg
+
+# Virtual environments
+scripts/venv/
+scripts/env/
+scripts/ENV/
+scripts/.venv/
+
+# Jupyter Notebook
+scripts/.ipynb_checkpoints
+scripts/**/.ipynb_checkpoints/
+
+# PyCharm
+scripts/.idea/
+
+# Dataset folder - IMPORTANT: Large video/image datasets
+scripts/dataset/
+scripts/dataset/**/*
+
+# Download folder - Downloaded videos and files
+scripts/download/
+scripts/download/**/*
+
+# Extract frames folder - Extracted video frames (can be huge)
+scripts/extract_frames/
+scripts/extract_frames/**/*
+
+# Common video formats
+scripts/**/*.mp4
+scripts/**/*.avi
+scripts/**/*.mov
+scripts/**/*.mkv
+scripts/**/*.flv
+scripts/**/*.wmv
+scripts/**/*.webm
+
+# Data files
+scripts/**/*.csv
+scripts/**/*.h5
+scripts/**/*.hdf5
+scripts/**/*.pkl
+scripts/**/*.pickle
+scripts/**/*.npy
+scripts/**/*.npz
+
+# Model files (large trained models)
+scripts/models/*.h5
+scripts/models/*.pt
+scripts/models/*.pth
+scripts/models/*.onnx
+scripts/models/*.pb
+scripts/models/*.tflite
+scripts/checkpoints/
+scripts/saved_models/
+
+# ML/AI specific
+scripts/tensorboard/
+scripts/wandb/
+scripts/mlruns/
+scripts/.neptune/
+scripts/runs/
+
+# YOLO/Object Detection specific
+scripts/**/weights/
+scripts/**/*.weights
+scripts/**/*.pt
+scripts/**/runs/
+
+# TensorFlow specific
+scripts/**/*.tfrecord
+scripts/**/*.tfevents.*
+
+# ============================================
+# SERVER_MAIN - NODE.JS
+# ============================================
+
+server_main/node_modules/
+server_main/npm-debug.log*
+server_main/yarn-debug.log*
+server_main/yarn-error.log*
+server_main/lerna-debug.log*
+server_main/.pnpm-debug.log*
+
+# Build outputs
+server_main/dist/
+server_main/build/
+server_main/out/
+server_main/.cache/
+
+# Testing
+server_main/coverage/
+server_main/.nyc_output/
+
+# TypeScript
+server_main/*.tsbuildinfo
+
+# Express/Node specific
+server_main/uploads/
+server_main/public/uploads/
+
+# ============================================
+# SERVER_AI - PYTHON (AI/ML Server)
+# ============================================
+
+server_AI/__pycache__/
+server_AI/*.py[cod]
+server_AI/*$py.class
+server_AI/*.so
+
+# Virtual environments
+server_AI/venv/
+server_AI/env/
+server_AI/ENV/
+server_AI/.venv/
+
+# Flask/Django specific
+server_AI/instance/
+server_AI/.webassets-cache
+server_AI/db.sqlite3
+server_AI/db.sqlite3-journal
+
+# FastAPI specific
+server_AI/.pytest_cache/
+
+# AI Model files
+server_AI/models/
+server_AI/weights/
+server_AI/checkpoints/
+server_AI/*.pt
+server_AI/*.pth
+server_AI/*.h5
+server_AI/*.onnx
+server_AI/*.pb
+
+# Celery
+server_AI/celerybeat-schedule
+server_AI/celerybeat.pid
+
+# Uploaded files/processing
+server_AI/uploads/
+server_AI/temp/
+server_AI/processed/
+
+# ============================================
+# DATABASE & UPLOADS
+# ============================================
+
+# SQLite
+*.sqlite
+*.sqlite3
+*.db
+
+# PostgreSQL
+*.pgsql
+
+# MongoDB
+*.mdb
+
+# Uploads & Media
+uploads/
+media/
+static/uploaded/
+public/uploads/
+
+# ============================================
+# TEMPORARY & CACHE FILES
+# ============================================
+
+*.tmp
+*.temp
+*.cache
+.cache/
+tmp/
+temp/
+
+# ============================================
+# SECURITY & SENSITIVE FILES
+# ============================================
+
+# Certificates & Keys
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+
+# Config files that might contain secrets
+config/production.json
+config/secrets.json
+secrets.yaml
+credentials.json
+
+# ============================================
+# BUILD ARTIFACTS
+# ============================================
+
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# ============================================
+# TESTING
+# ============================================
+
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+
+# ============================================
+# DOCUMENTATION
+# ============================================
+
+# Keep README files but ignore generated docs
+docs/_build/
+site/
+# ============================================
+# OPTIONAL: Uncomment based on needs
+# ============================================
+
+# If you want to ignore all video files (for AI training datasets)
+# *.mp4
+# *.avi
+# *.mov
+# *.mkv
+
+# If you want to ignore image datasets
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+
+# Weights & Biases
+# wandb/
+
+# TensorFlow
+*.tfrecord
+*.tfevents.*
