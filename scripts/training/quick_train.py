@@ -5,6 +5,7 @@ Auto-downloads COCO dataset and starts training immediately
 """
 
 from ultralytics import YOLO
+import torch
 
 print("="*70)
 print("🚀 QUICK START: Vehicle Detection Training")
@@ -15,6 +16,20 @@ print("  2. Auto-download COCO dataset (~20GB)")
 print("  3. Start training on vehicle classes")
 print("  4. Save best model to runs/vehicle_speed/quick_v1/weights/best.pt")
 print("\n" + "="*70 + "\n")
+
+# Detect GPU availability
+if torch.cuda.is_available():
+    device = 0
+    print(f"✅ GPU Detected: {torch.cuda.get_device_name(0)}")
+    print(f"   VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+else:
+    device = 'cpu'
+    print("⚠️  No GPU detected - using CPU")
+    print("   Training will be MUCH slower (~5-7 days for 100 epochs)")
+    print("   Consider using Google Colab or Kaggle for free GPU")
+    print("   Or reduce epochs: Change line 28 to epochs=10 for testing")
+
+print()
 
 # Load pretrained model (will auto-download if needed)
 print("📦 Loading YOLOv8 nano model...")
@@ -28,7 +43,7 @@ results = model.train(
     epochs=100,                # Training epochs
     imgsz=640,                 # Image size
     batch=16,                  # Batch size (reduce to 8 or 4 if out of memory)
-    device=0,                  # Use GPU 0 (or 'cpu' if no GPU)
+    device=device,             # Auto-detected: GPU or CPU
     workers=8,                 # Number of workers
     project='runs/vehicle_speed',
     name='quick_v1',
