@@ -13,11 +13,17 @@ def find_datasets():
     """
     Search for downloaded datasets
     """
+    # Get the project root (2 levels up from this script)
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent.parent
+
     search_paths = [
         Path('/home/user/Road_Sentinel/datasets/downloaded'),  # Primary location
         Path.home() / 'Downloads',
         Path.home(),
-        Path('/home/user'),
+        project_root / 'scripts' / 'dataset' / 'downloaded',  # Windows: scripts/dataset/downloaded
+        project_root / 'dataset',  # Alternative location
+        project_root,  # Project root
     ]
 
     found_datasets = {
