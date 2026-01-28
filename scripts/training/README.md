@@ -1,6 +1,28 @@
 # YOLOv8 Training Pipeline
 
-This folder contains scripts for training custom YOLOv8 models on the COCO dataset for vehicle detection.
+This folder contains scripts for training custom YOLOv8 models for vehicle detection, speed measurement, and crash detection.
+
+## 📊 Dataset Options (Choose One)
+
+### ⭐ **RECOMMENDED: Roboflow Universe** (Easiest!)
+- ✅ Already in YOLO format (no conversion needed!)
+- ✅ 50,000+ datasets available
+- ✅ Traffic surveillance, night vision, overhead camera datasets
+- ✅ Setup time: 5 minutes
+- ✅ Training time: 3-4 hours
+- 📖 **See:** [YOLO_NATIVE_DATASETS.md](YOLO_NATIVE_DATASETS.md)
+
+### Option 2: AI City Challenge (Best for Overhead Cameras)
+- 🎯 Perfect for traffic surveillance and angled cameras
+- 🎯 Includes speed estimation ground truth
+- ⚠️ Requires conversion script (30-60 min setup)
+- 📖 **See:** [OVERHEAD_CAMERA_GUIDE.md](OVERHEAD_CAMERA_GUIDE.md)
+
+### Option 3: COCO Dataset (General Object Detection)
+- 🎯 General purpose, includes vehicles
+- ⚠️ Also includes pizzas, dogs, etc. (80 classes)
+- ⚠️ Not specialized for traffic surveillance
+- 📖 Covered in this README below
 
 ## Setup
 
@@ -20,14 +42,29 @@ source venv_training/bin/activate
 # venv_training\Scripts\activate
 ```
 
-### 2. Install Dependencies
+### 2. Install PyTorch with GPU Support (If you have NVIDIA GPU)
+
+⚠️ **IMPORTANT:** Python 3.8-3.12 required (NOT 3.13+)
+
+```bash
+# For CUDA 12.1+ (RTX 30/40 series - RECOMMENDED)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# For CUDA 11.8 (older GPUs)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# For CPU only
+pip install torch torchvision torchaudio
+```
+
+### 3. Install Other Dependencies
 
 ```bash
 # Install all training dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Verify Installation
+### 4. Verify Installation
 
 ```bash
 # Check all dependencies
@@ -39,7 +76,46 @@ python -c "import torch; print('GPU Available:', torch.cuda.is_available())"
 
 ## Usage
 
-### Quick Start Training
+### 🚀 Quick Start with Roboflow (RECOMMENDED)
+
+**Fastest way to train for your Busay project!**
+
+1. **Get FREE API key:**
+   - Go to: https://roboflow.com
+   - Sign up (free)
+   - Settings → API → Copy key
+
+2. **Browse datasets:**
+   - Go to: https://universe.roboflow.com
+   - Search for: "traffic surveillance overhead"
+   - Find dataset with 5,000+ images
+
+3. **Download and train:**
+   ```bash
+   # Run the download guide
+   python download_roboflow_datasets.py
+
+   # Follow the instructions, then train:
+   from roboflow import Roboflow
+   from ultralytics import YOLO
+
+   # Download dataset (already in YOLO format!)
+   rf = Roboflow(api_key='YOUR_API_KEY')
+   project = rf.workspace('workspace-name').project('project-name')
+   dataset = project.version(1).download('yolov8')
+
+   # Train immediately - no conversion needed!
+   model = YOLO('yolov8n.pt')
+   model.train(data=f'{dataset.location}/data.yaml', epochs=100, batch=4)
+   ```
+
+**Total time:** 5 min setup + 3-4 hours training = ✅ Production ready in one day!
+
+📖 **Full guide:** [YOLO_NATIVE_DATASETS.md](YOLO_NATIVE_DATASETS.md)
+
+---
+
+### Quick Start with COCO (Alternative)
 
 ```bash
 # Activate environment

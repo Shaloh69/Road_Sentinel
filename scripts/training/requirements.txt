@@ -53,6 +53,6 @@ tqdm>=4.65.0
 # Configuration Files
 PyYAML>=6.0
 
-# Optional: Dataset Management
-# Uncomment if you want to use Roboflow
-# roboflow>=1.0.0
+# Dataset Management (for Roboflow Universe - RECOMMENDED)
+# Install this if you plan to use Roboflow datasets (easiest option)
+roboflow>=1.0.0
