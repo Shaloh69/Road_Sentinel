@@ -193,11 +193,23 @@ def merge_vehicle_detection_datasets(traffic_surveillance_path, day_night_path, 
     print()
 
     # Create merged data.yaml
+    # Check which splits actually have data
+    actual_splits = {}
+    if split_counts['train'] > 0:
+        actual_splits['train'] = 'train/images'
+    if split_counts['valid'] > 0:
+        actual_splits['val'] = 'valid/images'
+    if split_counts['test'] > 0:
+        actual_splits['test'] = 'test/images'
+
+    # If no valid/test, use train for validation (YOLOv8 will auto-split)
+    if 'val' not in actual_splits and 'train' in actual_splits:
+        print("   ⚠️  No validation set found - YOLO will auto-split from training data")
+        actual_splits['val'] = 'train/images'
+
     merged_config = {
         'path': str(output_path.absolute()),
-        'train': 'train/images',
-        'val': 'valid/images',
-        'test': 'test/images',
+        **actual_splits,
         'nc': 5,
         'names': ['car', 'motorcycle', 'bicycle', 'bus', 'truck']
     }
@@ -322,11 +334,23 @@ def prepare_accident_dataset(accident_path, output_path):
     print()
 
     # Create data.yaml
+    # Check which splits actually have data
+    actual_splits = {}
+    if split_counts['train'] > 0:
+        actual_splits['train'] = 'train/images'
+    if split_counts['valid'] > 0:
+        actual_splits['val'] = 'valid/images'
+    if split_counts['test'] > 0:
+        actual_splits['test'] = 'test/images'
+
+    # If no valid/test, use train for validation (YOLOv8 will auto-split)
+    if 'val' not in actual_splits and 'train' in actual_splits:
+        print("   ⚠️  No validation set found - YOLO will auto-split from training data")
+        actual_splits['val'] = 'train/images'
+
     accident_config = {
         'path': str(output_path.absolute()),
-        'train': 'train/images',
-        'val': 'valid/images',
-        'test': 'test/images',
+        **actual_splits,
         'nc': 2,
         'names': ['no_accident', 'accident']
     }
