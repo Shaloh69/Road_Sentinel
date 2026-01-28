@@ -398,6 +398,8 @@ site/
 # ============================================
 
 # Datasets folder - too large for git
+scripts/dataset/downloaded/*
+scripts/dataset/processed/*
 datasets/downloaded/*
 datasets/processed/*
 !datasets/**/.gitkeep
