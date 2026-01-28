@@ -1,0 +1,25 @@
+# COCO Dataset - Vehicles Only Configuration
+# This filters COCO to only include vehicle classes for training
+
+# Dataset paths (will be auto-downloaded by YOLO)
+path: datasets/coco  # Dataset root directory
+train: train2017.txt  # Train images list
+val: val2017.txt      # Validation images list
+
+# Vehicle classes from COCO dataset
+# These are the class IDs in the original COCO dataset
+names:
+  0: bicycle      # COCO ID: 1
+  1: car          # COCO ID: 2
+  2: motorcycle   # COCO ID: 3
+  3: bus          # COCO ID: 5
+  4: truck        # COCO ID: 7
+
+# Number of classes
+nc: 5
+
+# Download and filter settings
+download: https://github.com/ultralytics/yolov5/releases/download/v1.0/coco2017labels.zip
+
+# Note: This config will download COCO but YOLO will only use images
+# that contain the specified vehicle classes during training
