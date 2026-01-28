@@ -392,3 +392,27 @@ site/
 # If you need to ignore pickle files
 # scripts/**/*.pkl
 # scripts/**/*.pickle
+
+# ============================================
+# DATASETS & MODELS (NEW ORGANIZED STRUCTURE)
+# ============================================
+
+# Datasets folder - too large for git
+datasets/downloaded/*
+datasets/processed/*
+!datasets/**/.gitkeep
+!datasets/**/README.md
+
+# Trained models - use Git LFS or external storage
+models/v*/
+models/v*/**/*
+models/production/
+!models/**/.gitkeep
+!models/**/README.md
+
+# Training runs output
+training_runs/
+runs/
+
+# Allow .gitkeep files to track empty dirs
+!**/.gitkeep

@@ -14,10 +14,10 @@ def find_datasets():
     Search for downloaded datasets
     """
     search_paths = [
+        Path('/home/user/Road_Sentinel/datasets/downloaded'),  # Primary location
         Path.home() / 'Downloads',
         Path.home(),
         Path('/home/user'),
-        Path('/home/user/Road_Sentinel'),
     ]
 
     found_datasets = {
@@ -100,7 +100,7 @@ def main():
         print("✅ MODEL 1: Vehicle Detection (Merging 2 datasets)")
         print(f"   • Traffic Surveillance: {datasets['traffic'].name}")
         print(f"   • Day/Night Vehicles: {datasets['daynight'].name}")
-        print(f"   → Output: busay_vehicle_detection/")
+        print(f"   → Output: datasets/processed/busay_vehicle_detection/")
         print()
     elif traffic_found:
         print("⚠️  MODEL 1: Vehicle Detection (Only Traffic Surveillance found)")
@@ -116,7 +116,7 @@ def main():
     if accident_found:
         print("✅ MODEL 2: Crash Detection")
         print(f"   • Accident Detection: {datasets['accident'].name}")
-        print(f"   → Output: busay_accident_detection/")
+        print(f"   → Output: datasets/processed/busay_accident_detection/")
         print()
     else:
         print("⚠️  MODEL 2: Crash Detection dataset not found")
@@ -138,6 +138,10 @@ def main():
     print("="*80)
     print()
 
+    # Define output paths
+    vehicle_output = '../../datasets/processed/busay_vehicle_detection'
+    accident_output = '../../datasets/processed/busay_accident_detection'
+
     # Merge vehicle detection datasets
     if traffic_found and daynight_found:
         print("📦 Merging Vehicle Detection datasets...")
@@ -145,7 +149,7 @@ def main():
         merge_vehicle_detection_datasets(
             traffic_surveillance_path=str(datasets['traffic']),
             day_night_path=str(datasets['daynight']),
-            output_path='./busay_vehicle_detection'
+            output_path=vehicle_output
         )
         print()
     elif traffic_found:
@@ -165,7 +169,7 @@ def main():
         print()
         prepare_accident_dataset(
             accident_path=str(datasets['accident']),
-            output_path='./busay_accident_detection'
+            output_path=accident_output
         )
         print()
 
@@ -181,12 +185,14 @@ def main():
         print("1️⃣  Train Model 1 (Vehicle Detection):")
         print()
         print("   python train_vehicle_detector.py \\")
-        print("     --data ./busay_vehicle_detection/data.yaml \\")
+        print("     --data ../../datasets/processed/busay_vehicle_detection/data.yaml \\")
         print("     --model n \\")
         print("     --batch 4 \\")
         print("     --epochs 100 \\")
-        print("     --name busay_vehicle_v1")
+        print("     --project ../../models/v1 \\")
+        print("     --name vehicle_detection")
         print()
+        print("   Output: models/v1/vehicle_detection/weights/best.pt")
         print("   Training time: ~6-8 hours (merged dataset is larger)")
         print()
 
@@ -194,12 +200,14 @@ def main():
         print("2️⃣  Train Model 2 (Crash Detection):")
         print()
         print("   python train_vehicle_detector.py \\")
-        print("     --data ./busay_accident_detection/data.yaml \\")
+        print("     --data ../../datasets/processed/busay_accident_detection/data.yaml \\")
         print("     --model n \\")
         print("     --batch 4 \\")
         print("     --epochs 100 \\")
-        print("     --name busay_accident_v1")
+        print("     --project ../../models/v1 \\")
+        print("     --name crash_detection")
         print()
+        print("   Output: models/v1/crash_detection/weights/best.pt")
         print("   Training time: ~3-4 hours")
         print()
 

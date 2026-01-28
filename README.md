@@ -57,69 +57,98 @@ This project is a **thesis project** for a blind curve warning system at Baranga
 
 ```
 Road_Sentinel/
+├── datasets/                    # 🗂️  Training datasets
+│   ├── downloaded/              # Raw Roboflow datasets
+│   └── processed/               # Merged/ready-to-train datasets
+│
+├── models/                      # 🎯 Trained models (version-based)
+│   ├── v1/                      # First training run
+│   ├── v2/                      # Fine-tuned versions
+│   └── production/              # Production models (symlinks)
+│
 ├── scripts/
-│   ├── download/
-│   │   ├── auto_download_coco.py           # Speed detector with tracking
-│   │   └── angled_camera_calibration.py   # Overhead camera perspective correction
-│   ├── extract_frames/
-│   │   ├── extract_frames.py               # Frame extraction utility
-│   │   └── requirements.txt
-│   └── training/
-│       ├── train_vehicle_detector.py       # Full training pipeline
-│       ├── quick_train.py                  # Quick start training
-│       ├── download_roboflow_datasets.py   # ⭐ Roboflow dataset guide
-│       ├── convert_aicity_track1_to_yolo.py # AI City Track 1 converter
-│       ├── convert_aicity_track4_to_yolo.py # AI City Track 4 converter
-│       ├── YOLO_NATIVE_DATASETS.md         # ⭐ Roboflow guide (RECOMMENDED)
-│       ├── OVERHEAD_CAMERA_GUIDE.md        # Angled camera setup
-│       ├── DUAL_MODEL_TRAINING_GUIDE.md    # Dual-model system guide
-│       ├── NIGHT_VISION_DATASETS.md        # Night vision datasets
-│       └── README.md                       # Training folder guide
-├── runs/                                   # Training outputs (auto-generated)
-├── requirements.txt                        # Global dependencies
-├── verify_setup.py                         # Setup verification
-├── TRAINING_GUIDE.md                       # Comprehensive training guide
-└── README.md                               # This file
+│   ├── training/                # 🚀 Model training
+│   │   ├── train_vehicle_detector.py       # Main training script
+│   │   ├── run_merge_busay.py              # ⭐ Dataset merger (run this first!)
+│   │   ├── merge_busay_datasets.py         # Custom merger for your datasets
+│   │   ├── analyze_datasets.py             # Dataset analysis tool
+│   │   ├── convert_aicity_track*.py        # AI City converters
+│   │   └── *.md                            # Training guides
+│   │
+│   ├── download/                # 🚗 Speed detection & deployment
+│   │   ├── auto_download_coco.py           # Vehicle speed detector
+│   │   └── angled_camera_calibration.py   # Camera calibration
+│   │
+│   └── extract_frames/          # 🎬 Video processing
+│       └── extract_frames.py                # Frame extraction
+│
+├── PROJECT_STRUCTURE.md         # 📖 Detailed structure guide
+├── TRAINING_GUIDE.md            # Training documentation
+└── README.md                    # This file
 ```
 
-## 🚀 Quick Start
+📖 **See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for complete details**
 
-### Option A: Roboflow Datasets ⭐ **RECOMMENDED FOR BUSAY PROJECT**
+## 🚀 Quick Start for Busay Project
 
-**Fastest path to production (4-5 hours total):**
+### ⭐ **RECOMMENDED WORKFLOW** (Your Downloaded Datasets)
+
+**Complete workflow for your 3 Roboflow datasets:**
 
 ```bash
-# 1. Setup environment
+# 1. Place downloaded datasets
+mv ~/Downloads/Traffic-surveillance-system-1 datasets/downloaded/
+mv ~/Downloads/Vehicle-Detection-Day-Night-1 datasets/downloaded/
+mv ~/Downloads/Accident-detection-1 datasets/downloaded/
+
+# 2. Setup environment
 cd scripts/training
 python3 -m venv venv_training
 source venv_training/bin/activate  # Linux/Mac
 # venv_training\Scripts\activate   # Windows
 
-# 2. Install PyTorch with GPU (Python 3.8-3.12 required, NOT 3.13!)
+# 3. Install PyTorch with GPU (Python 3.8-3.12 required, NOT 3.13!)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# 3. Install dependencies
+# 4. Install dependencies
 pip install -r requirements.txt
 
-# 4. Get Roboflow API key and download dataset
-python download_roboflow_datasets.py  # Follow the guide
-# - Sign up at roboflow.com (free)
-# - Search universe.roboflow.com for "traffic surveillance overhead"
-# - Download in YOLOv8 format
+# 5. Merge datasets (automatic!)
+python run_merge_busay.py
+# This creates:
+#   - datasets/processed/busay_vehicle_detection/
+#   - datasets/processed/busay_accident_detection/
 
-# 5. Train (no conversion needed - already YOLO format!)
-# Use the download code from Roboflow, then:
+# 6. Train Model 1 (Vehicle Detection)
 python train_vehicle_detector.py \
-  --data path/to/dataset/data.yaml \
+  --data ../../datasets/processed/busay_vehicle_detection/data.yaml \
   --model n \
   --batch 4 \
   --epochs 100 \
-  --name roboflow_busay_v1
+  --project ../../models/v1 \
+  --name vehicle_detection
+
+# 7. Train Model 2 (Crash Detection)
+python train_vehicle_detector.py \
+  --data ../../datasets/processed/busay_accident_detection/data.yaml \
+  --model n \
+  --batch 4 \
+  --epochs 100 \
+  --project ../../models/v1 \
+  --name crash_detection
 ```
 
-**Total time:** 5 min setup + 3-4 hours training = ✅ Ready same day!
+**Total time:**
+- Setup + merge: ~10 min
+- Training Model 1: ~6-8 hours
+- Training Model 2: ~3-4 hours
+- **Total: ~10-12 hours** (can run both models in parallel!)
 
-📖 **Full guide:** [scripts/training/YOLO_NATIVE_DATASETS.md](scripts/training/YOLO_NATIVE_DATASETS.md)
+**Output:**
+- `models/v1/vehicle_detection/weights/best.pt`
+- `models/v1/crash_detection/weights/best.pt`
+
+📖 **Detailed guide:** [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
 
 ---
 
