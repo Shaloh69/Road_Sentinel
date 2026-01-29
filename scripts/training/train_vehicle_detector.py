@@ -30,7 +30,8 @@ def train_vehicle_detector(
     batch_size=16,
     image_size=640,
     project_name='vehicle_speed',
-    experiment_name='coco_v1'
+    experiment_name='coco_v1',
+    data_config='coco.yaml'
 ):
     """
     Train YOLOv8 for vehicle detection
@@ -42,6 +43,7 @@ def train_vehicle_detector(
         image_size: Input image size
         project_name: Project directory name
         experiment_name: Experiment name
+        data_config: Path to data.yaml file (default: coco.yaml)
     """
 
     # Check GPU availability
@@ -67,8 +69,7 @@ def train_vehicle_detector(
 
     print("\n📊 Training Configuration:")
     print(f"   - Model: YOLOv8{model_size}")
-    print(f"   - Dataset: COCO 2017 (auto-download)")
-    print(f"   - Classes: bicycle, car, motorcycle, bus, truck")
+    print(f"   - Dataset: {data_config}")
     print(f"   - Epochs: {epochs}")
     print(f"   - Batch size: {batch_size}")
     print(f"   - Image size: {image_size}x{image_size}")
@@ -76,7 +77,7 @@ def train_vehicle_detector(
 
     # Training parameters
     training_args = {
-        'data': 'coco.yaml',           # COCO dataset config (auto-downloads)
+        'data': data_config,           # Dataset config file
         'epochs': epochs,              # Number of epochs
         'imgsz': image_size,           # Image size
         'batch': batch_size,           # Batch size
@@ -117,7 +118,6 @@ def train_vehicle_detector(
 
     print("\n🚀 Starting training...")
     print("   This may take several hours depending on your hardware.")
-    print("   COCO dataset will be auto-downloaded if not present (~20GB)\n")
 
     start_time = datetime.now()
 
@@ -218,20 +218,25 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Train with default settings (YOLOv8n, 100 epochs)
+  # Train with default settings (COCO dataset, YOLOv8n, 100 epochs)
   python train_vehicle_detector.py
 
+  # Train with custom dataset
+  python train_vehicle_detector.py --data busay_vehicle_detection/data.yaml --name busay_v1
+
   # Train with larger model and more epochs
-  python train_vehicle_detector.py --model s --epochs 150 --batch 32
+  python train_vehicle_detector.py --data busay_vehicle_detection/data.yaml --model s --epochs 150 --batch 32
 
   # Train on CPU with smaller batch
-  python train_vehicle_detector.py --batch 4
+  python train_vehicle_detector.py --data busay_vehicle_detection/data.yaml --batch 4
 
   # Test a trained model
-  python train_vehicle_detector.py --test --model-path runs/vehicle_speed/coco_v1/weights/best.pt --source test_video.mp4
+  python train_vehicle_detector.py --test --model-path runs/vehicle_speed/busay_v1/weights/best.pt --source test_video.mp4
         """
     )
 
+    parser.add_argument('--data', type=str, default='coco.yaml',
+                       help='Path to data.yaml file (default: coco.yaml)')
     parser.add_argument('--model', type=str, default='n', choices=['n', 's', 'm', 'l', 'x'],
                        help='Model size: n=nano, s=small, m=medium, l=large, x=xlarge (default: n)')
     parser.add_argument('--epochs', type=int, default=100,
@@ -274,7 +279,8 @@ Examples:
             batch_size=args.batch,
             image_size=args.imgsz,
             project_name=args.project,
-            experiment_name=args.name
+            experiment_name=args.name,
+            data_config=args.data
         )
 
         if model is not None:
