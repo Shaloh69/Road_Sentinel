@@ -44,23 +44,23 @@ lerna-debug.log*
 pip-log.txt
 
 # ============================================
-# WEB (Next.js Web Client)
+# WEB (Next.js Web Client) — inside client/
 # ============================================
 
-web/.next/
-web/out/
-web/build/
-web/dist/
-web/.cache/
-web/node_modules/
-web/.turbo/
-web/.swc/
+client/web/.next/
+client/web/out/
+client/web/build/
+client/web/dist/
+client/web/.cache/
+client/web/node_modules/
+client/web/.turbo/
+client/web/.swc/
 
 # Next.js specific
-web/**/.next/
-web/**/out/
-web/**/*.tsbuildinfo
-web/next-env.d.ts
+client/web/**/.next/
+client/web/**/out/
+client/web/**/*.tsbuildinfo
+client/web/next-env.d.ts
 
 # ============================================
 # FLUTTERAPP (Flutter/Dart Mobile Client)
