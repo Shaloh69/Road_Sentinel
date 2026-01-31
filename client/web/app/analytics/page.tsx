@@ -115,7 +115,7 @@ export default function AnalyticsPage() {
                     <span className="text-[#ED9E59] font-bold">{vehicle.count}</span>
                   </div>
                   <Progress
-                    
+                    value={vehicle.percentage}
                     className="h-3"
                     classNames={{
                       indicator: "bg-[#ED9E59]",

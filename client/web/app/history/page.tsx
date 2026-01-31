@@ -67,7 +67,7 @@ export default function HistoryPage() {
               <Input
                 type="date"
                 label="Date"
-                
+                value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
                 classNames={{
                   label: "text-[#E8BCB8]",

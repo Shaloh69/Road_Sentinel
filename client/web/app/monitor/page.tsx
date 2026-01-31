@@ -153,22 +153,22 @@ export default function MonitorPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <StatCard
           title="Total Vehicles"
-          
+          value={totalVehicles}
           subtitle="Currently detected"
         />
         <StatCard
           title="Average Speed"
-           km/h`}
+          value={`${avgSpeed} km/h`}
           subtitle="All cameras"
         />
         <StatCard
           title="Camera A Vehicles"
-          
+          value={cameras[0].boundingBoxes.length}
           subtitle="North Approach"
         />
         <StatCard
           title="Camera B Vehicles"
-          
+          value={cameras[1].boundingBoxes.length}
           subtitle="South Approach"
         />
       </div>
