@@ -53,18 +53,18 @@ export default function IncidentsPage() {
   return (
     <div className="min-h-screen p-6">
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-[#ED9E59] mb-2">Incidents & Alerts</h1>
-        <p className="text-[#E8BCB8]">Real-time incident monitoring and alert management</p>
+        <h1 className="text-4xl font-bold text-white mb-2">Incidents & Alerts</h1>
+        <p className="text-white/70">Real-time incident monitoring and alert management</p>
       </div>
 
       {/* Stats Overview */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <Card className="bg-gradient-to-br from-[#44174E] to-[#862249] border-none">
+        <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
           <CardBody className="p-4">
             <div className="flex justify-between items-center">
               <div>
-                <p className="text-sm text-[#E8BCB8] font-medium uppercase">Total Incidents</p>
-                <p className="text-3xl font-bold text-[#ED9E59] mt-1">{stats.total}</p>
+                <p className="text-sm text-white/80 font-medium uppercase">Total Incidents</p>
+                <p className="text-3xl font-bold text-white mt-1">{stats.total}</p>
               </div>
             </div>
           </CardBody>

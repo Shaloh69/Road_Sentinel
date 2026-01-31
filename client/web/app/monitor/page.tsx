@@ -95,12 +95,12 @@ export default function MonitorPage() {
     <div className="min-h-screen p-6">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-[#ED9E59] mb-2">Live Monitoring</h1>
-        <p className="text-[#E8BCB8]">Real-time camera feeds with AI-powered vehicle detection</p>
+        <h1 className="text-4xl font-bold text-white mb-2">Live Monitoring</h1>
+        <p className="text-white/70">Real-time camera feeds with AI-powered vehicle detection</p>
       </div>
 
       {/* Controls */}
-      <Card className="bg-[#1B1931] border-2 border-[#44174E] mb-6">
+      <Card className="bg-white/10 backdrop-blur-md border border-white/20 mb-6 shadow-xl">
         <CardBody className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-6">
@@ -108,10 +108,10 @@ export default function MonitorPage() {
                 isSelected={showBoundingBoxes}
                 onValueChange={setShowBoundingBoxes}
                 classNames={{
-                  wrapper: "group-data-[selected=true]:bg-[#ED9E59]",
+                  wrapper: "group-data-[selected=true]:bg-white/30",
                 }}
               >
-                <span className="text-[#E8BCB8]">Show Bounding Boxes</span>
+                <span className="text-white/80">Show Bounding Boxes</span>
               </Switch>
 
               <Select
@@ -120,8 +120,8 @@ export default function MonitorPage() {
                 className="max-w-xs"
                 defaultSelectedKeys={["grid"]}
                 classNames={{
-                  label: "text-[#E8BCB8]",
-                  trigger: "bg-[#44174E] border-[#862249] text-[#E8BCB8]",
+                  label: "text-white/80",
+                  trigger: "bg-white/10 border-white/20 text-white",
                 }}
               >
                 <SelectItem key="grid">Grid View</SelectItem>
@@ -131,13 +131,13 @@ export default function MonitorPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <Button className="bg-[#862249] text-[#E8BCB8] font-semibold hover:bg-[#A34054]">
+              <Button className="bg-white/20 backdrop-blur-md text-white font-semibold hover:bg-white/30 border border-white/20 shadow-lg">
                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
                 Record
               </Button>
-              <Button className="bg-[#ED9E59] text-[#1B1931] font-semibold hover:bg-[#A34054]">
+              <Button className="bg-white text-[#1B1931] font-semibold hover:bg-white/90 shadow-lg">
                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -190,22 +190,22 @@ export default function MonitorPage() {
       </div>
 
       {/* Detection Log */}
-      <Card className="bg-[#1B1931] border-2 border-[#44174E] mt-6">
+      <Card className="bg-white/10 backdrop-blur-md border border-white/20 mt-6 shadow-xl">
         <CardBody className="p-4">
-          <h3 className="text-xl font-bold text-[#ED9E59] mb-4">Detection Log</h3>
+          <h3 className="text-xl font-bold text-white mb-4">Detection Log</h3>
           <div className="space-y-2 max-h-60 overflow-y-auto">
             {cameras.flatMap(camera =>
               camera.boundingBoxes.map(box => (
-                <div key={box.id} className="flex justify-between items-center p-3 bg-[#44174E] rounded-lg">
+                <div key={box.id} className="flex justify-between items-center p-3 bg-white/10 backdrop-blur-sm rounded-lg border border-white/10">
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                    <span className="text-[#E8BCB8]">{camera.name}</span>
-                    <span className="text-[#ED9E59] font-semibold">{box.label}</span>
+                    <span className="text-white/80">{camera.name}</span>
+                    <span className="text-white font-semibold">{box.label}</span>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className="text-[#E8BCB8] text-sm">{box.speed} km/h</span>
-                    <span className="text-[#E8BCB8] text-sm opacity-70">{(box.confidence * 100).toFixed(0)}% confidence</span>
-                    <span className="text-[#E8BCB8] text-xs opacity-50">Just now</span>
+                    <span className="text-white/80 text-sm">{box.speed} km/h</span>
+                    <span className="text-white/70 text-sm">{(box.confidence * 100).toFixed(0)}% confidence</span>
+                    <span className="text-white/50 text-xs">Just now</span>
                   </div>
                 </div>
               ))

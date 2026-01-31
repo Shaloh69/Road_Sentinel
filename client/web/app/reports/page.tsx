@@ -12,31 +12,31 @@ export default function ReportsPage() {
   return (
     <div className="min-h-screen p-6">
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-[#ED9E59] mb-2">Reports</h1>
-        <p className="text-[#E8BCB8]">Generate and download traffic analysis reports</p>
+        <h1 className="text-4xl font-bold text-white mb-2">Reports</h1>
+        <p className="text-white/70">Generate and download traffic analysis reports</p>
       </div>
 
       {/* Recent Reports */}
-      <Card className="bg-[#1B1931] border-2 border-[#44174E]">
-        <CardHeader className="bg-gradient-to-r from-[#44174E] to-[#862249] px-4 py-3">
-          <h3 className="text-xl font-bold text-[#ED9E59]">Recent Reports</h3>
+      <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
+        <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
+          <h3 className="text-xl font-bold text-white">Recent Reports</h3>
         </CardHeader>
         <CardBody className="p-4">
           <div className="space-y-3">
             {recentReports.map((report) => (
-              <div key={report.id} className="flex items-center justify-between p-4 bg-[#44174E] rounded-lg">
+              <div key={report.id} className="flex items-center justify-between p-4 bg-white/10 backdrop-blur-sm rounded-lg border border-white/10">
                 <div className="flex items-center gap-4">
-                  <div className="bg-[#ED9E59] bg-opacity-20 p-3 rounded-lg">
-                    <svg className="w-6 h-6 text-[#ED9E59]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="bg-white/20 p-3 rounded-lg">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                   </div>
                   <div>
-                    <p className="text-[#ED9E59] font-semibold">{report.name}</p>
-                    <p className="text-[#E8BCB8] text-sm">{report.date} • {report.type} • {report.size}</p>
+                    <p className="text-white font-semibold">{report.name}</p>
+                    <p className="text-white/70 text-sm">{report.date} • {report.type} • {report.size}</p>
                   </div>
                 </div>
-                <Button size="sm" className="bg-[#ED9E59] text-[#1B1931] font-semibold">
+                <Button size="sm" className="bg-white text-[#1B1931] font-semibold hover:bg-white/90">
                   Download
                 </Button>
               </div>

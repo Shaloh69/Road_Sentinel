@@ -39,12 +39,12 @@ export default function AnalyticsPage() {
     <div className="min-h-screen p-6">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-[#ED9E59] mb-2">Analytics</h1>
-        <p className="text-[#E8BCB8]">Traffic statistics and trends analysis</p>
+        <h1 className="text-4xl font-bold text-white mb-2">Analytics</h1>
+        <p className="text-white/70">Traffic statistics and trends analysis</p>
       </div>
 
       {/* Time Range Selector */}
-      <Card className="bg-[#1B1931] border-2 border-[#44174E] mb-6">
+      <Card className="bg-white/10 backdrop-blur-md border border-white/20 mb-6 shadow-xl">
         <CardBody className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <Select
@@ -53,8 +53,8 @@ export default function AnalyticsPage() {
               className="max-w-xs"
               defaultSelectedKeys={["today"]}
               classNames={{
-                label: "text-[#E8BCB8]",
-                trigger: "bg-[#44174E] border-[#862249] text-[#E8BCB8]",
+                label: "text-white/80",
+                trigger: "bg-white/10 border-white/20 text-white",
               }}
             >
               <SelectItem key="today">Today</SelectItem>
@@ -64,10 +64,10 @@ export default function AnalyticsPage() {
             </Select>
 
             <div className="flex gap-2">
-              <Button className="bg-[#862249] text-[#E8BCB8] font-semibold hover:bg-[#A34054]">
+              <Button className="bg-white/20 backdrop-blur-md text-white font-semibold hover:bg-white/30 border border-white/20 shadow-lg">
                 Export PDF
               </Button>
-              <Button className="bg-[#ED9E59] text-[#1B1931] font-semibold hover:bg-[#A34054]">
+              <Button className="bg-white text-[#1B1931] font-semibold hover:bg-white/90 shadow-lg">
                 Export CSV
               </Button>
             </div>
@@ -102,27 +102,27 @@ export default function AnalyticsPage() {
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Vehicle Types Distribution */}
-        <Card className="bg-[#1B1931] border-2 border-[#44174E]">
-          <CardHeader className="bg-gradient-to-r from-[#44174E] to-[#862249] px-4 py-3">
-            <h3 className="text-xl font-bold text-[#ED9E59]">Vehicle Types Distribution</h3>
+        <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
+          <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
+            <h3 className="text-xl font-bold text-white">Vehicle Types Distribution</h3>
           </CardHeader>
           <CardBody className="p-6">
             <div className="space-y-4">
               {vehicleTypes.map((vehicle, index) => (
                 <div key={index} className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-[#E8BCB8] font-medium">{vehicle.type}</span>
-                    <span className="text-[#ED9E59] font-bold">{vehicle.count}</span>
+                    <span className="text-white/80 font-medium">{vehicle.type}</span>
+                    <span className="text-white font-bold">{vehicle.count}</span>
                   </div>
                   <Progress
                     value={vehicle.percentage}
                     className="h-3"
                     classNames={{
-                      indicator: "bg-[#ED9E59]",
-                      track: "bg-[#44174E]",
+                      indicator: "bg-white/70",
+                      track: "bg-white/20",
                     }}
                   />
-                  <span className="text-xs text-[#E8BCB8] opacity-70">{vehicle.percentage}%</span>
+                  <span className="text-xs text-white/70">{vehicle.percentage}%</span>
                 </div>
               ))}
             </div>
@@ -130,9 +130,9 @@ export default function AnalyticsPage() {
         </Card>
 
         {/* Speed Distribution */}
-        <Card className="bg-[#1B1931] border-2 border-[#44174E]">
-          <CardHeader className="bg-gradient-to-r from-[#44174E] to-[#862249] px-4 py-3">
-            <h3 className="text-xl font-bold text-[#ED9E59]">Speed Distribution</h3>
+        <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
+          <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
+            <h3 className="text-xl font-bold text-white">Speed Distribution</h3>
           </CardHeader>
           <CardBody className="p-6">
             <div className="space-y-4">
@@ -140,8 +140,8 @@ export default function AnalyticsPage() {
                 <div key={index} className="flex items-center gap-3">
                   <div className={`w-4 h-4 rounded-full ${range.color}`}></div>
                   <div className="flex-1 flex justify-between items-center">
-                    <span className="text-[#E8BCB8]">{range.range}</span>
-                    <span className="text-[#ED9E59] font-bold">{range.count}</span>
+                    <span className="text-white/80">{range.range}</span>
+                    <span className="text-white font-bold">{range.count}</span>
                   </div>
                 </div>
               ))}
@@ -151,9 +151,9 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Hourly Traffic Chart */}
-      <Card className="bg-[#1B1931] border-2 border-[#44174E]">
-        <CardHeader className="bg-gradient-to-r from-[#44174E] to-[#862249] px-4 py-3">
-          <h3 className="text-xl font-bold text-[#ED9E59]">Hourly Traffic Flow</h3>
+      <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
+        <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
+          <h3 className="text-xl font-bold text-white">Hourly Traffic Flow</h3>
         </CardHeader>
         <CardBody className="p-6">
           <div className="flex items-end justify-between h-64 gap-2">
@@ -165,15 +165,15 @@ export default function AnalyticsPage() {
                 <div key={index} className="flex-1 flex flex-col items-center gap-2">
                   <div className="relative w-full flex items-end justify-center" style={{ height: '200px' }}>
                     <div
-                      className="w-full bg-gradient-to-t from-[#ED9E59] to-[#A34054] rounded-t-lg hover:from-[#A34054] hover:to-[#ED9E59] transition-all cursor-pointer"
+                      className="w-full bg-gradient-to-t from-white/70 to-white/40 rounded-t-lg hover:from-white/80 hover:to-white/50 transition-all cursor-pointer"
                       style={{ height: `${heightPercent}%` }}
                     >
-                      <span className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-[#ED9E59] text-sm font-bold">
+                      <span className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-white text-sm font-bold">
                         {data.vehicles}
                       </span>
                     </div>
                   </div>
-                  <span className="text-xs text-[#E8BCB8]">{data.hour}</span>
+                  <span className="text-xs text-white/80">{data.hour}</span>
                 </div>
               );
             })}
