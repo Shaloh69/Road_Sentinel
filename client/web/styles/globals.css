@@ -9,4 +9,21 @@
 @theme {
     --font-sans: "font", sans-serif;
     --font-mono: "monospace", monospace;
+
+    /* Road Sentinel Custom Colors */
+    --color-navy-dark: #1B1931;
+    --color-purple-deep: #44174E;
+    --color-purple-burgundy: #862249;
+    --color-mauve-rose: #A34054;
+    --color-peach-orange: #ED9E59;
+    --color-peach-light: #E8BCB8;
+
+    /* Semantic color mappings */
+    --color-primary: var(--color-purple-burgundy);
+    --color-secondary: var(--color-purple-deep);
+    --color-accent: var(--color-peach-orange);
+    --color-background-dark: var(--color-navy-dark);
+    --color-background-light: var(--color-peach-light);
+    --color-text-light: var(--color-peach-light);
+    --color-text-dark: var(--color-navy-dark);
 }

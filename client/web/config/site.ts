@@ -1,69 +1,74 @@
 export type SiteConfig = typeof siteConfig;
 
 export const siteConfig = {
-  name: "Next.js + HeroUI",
-  description: "Make beautiful websites regardless of your design experience.",
+  name: "Road Sentinel",
+  description: "AI-Powered Traffic Monitoring System for Blind Curve Warning - Barangay Busay, Cebu",
   navItems: [
     {
-      label: "Home",
+      label: "Dashboard",
       href: "/",
     },
     {
-      label: "Docs",
-      href: "/docs",
+      label: "Live Monitor",
+      href: "/monitor",
     },
     {
-      label: "Pricing",
-      href: "/pricing",
+      label: "Analytics",
+      href: "/analytics",
     },
     {
-      label: "Blog",
-      href: "/blog",
+      label: "Incidents",
+      href: "/incidents",
     },
     {
-      label: "About",
-      href: "/about",
+      label: "History",
+      href: "/history",
+    },
+    {
+      label: "Reports",
+      href: "/reports",
     },
   ],
   navMenuItems: [
     {
-      label: "Profile",
-      href: "/profile",
-    },
-    {
       label: "Dashboard",
-      href: "/dashboard",
+      href: "/",
     },
     {
-      label: "Projects",
-      href: "/projects",
+      label: "Live Monitor",
+      href: "/monitor",
     },
     {
-      label: "Team",
-      href: "/team",
+      label: "Analytics",
+      href: "/analytics",
     },
     {
-      label: "Calendar",
-      href: "/calendar",
+      label: "Incidents",
+      href: "/incidents",
+    },
+    {
+      label: "History",
+      href: "/history",
+    },
+    {
+      label: "Reports",
+      href: "/reports",
+    },
+    {
+      label: "Cameras",
+      href: "/cameras",
     },
     {
       label: "Settings",
       href: "/settings",
     },
     {
-      label: "Help & Feedback",
-      href: "/help-feedback",
-    },
-    {
-      label: "Logout",
-      href: "/logout",
+      label: "Documentation",
+      href: "/docs",
     },
   ],
   links: {
-    github: "https://github.com/heroui-inc/heroui",
-    twitter: "https://twitter.com/hero_ui",
-    docs: "https://heroui.com",
-    discord: "https://discord.gg/9b6yyZKmH4",
-    sponsor: "https://patreon.com/jrgarciadev",
+    github: "https://github.com/Shaloh69/Road_Sentinel",
+    docs: "/docs",
   },
 };
