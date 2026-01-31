@@ -23,16 +23,16 @@ export const CameraStatus = ({
   detectionRate = 0,
 }: CameraStatusProps) => {
   return (
-    <Card className="bg-gradient-to-br from-[#44174E] to-[#862249] hover:scale-105 transition-transform shadow-lg">
+    <Card className="bg-white/10 backdrop-blur-md border border-white/20 hover:scale-105 transition-transform shadow-lg hover:bg-white/15">
       <CardBody className="p-5">
         <div className="flex justify-between items-start mb-4">
           <div>
-            <h3 className="text-lg font-bold text-[#ED9E59]">{name}</h3>
-            <p className="text-xs text-[#E8BCB8] mt-1">{location}</p>
-            <p className="text-xs text-[#E8BCB8] opacity-70">ID: {id}</p>
+            <h3 className="text-lg font-bold text-white">{name}</h3>
+            <p className="text-xs text-white/80 mt-1">{location}</p>
+            <p className="text-xs text-white/60">ID: {id}</p>
           </div>
           <Chip
-            className={`${isOnline ? 'bg-green-500' : 'bg-red-500'} text-white text-xs font-semibold`}
+            className={`${isOnline ? 'bg-green-500' : 'bg-red-500'} text-white text-xs font-semibold shadow-lg`}
             size="sm"
             variant="solid"
           >
@@ -42,33 +42,33 @@ export const CameraStatus = ({
 
         <div className="space-y-2">
           <div className="flex justify-between items-center">
-            <span className="text-xs text-[#E8BCB8]">FPS</span>
-            <span className="text-sm font-bold text-[#ED9E59]">{fps}</span>
+            <span className="text-xs text-white/70">FPS</span>
+            <span className="text-sm font-bold text-white">{fps}</span>
           </div>
           <div className="flex justify-between items-center">
-            <span className="text-xs text-[#E8BCB8]">Resolution</span>
-            <span className="text-sm font-bold text-[#ED9E59]">{resolution}</span>
+            <span className="text-xs text-white/70">Resolution</span>
+            <span className="text-sm font-bold text-white">{resolution}</span>
           </div>
           <div className="flex justify-between items-center">
-            <span className="text-xs text-[#E8BCB8]">Detection Rate</span>
-            <span className="text-sm font-bold text-[#ED9E59]">{detectionRate}%</span>
+            <span className="text-xs text-white/70">Detection Rate</span>
+            <span className="text-sm font-bold text-white">{detectionRate}%</span>
           </div>
           {!isOnline && lastSeen && (
-            <div className="flex justify-between items-center pt-2 border-t border-[#A34054]">
-              <span className="text-xs text-[#E8BCB8]">Last Seen</span>
+            <div className="flex justify-between items-center pt-2 border-t border-white/10">
+              <span className="text-xs text-white/70">Last Seen</span>
               <span className="text-xs text-red-400">{lastSeen}</span>
             </div>
           )}
         </div>
 
-        <div className="mt-4 pt-3 border-t border-[#A34054]">
-          <div className={`w-full h-2 bg-[#1B1931] rounded-full overflow-hidden`}>
+        <div className="mt-4 pt-3 border-t border-white/10">
+          <div className={`w-full h-2 bg-white/10 rounded-full overflow-hidden`}>
             <div
-              className={`h-full ${isOnline ? 'bg-green-400' : 'bg-red-400'} transition-all`}
+              className={`h-full ${isOnline ? 'bg-green-400 shadow-lg shadow-green-400/50' : 'bg-red-400'} transition-all`}
               style={{ width: `${isOnline ? 100 : 0}%` }}
             />
           </div>
-          <p className="text-xs text-[#E8BCB8] text-center mt-2">
+          <p className="text-xs text-white/70 text-center mt-2">
             {isOnline ? "Operating Normally" : "Connection Lost"}
           </p>
         </div>

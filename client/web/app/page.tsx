@@ -57,8 +57,8 @@ export default function Home() {
     <div className="min-h-screen p-6">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-4xl font-bold text-[#ED9E59] mb-2">Dashboard</h1>
-        <p className="text-[#E8BCB8]">Real-time traffic monitoring system overview</p>
+        <h1 className="text-4xl font-bold text-white mb-2">Dashboard</h1>
+        <p className="text-white/70">Real-time traffic monitoring system overview</p>
       </div>
 
       {/* Stats Grid */}
@@ -108,9 +108,9 @@ export default function Home() {
       {/* Live Feeds */}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold text-[#ED9E59]">Live Camera Feeds</h2>
+          <h2 className="text-2xl font-bold text-white">Live Camera Feeds</h2>
           <Link href="/monitor">
-            <Button className="bg-[#ED9E59] text-[#1B1931] font-semibold hover:bg-[#A34054]">
+            <Button className="bg-white text-[#1B1931] font-semibold hover:bg-white/90 shadow-lg">
               View All Feeds
             </Button>
           </Link>
@@ -173,7 +173,7 @@ export default function Home() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Camera Status */}
         <div className="lg:col-span-1">
-          <h2 className="text-2xl font-bold text-[#ED9E59] mb-4">Camera Status</h2>
+          <h2 className="text-2xl font-bold text-white mb-4">Camera Status</h2>
           <div className="space-y-4">
             <CameraStatus
               id="CAM-A-001"
@@ -199,9 +199,9 @@ export default function Home() {
         {/* Recent Alerts */}
         <div className="lg:col-span-2">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold text-[#ED9E59]">Recent Alerts</h2>
+            <h2 className="text-2xl font-bold text-white">Recent Alerts</h2>
             <Link href="/incidents">
-              <Button className="bg-[#862249] text-[#E8BCB8] font-semibold hover:bg-[#A34054]">
+              <Button className="bg-white/20 backdrop-blur-md text-white font-semibold hover:bg-white/30 border border-white/20 shadow-lg">
                 View All Alerts
               </Button>
             </Link>

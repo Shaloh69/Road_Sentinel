@@ -96,25 +96,25 @@ export const Sidebar = () => {
   ];
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 bg-[#1B1931] border-r-2 border-[#44174E] shadow-2xl z-50 flex flex-col">
+    <aside className="fixed left-0 top-0 h-screen w-64 bg-[#1B1931]/80 backdrop-blur-xl border-r border-white/10 shadow-2xl z-50 flex flex-col">
       {/* Logo Section */}
-      <div className="p-6 border-b-2 border-[#44174E]">
+      <div className="p-6 border-b border-white/10">
         <NextLink href="/" className="flex items-center gap-3">
-          <div className="bg-gradient-to-br from-[#ED9E59] to-[#A34054] p-2 rounded-lg">
-            <Logo className="w-8 h-8 text-[#1B1931]" />
+          <div className="bg-gradient-to-br from-[#ED9E59] to-[#A34054] p-2 rounded-lg shadow-lg">
+            <Logo className="w-8 h-8 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-[#ED9E59]">Road Sentinel</h1>
-            <p className="text-xs text-[#E8BCB8]">Traffic Monitoring</p>
+            <h1 className="text-xl font-bold text-white">Road Sentinel</h1>
+            <p className="text-xs text-white/70">Traffic Monitoring</p>
           </div>
         </NextLink>
       </div>
 
       {/* System Status */}
-      <div className="px-6 py-4 border-b border-[#44174E]">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#44174E]">
-          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-          <span className="text-sm text-[#E8BCB8] font-medium">System Online</span>
+      <div className="px-6 py-4 border-b border-white/10">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 backdrop-blur-sm">
+          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse shadow-lg shadow-green-400/50"></div>
+          <span className="text-sm text-white font-medium">System Online</span>
         </div>
       </div>
 
@@ -131,12 +131,12 @@ export const Sidebar = () => {
                     flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200
                     ${
                       isActive
-                        ? "bg-gradient-to-r from-[#ED9E59] to-[#A34054] text-[#1B1931] shadow-lg font-semibold"
-                        : "text-[#E8BCB8] hover:bg-[#44174E] hover:text-[#ED9E59]"
+                        ? "bg-white text-[#1B1931] shadow-lg font-semibold"
+                        : "text-white/80 hover:bg-white/10 hover:text-white"
                     }
                   `}
                 >
-                  <span className={isActive ? "text-[#1B1931]" : "text-[#ED9E59]"}>
+                  <span className={isActive ? "text-[#ED9E59]" : "text-[#ED9E59]"}>
                     {item.icon}
                   </span>
                   <span>{item.label}</span>
@@ -148,12 +148,12 @@ export const Sidebar = () => {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t-2 border-[#44174E]">
+      <div className="p-4 border-t border-white/10">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-sm text-[#E8BCB8]">Theme</span>
+          <span className="text-sm text-white/80">Theme</span>
           <ThemeSwitch />
         </div>
-        <div className="text-xs text-[#E8BCB8] opacity-70 text-center">
+        <div className="text-xs text-white/60 text-center">
           <p>Barangay Busay, Cebu</p>
           <p className="mt-1">v1.0.0</p>
         </div>

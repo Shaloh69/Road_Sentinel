@@ -39,13 +39,13 @@ export const VideoFeed = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   return (
-    <Card className="bg-[#1B1931] border-2 border-[#44174E] shadow-xl">
-      <CardHeader className="flex justify-between items-center bg-gradient-to-r from-[#44174E] to-[#862249] px-4 py-3">
+    <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
+      <CardHeader className="flex justify-between items-center bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
         <div className="flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${isLive ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`}></div>
+          <div className={`w-3 h-3 rounded-full ${isLive ? 'bg-green-400 animate-pulse shadow-lg shadow-green-400/50' : 'bg-gray-400'}`}></div>
           <div>
-            <h3 className="text-lg font-bold text-[#ED9E59]">{cameraName}</h3>
-            <p className="text-xs text-[#E8BCB8]">ID: {cameraId}</p>
+            <h3 className="text-lg font-bold text-white">{cameraName}</h3>
+            <p className="text-xs text-white/70">ID: {cameraId}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -59,18 +59,18 @@ export const VideoFeed = ({
             </Chip>
           )}
           <div className="flex flex-col text-right">
-            <span className="text-xs text-[#E8BCB8]">{fps} FPS</span>
-            <span className="text-xs text-[#E8BCB8]">{latency}ms</span>
+            <span className="text-xs text-white/80">{fps} FPS</span>
+            <span className="text-xs text-white/80">{latency}ms</span>
           </div>
         </div>
       </CardHeader>
       <CardBody className="p-0">
-        <div className="relative aspect-video bg-[#1B1931] overflow-hidden">
+        <div className="relative aspect-video bg-black/20 overflow-hidden">
           {/* Video placeholder - replace with actual video stream */}
-          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#1B1931] via-[#44174E] to-[#862249]">
+          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-black/40 via-[#44174E]/30 to-[#862249]/30 backdrop-blur-sm">
             <div className="text-center">
               <svg
-                className="w-20 h-20 text-[#ED9E59] mx-auto mb-4 opacity-50"
+                className="w-20 h-20 text-white mx-auto mb-4 opacity-50"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
