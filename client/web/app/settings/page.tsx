@@ -7,7 +7,7 @@ import { Slider } from "@heroui/slider";
 
 export default function SettingsPage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#1B1931] via-[#44174E] to-[#862249] p-6">
+    <div className="min-h-screen p-6">
       <div className="mb-6">
         <h1 className="text-4xl font-bold text-[#ED9E59] mb-2">Settings</h1>
         <p className="text-[#E8BCB8]">Configure system preferences and detection parameters</p>
