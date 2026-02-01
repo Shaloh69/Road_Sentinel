@@ -1,6 +1,6 @@
 # Testing Road Sentinel AI Service
 
-Complete guide for testing the AI service with your own traffic videos and images.
+Complete guide for testing the AI service with your own traffic videos, cameras, and images.
 
 ## Prerequisites
 
@@ -19,6 +19,73 @@ Complete guide for testing the AI service with your own traffic videos and image
    ```bash
    pip install -r requirements.txt
    ```
+
+---
+
+## 🎥 **VISUAL TESTING (RECOMMENDED)** - See AI in Action!
+
+**Best for:** Real-time visual feedback with bounding boxes and live detection
+
+### Test with Your Video File
+
+```powershell
+# Windows
+python test_visual.py "C:\path\to\your\video.mp4"
+```
+
+```bash
+# Linux/macOS
+python test_visual.py /path/to/your/video.mp4
+```
+
+### Use Your Webcam/Laptop Camera
+
+```powershell
+# Use default webcam (camera 0)
+python test_visual.py --camera
+
+# Use specific camera (if you have multiple)
+python test_visual.py --camera 1
+```
+
+### What You'll See
+
+A window will open showing:
+- ✅ **Live video playback** with AI detection
+- ✅ **Bounding boxes** around detected vehicles (color-coded by type)
+- ✅ **Vehicle labels** with confidence scores
+- ✅ **Incident alerts** displayed at top
+- ✅ **Real-time statistics** (FPS, detections, vehicle counts)
+- ✅ **Live info panel** with session stats
+
+**Vehicle Colors:**
+- 🟢 **Green** - Cars
+- 🟠 **Orange** - Trucks
+- 🟡 **Yellow** - Buses
+- 🟣 **Magenta** - Motorcycles
+- 🔵 **Cyan** - Bicycles
+- 🔴 **Red** - Incidents/Alerts
+
+### Interactive Controls
+
+While the window is open:
+- **SPACE** - Pause/Resume playback
+- **Q or ESC** - Quit
+- **+ or =** - Increase confidence threshold
+- **- or _** - Decrease confidence threshold
+
+### Examples
+
+```powershell
+# Test with traffic video
+python test_visual.py "C:\Users\Shaloh\Videos\traffic.mp4"
+
+# Use webcam with lower confidence (detect more)
+python test_visual.py --camera --confidence 0.3
+
+# Test with external USB camera
+python test_visual.py --camera 1
+```
 
 ---
 
