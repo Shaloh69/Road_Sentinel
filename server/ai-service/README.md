@@ -18,75 +18,262 @@ Python-based AI microservice for traffic and incident detection using YOLOv8.
 - **Deep Learning**: PyTorch
 - **Language**: Python 3.10+
 
-## Setup
+---
 
-### 1. Install Dependencies
+## 🚀 Complete Installation Guide
 
-```bash
-pip install -r requirements.txt
+### Prerequisites
+
+- **Python 3.10, 3.11, or 3.12** ([Download](https://www.python.org/downloads/))
+- **NVIDIA GPU** (optional, but recommended for 10-20x faster inference)
+- **CUDA Toolkit** (if using GPU) - usually comes with GPU drivers
+
+---
+
+## Windows Installation
+
+### Step 1: Navigate to AI Service Directory
+
+```powershell
+cd C:\Projects\Thesis\2026\RoadSentinel\server\ai-service
 ```
 
-### 2. Download or Train Models
+### Step 2: Create Virtual Environment
 
-Place your YOLOv8 model weights in the `models/` directory:
+```powershell
+# Create virtual environment
+python -m venv venv
 
-- `models/traffic.pt` - Traffic detection model
-- `models/incident.pt` - Incident detection model
+# Activate it
+.\venv\Scripts\Activate.ps1
+```
 
-**Option 1: Use Pretrained COCO Model (for testing)**
+**Note:** If you get an execution policy error, run:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
 
-The service will automatically download YOLOv8n if custom models aren't found.
+### Step 3: Upgrade pip
 
-**Option 2: Train Custom Models**
+```powershell
+python -m pip install --upgrade pip
+```
 
-See the [YOLOv8 documentation](https://docs.ultralytics.com/modes/train/) for training your own models.
+### Step 4: Install Dependencies
 
-### 3. Environment Configuration
+#### Option A: With NVIDIA GPU (Recommended - 10-20x Faster)
+
+```powershell
+# Install PyTorch with CUDA support
+pip install torch torchvision torchaudio
+
+# Install other dependencies
+pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
+```
+
+#### Option B: CPU Only (No GPU)
+
+```powershell
+# Install all dependencies (PyTorch will auto-select CPU version)
+pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
+```
+
+### Step 5: Verify Installation
+
+```powershell
+# Check if PyTorch is installed
+python -c "import torch; print(f'PyTorch: {torch.__version__}')"
+
+# Check if GPU is available (skip if CPU-only)
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU only\"}')"
+```
+
+You should see:
+- **With GPU**: `CUDA available: True` + your GPU name
+- **CPU only**: `CUDA available: False` + `CPU only`
+
+### Step 6: Create Environment File
+
+```powershell
+# Copy example env file
+copy .env.example .env
+```
+
+Edit `.env` file:
+- **With GPU**: Set `DEVICE=cuda`
+- **CPU only**: Set `DEVICE=cpu`
+
+```env
+# Server Configuration
+HOST=0.0.0.0
+PORT=8000
+WORKERS=1
+
+# Model Configuration
+TRAFFIC_MODEL_PATH=yolov8n.pt
+INCIDENT_MODEL_PATH=yolov8n.pt
+CONFIDENCE_THRESHOLD=0.5
+IOU_THRESHOLD=0.45
+
+# Device Configuration
+DEVICE=cuda  # or 'cpu' if no GPU
+```
+
+### Step 7: Create Models Directory
+
+```powershell
+mkdir models
+```
+
+### Step 8: Start the Service
+
+```powershell
+python -m app.main
+```
+
+You should see:
+```
+INFO:     Started server process
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+**✅ Service is now running!**
+
+---
+
+## Linux/macOS Installation
+
+### Step 1: Navigate to AI Service Directory
+
+```bash
+cd /home/user/Road_Sentinel/server/ai-service
+```
+
+### Step 2: Create Virtual Environment
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate it
+source venv/bin/activate
+```
+
+### Step 3: Upgrade pip
+
+```bash
+pip install --upgrade pip
+```
+
+### Step 4: Install Dependencies
+
+#### With NVIDIA GPU
+
+```bash
+# Install PyTorch with CUDA
+pip install torch torchvision torchaudio
+
+# Install other dependencies
+pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
+```
+
+#### CPU Only
+
+```bash
+pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
+```
+
+### Step 5: Verify Installation
+
+```bash
+python -c "import torch; print(f'PyTorch: {torch.__version__}')"
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+### Step 6: Configure Environment
 
 ```bash
 cp .env.example .env
+# Edit .env and set DEVICE=cuda or DEVICE=cpu
 ```
 
-Edit `.env`:
-
-```env
-TRAFFIC_MODEL_PATH=./models/traffic.pt
-INCIDENT_MODEL_PATH=./models/incident.pt
-DEVICE=cuda  # or 'cpu' if no GPU available
-```
-
-### 4. Create Models Directory
+### Step 7: Create Models Directory
 
 ```bash
 mkdir -p models
 ```
 
-## Running the Service
-
-### Development
+### Step 8: Start the Service
 
 ```bash
 python -m app.main
 ```
 
-Or with uvicorn directly:
+---
 
-```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+## 🧪 Testing the AI Service
+
+### Quick Test (Sample Image)
+
+Open a **new terminal** (keep the service running), activate venv, and run:
+
+```powershell
+# Windows
+cd C:\Projects\Thesis\2026\RoadSentinel\server\ai-service
+.\venv\Scripts\Activate.ps1
+python test_ai.py
 ```
 
-### Production
+```bash
+# Linux/macOS
+cd /home/user/Road_Sentinel/server/ai-service
+source venv/bin/activate
+python test_ai.py
+```
+
+### Test with Your Own Video
+
+```powershell
+# Windows
+python test_video.py C:\path\to\your\traffic_video.mp4
+```
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+# Linux/macOS
+python test_video.py /path/to/your/traffic_video.mp4
 ```
+
+**Options:**
+- `--save` - Save annotated frames with bounding boxes
+- `--show` - Display real-time detection window
+- `--frame-rate 10` - Process every 10th frame (faster)
+- `--confidence 0.3` - Lower confidence threshold (more detections)
+
+**Example:**
+```powershell
+python test_video.py video.mp4 --save --frame-rate 5 --confidence 0.5
+```
+
+### Test with Images
+
+```powershell
+# Single image
+python test_images.py image.jpg --save
+
+# All images in folder
+python test_images.py C:\path\to\images\ --folder
+```
+
+See [TESTING.md](./TESTING.md) for complete testing guide.
+
+---
 
 ## API Endpoints
 
 ### Health Check
 
 ```bash
-GET /health
+GET http://localhost:8000/health
 ```
 
 Response:
@@ -100,7 +287,7 @@ Response:
 ### Combined Detection
 
 ```bash
-POST /api/detect
+POST http://localhost:8000/api/detect
 Content-Type: multipart/form-data
 
 Form Data:
@@ -139,23 +326,13 @@ Response:
 }
 ```
 
-### Traffic Detection Only
+### Other Endpoints
 
-```bash
-POST /api/detect/traffic
-```
+- `POST /api/detect/traffic` - Traffic detection only
+- `POST /api/detect/incidents` - Incident detection only
+- `GET /api/stats` - Service statistics
 
-### Incident Detection Only
-
-```bash
-POST /api/detect/incidents
-```
-
-### Service Statistics
-
-```bash
-GET /api/stats
-```
+---
 
 ## Model Information
 
@@ -178,6 +355,8 @@ Detects:
 - Traffic congestion
 - Illegal parking
 
+---
+
 ## GPU Requirements
 
 - **Recommended**: NVIDIA GPU with CUDA support
@@ -185,14 +364,23 @@ Detects:
 - **CUDA Version**: 11.7+
 - **cuDNN**: 8.0+
 
-For CPU inference, set `DEVICE=cpu` in `.env` (slower performance).
+For CPU inference, set `DEVICE=cpu` in `.env` (10-20x slower).
+
+---
 
 ## Performance
 
-Typical inference times on NVIDIA RTX 3060:
-- Traffic detection: 15-30ms per frame
-- Incident detection: 20-40ms per frame
-- Combined detection: 35-70ms per frame
+### With NVIDIA GPU (CUDA)
+- Traffic detection: **15-30ms** per frame
+- Incident detection: **20-40ms** per frame
+- Combined detection: **35-70ms** per frame
+
+### CPU Only
+- Traffic detection: **200-500ms** per frame
+- Incident detection: **300-600ms** per frame
+- Combined detection: **500-1000ms** per frame
+
+---
 
 ## Project Structure
 
@@ -206,7 +394,53 @@ app/
 models/                        # Model weights directory
 ├── traffic.pt                 # Traffic detection weights
 └── incident.pt                # Incident detection weights
+
+test_ai.py                     # Quick test script
+test_video.py                  # Video testing script
+test_images.py                 # Image testing script
+TESTING.md                     # Complete testing guide
 ```
+
+---
+
+## Troubleshooting
+
+### "ModuleNotFoundError: No module named 'fastapi'"
+
+You forgot to install dependencies or didn't activate the virtual environment.
+
+**Solution:**
+```powershell
+# Windows
+.\venv\Scripts\Activate.ps1
+pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
+```
+
+### "CUDA not available" (but you have NVIDIA GPU)
+
+**Solution:**
+```powershell
+# Reinstall PyTorch with CUDA
+pip uninstall torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
+### Virtual environment activation fails (Windows)
+
+**Solution:**
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+### Port 8000 already in use
+
+**Solution:**
+```powershell
+# Change port in .env or start with different port
+uvicorn app.main:app --port 8001
+```
+
+---
 
 ## Training Custom Models
 
@@ -226,11 +460,29 @@ model.train(
     data='dataset.yaml',
     epochs=100,
     imgsz=640,
-    device=0
+    device=0  # GPU 0, or 'cpu'
 )
 ```
 
 3. Export trained weights to `models/` directory
+
+---
+
+## Deactivating Virtual Environment
+
+When you're done:
+
+```powershell
+# Windows
+deactivate
+```
+
+```bash
+# Linux/macOS
+deactivate
+```
+
+---
 
 ## License
 
