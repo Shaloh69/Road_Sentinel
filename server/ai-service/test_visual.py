@@ -387,29 +387,29 @@ class VisualTester:
                     if self.current_annotated is not None:
                         cv2.imshow(window_name, self.current_annotated)
 
-            # Handle keyboard input with proper timing
-            key = cv2.waitKey(frame_delay if not self.paused else 30) & 0xFF
+                # Handle keyboard input with proper timing
+                key = cv2.waitKey(frame_delay if not self.paused else 30) & 0xFF
 
-            if key == ord('q') or key == 27:  # Q or ESC
-                print("\n⏹️  Stopped by user")
-                break
-            elif key == ord(' '):  # Space
-                self.paused = not self.paused
-                print("⏸️  Paused" if self.paused else "▶️  Resumed")
-            elif key == ord('+') or key == ord('='):
-                self.confidence = min(1.0, self.confidence + 0.05)
-                print(f"🎯 Confidence: {self.confidence:.2f}")
-            elif key == ord('-') or key == ord('_'):
-                self.confidence = max(0.1, self.confidence - 0.05)
-                print(f"🎯 Confidence: {self.confidence:.2f}")
-            elif key == 83:  # Right arrow
-                seek_request = int(video_fps)  # Skip 1 second forward
-            elif key == 81:  # Left arrow
-                seek_request = -int(video_fps)  # Skip 1 second backward
-            elif key == 85:  # Page Up
-                seek_request = int(video_fps * 10)  # Skip 10 seconds forward
-            elif key == 86:  # Page Down
-                seek_request = -int(video_fps * 10)  # Skip 10 seconds backward
+                if key == ord('q') or key == 27:  # Q or ESC
+                    print("\n⏹️  Stopped by user")
+                    break
+                elif key == ord(' '):  # Space
+                    self.paused = not self.paused
+                    print("⏸️  Paused" if self.paused else "▶️  Resumed")
+                elif key == ord('+') or key == ord('='):
+                    self.confidence = min(1.0, self.confidence + 0.05)
+                    print(f"🎯 Confidence: {self.confidence:.2f}")
+                elif key == ord('-') or key == ord('_'):
+                    self.confidence = max(0.1, self.confidence - 0.05)
+                    print(f"🎯 Confidence: {self.confidence:.2f}")
+                elif key == 83:  # Right arrow
+                    seek_request = int(video_fps)  # Skip 1 second forward
+                elif key == 81:  # Left arrow
+                    seek_request = -int(video_fps)  # Skip 1 second backward
+                elif key == 85:  # Page Up
+                    seek_request = int(video_fps * 10)  # Skip 10 seconds forward
+                elif key == 86:  # Page Down
+                    seek_request = -int(video_fps * 10)  # Skip 10 seconds backward
 
         finally:
             # Stop background processing thread
