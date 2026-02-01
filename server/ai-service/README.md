@@ -65,10 +65,17 @@ python -m pip install --upgrade pip
 
 ```powershell
 # Install PyTorch with CUDA support
+# Note: If you get connection errors, use the command with timeout/retries below
 pip install torch torchvision torchaudio
+
+# If download fails due to network issues, use:
+pip install --timeout 1000 --retries 10 torch torchvision torchaudio
 
 # Install other dependencies
 pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
+
+# If download fails, use:
+pip install --timeout 1000 --retries 10 fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
 ```
 
 #### Option B: CPU Only (No GPU)
@@ -76,6 +83,9 @@ pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-setting
 ```powershell
 # Install all dependencies (PyTorch will auto-select CPU version)
 pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
+
+# If download fails due to network issues, use:
+pip install --timeout 1000 --retries 10 fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
 ```
 
 ### Step 5: Verify Installation
@@ -423,6 +433,21 @@ pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-setting
 # Reinstall PyTorch with CUDA
 pip uninstall torch torchvision torchaudio
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
+### Network/Download Errors ("Connection Reset", "Connection Broken")
+
+Package downloads failing due to network issues.
+
+**Solution:**
+```powershell
+# Use increased timeout and retries
+pip install --timeout 1000 --retries 10 torch torchvision torchaudio
+pip install --timeout 1000 --retries 10 fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
+
+# Alternative: Clear pip cache first
+pip cache purge
+pip install --timeout 1000 --retries 10 torch torchvision torchaudio
 ```
 
 ### Virtual environment activation fails (Windows)
