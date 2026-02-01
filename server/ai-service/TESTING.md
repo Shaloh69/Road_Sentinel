@@ -78,6 +78,21 @@ While the window is open:
 - **- or _** - Decrease confidence threshold
 - **Q or ESC** - Quit
 
+### Performance Options
+
+By default, the visual tester processes AI every 3 frames for smooth playback while still showing all frames.
+
+```powershell
+# Default (process AI every 3 frames - smooth playback)
+python test_visual.py video.mp4
+
+# Process every frame (slower but most accurate)
+python test_visual.py video.mp4 --skip 1
+
+# Process every 5 frames (faster playback)
+python test_visual.py video.mp4 --skip 5
+```
+
 ### Examples
 
 ```powershell
@@ -89,6 +104,9 @@ python test_visual.py --camera --confidence 0.3
 
 # Test with external USB camera
 python test_visual.py --camera 1
+
+# High accuracy mode (process every frame)
+python test_visual.py video.mp4 --skip 1 --confidence 0.6
 ```
 
 ---

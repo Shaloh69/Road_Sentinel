@@ -32,18 +32,19 @@ INCIDENT_COLOR = (0, 0, 255)  # Red for incidents
 class VisualTester:
     """Visual testing application with GUI"""
 
-    def __init__(self, confidence: float = 0.5, show_fps: bool = True):
+    def __init__(self, confidence: float = 0.5, show_fps: bool = True, process_every_n_frames: int = 3):
         self.confidence = confidence
         self.show_fps = show_fps
         self.paused = False
-        self.frame_skip = 1
-        self.current_frame_skip = 0
+        self.process_every_n_frames = process_every_n_frames  # Only run AI every N frames for smooth playback
         self.current_frame = None
         self.current_annotated = None
+        self.last_result = None  # Store last AI result to reuse
 
         # Statistics
         self.stats = {
             'total_frames': 0,
+            'processed_frames': 0,
             'total_detections': 0,
             'vehicle_types': {},
             'incidents': 0,
@@ -252,6 +253,10 @@ class VisualTester:
         last_time = time.time()
         display_fps = 0
         seek_request = 0  # Frames to seek (positive = forward, negative = backward)
+        processing_time = 0
+
+        print(f"⚡ Performance mode: Processing AI every {self.process_every_n_frames} frames for smooth playback")
+        print()
 
         while True:
             # Handle seek requests
@@ -261,6 +266,7 @@ class VisualTester:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, new_pos)
                 frame_count = new_pos
                 seek_request = 0
+                self.last_result = None  # Clear cached result after seek
                 print(f"⏩ Seeking to frame {frame_count}/{total_frames}")
 
             if not self.paused:
@@ -273,10 +279,18 @@ class VisualTester:
                 frame_count += 1
                 self.stats['total_frames'] += 1
 
-                # Process frame with AI
-                result = self.detect_frame(frame)
+                # Only run AI detection every N frames for smooth playback
+                if frame_count % self.process_every_n_frames == 0:
+                    result = self.detect_frame(frame)
+                    if result:
+                        self.last_result = result
+                        self.stats['processed_frames'] += 1
+                        processing_time = result.get('processing_time_ms', 0)
+                else:
+                    # Reuse last result for intermediate frames
+                    result = self.last_result
 
-                # Draw detections
+                # Draw detections (using last result if not processing this frame)
                 annotated = self.draw_detections(frame, result)
 
                 # Calculate FPS
@@ -287,7 +301,6 @@ class VisualTester:
                 last_time = current_time
 
                 # Draw info panel with progress
-                processing_time = result.get('processing_time_ms', 0) if result else 0
                 annotated = self.draw_info_panel(annotated, display_fps, processing_time,
                                                  frame_count, total_frames)
 
@@ -351,6 +364,7 @@ class VisualTester:
 
         print(f"📹 Camera: {width}x{height}")
         print(f"🤖 Starting AI detection (confidence: {self.confidence})")
+        print(f"⚡ Performance mode: Processing AI every {self.process_every_n_frames} frames for smooth playback")
         print()
         print("Controls:")
         print("  SPACE - Pause/Resume")
@@ -363,6 +377,8 @@ class VisualTester:
 
         last_time = time.time()
         display_fps = 0
+        frame_count = 0
+        processing_time = 0
 
         while True:
             if not self.paused:
@@ -372,10 +388,19 @@ class VisualTester:
                     print("❌ Failed to read from camera")
                     break
 
+                frame_count += 1
                 self.stats['total_frames'] += 1
 
-                # Process frame with AI
-                result = self.detect_frame(frame)
+                # Only run AI detection every N frames for smooth playback
+                if frame_count % self.process_every_n_frames == 0:
+                    result = self.detect_frame(frame)
+                    if result:
+                        self.last_result = result
+                        self.stats['processed_frames'] += 1
+                        processing_time = result.get('processing_time_ms', 0)
+                else:
+                    # Reuse last result for intermediate frames
+                    result = self.last_result
 
                 # Draw detections
                 annotated = self.draw_detections(frame, result)
@@ -388,7 +413,6 @@ class VisualTester:
                 last_time = current_time
 
                 # Draw info panel
-                processing_time = result.get('processing_time_ms', 0) if result else 0
                 annotated = self.draw_info_panel(annotated, display_fps, processing_time, 0, 0)
 
                 # Store current frame for pause display
@@ -429,7 +453,8 @@ class VisualTester:
         print("\n" + "=" * 70)
         print("📊 SESSION STATISTICS")
         print("=" * 70)
-        print(f"Total frames processed: {self.stats['total_frames']}")
+        print(f"Total frames displayed: {self.stats['total_frames']}")
+        print(f"Frames processed with AI: {self.stats['processed_frames']}")
         print(f"Total detections: {self.stats['total_detections']}")
         print(f"Total incidents: {self.stats['incidents']}")
 
@@ -459,6 +484,12 @@ Examples:
 
   # Adjust confidence threshold
   python test_visual.py video.mp4 --confidence 0.3
+
+  # Process every frame (slower but more accurate)
+  python test_visual.py video.mp4 --skip 1
+
+  # Process every 5 frames (faster playback)
+  python test_visual.py video.mp4 --skip 5
         """
     )
 
@@ -467,11 +498,13 @@ Examples:
                        help='Use camera (default: 0 for webcam)')
     parser.add_argument('--confidence', type=float, default=0.5,
                        help='Detection confidence threshold (default: 0.5)')
+    parser.add_argument('--skip', type=int, default=3,
+                       help='Process AI every N frames for smooth playback (default: 3, use 1 for every frame)')
 
     args = parser.parse_args()
 
     # Check if AI service is running
-    tester = VisualTester(confidence=args.confidence)
+    tester = VisualTester(confidence=args.confidence, process_every_n_frames=args.skip)
 
     print("=" * 70)
     print("🚦 Road Sentinel - Visual Testing")
