@@ -38,6 +38,8 @@ class VisualTester:
         self.paused = False
         self.frame_skip = 1
         self.current_frame_skip = 0
+        self.current_frame = None
+        self.current_annotated = None
 
         # Statistics
         self.stats = {
@@ -152,34 +154,45 @@ class VisualTester:
 
         return annotated
 
-    def draw_info_panel(self, frame: np.ndarray, fps: float, processing_time: float) -> np.ndarray:
+    def draw_info_panel(self, frame: np.ndarray, fps: float, processing_time: float,
+                       current_pos: int = 0, total_frames: int = 0) -> np.ndarray:
         """Draw information panel on frame"""
         height, width = frame.shape[:2]
 
         # Semi-transparent background for info panel
         overlay = frame.copy()
-        panel_height = 180
-        cv2.rectangle(overlay, (0, 0), (350, panel_height), (0, 0, 0), -1)
+        panel_height = 240
+        cv2.rectangle(overlay, (0, 0), (380, panel_height), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
 
         # Draw info text
         y_pos = 25
         line_height = 22
 
+        # Calculate video progress
+        progress_text = ""
+        if total_frames > 0:
+            progress_pct = (current_pos / total_frames) * 100
+            progress_text = f"Progress: {current_pos}/{total_frames} ({progress_pct:.1f}%)"
+
         info_lines = [
             f"FPS: {fps:.1f}",
             f"Processing: {processing_time:.1f}ms",
-            f"Frames: {self.stats['total_frames']}",
+            progress_text if progress_text else f"Frames: {self.stats['total_frames']}",
             f"Detections: {self.stats['total_detections']}",
             f"Incidents: {self.stats['incidents']}",
             "",
             "Controls:",
-            "SPACE - Pause/Resume  Q - Quit"
+            "SPACE - Pause/Resume",
+            "Arrow Left/Right - Skip 1s",
+            "PageUp/Down - Skip 10s",
+            "Q - Quit"
         ]
 
         for line in info_lines:
-            cv2.putText(frame, line, (10, y_pos),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            if line:  # Skip empty lines
+                cv2.putText(frame, line, (10, y_pos),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             y_pos += line_height
 
         # Draw vehicle counts on the right
@@ -214,15 +227,20 @@ class VisualTester:
 
         # Get video properties
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
+        video_fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        print(f"📹 Video: {total_frames} frames, {fps:.2f} FPS, {width}x{height}")
+        # Calculate frame delay for playback timing
+        frame_delay = int(1000 / video_fps) if video_fps > 0 else 30  # milliseconds
+
+        print(f"📹 Video: {total_frames} frames, {video_fps:.2f} FPS, {width}x{height}")
         print(f"🤖 Starting AI detection (confidence: {self.confidence})")
         print()
         print("Controls:")
         print("  SPACE - Pause/Resume")
+        print("  Arrow Left/Right - Skip backward/forward 1 second")
+        print("  PageUp/PageDown - Skip backward/forward 10 seconds")
         print("  Q - Quit")
         print("  +/- - Adjust confidence")
         print()
@@ -233,8 +251,18 @@ class VisualTester:
         frame_count = 0
         last_time = time.time()
         display_fps = 0
+        seek_request = 0  # Frames to seek (positive = forward, negative = backward)
 
         while True:
+            # Handle seek requests
+            if seek_request != 0:
+                new_pos = frame_count + seek_request
+                new_pos = max(0, min(new_pos, total_frames - 1))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, new_pos)
+                frame_count = new_pos
+                seek_request = 0
+                print(f"⏩ Seeking to frame {frame_count}/{total_frames}")
+
             if not self.paused:
                 ret, frame = cap.read()
 
@@ -258,18 +286,24 @@ class VisualTester:
                     display_fps = 1.0 / time_diff
                 last_time = current_time
 
-                # Draw info panel
+                # Draw info panel with progress
                 processing_time = result.get('processing_time_ms', 0) if result else 0
-                annotated = self.draw_info_panel(annotated, display_fps, processing_time)
+                annotated = self.draw_info_panel(annotated, display_fps, processing_time,
+                                                 frame_count, total_frames)
+
+                # Store current frame for pause display
+                self.current_frame = frame
+                self.current_annotated = annotated
 
                 # Show frame
                 cv2.imshow(window_name, annotated)
             else:
-                # Just redisplay the last frame when paused
-                cv2.imshow(window_name, annotated)
+                # Display the last frame when paused
+                if self.current_annotated is not None:
+                    cv2.imshow(window_name, self.current_annotated)
 
-            # Handle keyboard input
-            key = cv2.waitKey(1) & 0xFF
+            # Handle keyboard input with proper timing
+            key = cv2.waitKey(frame_delay if not self.paused else 30) & 0xFF
 
             if key == ord('q') or key == 27:  # Q or ESC
                 print("\n⏹️  Stopped by user")
@@ -283,6 +317,14 @@ class VisualTester:
             elif key == ord('-') or key == ord('_'):
                 self.confidence = max(0.1, self.confidence - 0.05)
                 print(f"🎯 Confidence: {self.confidence:.2f}")
+            elif key == 83:  # Right arrow
+                seek_request = int(video_fps)  # Skip 1 second forward
+            elif key == 81:  # Left arrow
+                seek_request = -int(video_fps)  # Skip 1 second backward
+            elif key == 85:  # Page Up
+                seek_request = int(video_fps * 10)  # Skip 10 seconds forward
+            elif key == 86:  # Page Down
+                seek_request = -int(video_fps * 10)  # Skip 10 seconds backward
 
         cap.release()
         cv2.destroyAllWindows()
@@ -347,12 +389,18 @@ class VisualTester:
 
                 # Draw info panel
                 processing_time = result.get('processing_time_ms', 0) if result else 0
-                annotated = self.draw_info_panel(annotated, display_fps, processing_time)
+                annotated = self.draw_info_panel(annotated, display_fps, processing_time, 0, 0)
+
+                # Store current frame for pause display
+                self.current_frame = frame
+                self.current_annotated = annotated
 
                 # Show frame
                 cv2.imshow(window_name, annotated)
             else:
-                cv2.imshow(window_name, annotated)
+                # Display the last frame when paused
+                if self.current_annotated is not None:
+                    cv2.imshow(window_name, self.current_annotated)
 
             # Handle keyboard input
             key = cv2.waitKey(1) & 0xFF

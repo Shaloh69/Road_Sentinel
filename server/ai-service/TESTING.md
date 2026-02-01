@@ -70,9 +70,13 @@ A window will open showing:
 
 While the window is open:
 - **SPACE** - Pause/Resume playback
-- **Q or ESC** - Quit
+- **Arrow Left** - Skip backward 1 second
+- **Arrow Right** - Skip forward 1 second
+- **Page Down** - Skip backward 10 seconds
+- **Page Up** - Skip forward 10 seconds
 - **+ or =** - Increase confidence threshold
 - **- or _** - Decrease confidence threshold
+- **Q or ESC** - Quit
 
 ### Examples
 
