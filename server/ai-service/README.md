@@ -63,18 +63,20 @@ python -m pip install --upgrade pip
 
 #### Option A: With NVIDIA GPU (Recommended - 10-20x Faster)
 
-```powershell
-# Install PyTorch with CUDA support
-# Note: If you get connection errors, use the command with timeout/retries below
-pip install torch torchvision torchaudio
+**IMPORTANT:** Default `pip install torch` often installs CPU version on Windows. Use explicit CUDA index!
 
-# If download fails due to network issues, use:
-pip install --timeout 1000 --retries 10 torch torchvision torchaudio
+```powershell
+# RECOMMENDED: Install PyTorch with CUDA 11.8 (most compatible)
+pip install --timeout 1000 --retries 10 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Alternative: CUDA 12.1 (if you have newer GPU drivers)
+# pip install --timeout 1000 --retries 10 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# If you accidentally installed CPU version, uninstall first:
+# pip uninstall torch torchvision torchaudio -y
+# Then install with CUDA index above
 
 # Install other dependencies
-pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
-
-# If download fails, use:
 pip install --timeout 1000 --retries 10 fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
 ```
 
@@ -426,13 +428,30 @@ You forgot to install dependencies or didn't activate the virtual environment.
 pip install fastapi uvicorn[standard] python-multipart pydantic pydantic-settings ultralytics opencv-python-headless numpy pillow python-dotenv
 ```
 
-### "CUDA not available" (but you have NVIDIA GPU)
+### "CUDA not available" or PyTorch shows CPU version (but you have NVIDIA GPU)
+
+This happens when PyTorch CPU version was installed instead of CUDA version.
+
+**Check current version:**
+```powershell
+python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA available:', torch.cuda.is_available())"
+```
+
+If it shows `+cpu` in version or `CUDA available: False`, reinstall with CUDA:
 
 **Solution:**
 ```powershell
-# Reinstall PyTorch with CUDA
-pip uninstall torch torchvision torchaudio
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Uninstall CPU version
+pip uninstall torch torchvision torchaudio -y
+
+# Install with CUDA 11.8 (recommended, most compatible)
+pip install --timeout 1000 --retries 10 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# OR try CUDA 12.1 if cu118 doesn't work
+pip install --timeout 1000 --retries 10 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Verify CUDA is now available
+python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
 ```
 
 ### Network/Download Errors ("Connection Reset", "Connection Broken")
