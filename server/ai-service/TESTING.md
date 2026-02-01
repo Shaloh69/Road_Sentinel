@@ -80,7 +80,13 @@ While the window is open:
 
 ### Performance Options
 
-By default, the visual tester processes AI every 3 frames for smooth playback while still showing all frames.
+**Asynchronous Processing:** The visual tester uses background threading to process AI detections asynchronously. This means:
+- ✅ Video plays smoothly without any stuttering or lag
+- ✅ AI processing happens in a background thread
+- ✅ Bounding boxes update when AI results are ready
+- ✅ No blocking or frame drops
+
+By default, the visual tester sends every 3rd frame to the AI for processing while displaying all frames smoothly.
 
 ```powershell
 # Default (process AI every 3 frames - smooth playback)
@@ -89,7 +95,7 @@ python test_visual.py video.mp4
 # Process every frame (slower but most accurate)
 python test_visual.py video.mp4 --skip 1
 
-# Process every 5 frames (faster playback)
+# Process every 5 frames (even smoother playback)
 python test_visual.py video.mp4 --skip 5
 ```
 

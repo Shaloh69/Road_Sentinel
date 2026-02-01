@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 import argparse
 from typing import Optional, Dict, List, Any
+import threading
+import queue
 
 # AI Service URL
 AI_SERVICE_URL = "http://localhost:8000"
@@ -41,6 +43,12 @@ class VisualTester:
         self.current_annotated = None
         self.last_result = None  # Store last AI result to reuse
 
+        # Async processing
+        self.frame_queue = queue.Queue(maxsize=2)  # Queue for frames to process
+        self.result_queue = queue.Queue(maxsize=10)  # Queue for AI results
+        self.processing_thread = None
+        self.stop_processing = threading.Event()
+
         # Statistics
         self.stats = {
             'total_frames': 0,
@@ -59,6 +67,48 @@ class VisualTester:
             return response.status_code == 200
         except:
             return False
+
+    def _processing_worker(self):
+        """Background worker thread for AI processing"""
+        while not self.stop_processing.is_set():
+            try:
+                # Get frame from queue with timeout
+                frame = self.frame_queue.get(timeout=0.1)
+
+                # Process with AI
+                result = self.detect_frame(frame)
+
+                # Put result in result queue
+                if result:
+                    try:
+                        self.result_queue.put(result, timeout=0.1)
+                        self.stats['processed_frames'] += 1
+                    except queue.Full:
+                        # If result queue is full, discard oldest result
+                        try:
+                            self.result_queue.get_nowait()
+                            self.result_queue.put(result, timeout=0.1)
+                        except:
+                            pass
+
+                self.frame_queue.task_done()
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Processing error: {e}")
+
+    def start_async_processing(self):
+        """Start background processing thread"""
+        self.stop_processing.clear()
+        self.processing_thread = threading.Thread(target=self._processing_worker, daemon=True)
+        self.processing_thread.start()
+
+    def stop_async_processing(self):
+        """Stop background processing thread"""
+        self.stop_processing.set()
+        if self.processing_thread:
+            self.processing_thread.join(timeout=2)
 
     def detect_frame(self, frame: np.ndarray) -> Optional[Dict[str, Any]]:
         """Send frame to AI service for detection"""
@@ -255,65 +305,87 @@ class VisualTester:
         seek_request = 0  # Frames to seek (positive = forward, negative = backward)
         processing_time = 0
 
-        print(f"⚡ Performance mode: Processing AI every {self.process_every_n_frames} frames for smooth playback")
+        print(f"⚡ Async mode: Video plays smoothly while AI processes in background")
+        print(f"⚡ Processing AI every {self.process_every_n_frames} frames")
         print()
 
-        while True:
-            # Handle seek requests
-            if seek_request != 0:
-                new_pos = frame_count + seek_request
-                new_pos = max(0, min(new_pos, total_frames - 1))
-                cap.set(cv2.CAP_PROP_POS_FRAMES, new_pos)
-                frame_count = new_pos
-                seek_request = 0
-                self.last_result = None  # Clear cached result after seek
-                print(f"⏩ Seeking to frame {frame_count}/{total_frames}")
+        # Start background AI processing thread
+        self.start_async_processing()
 
-            if not self.paused:
-                ret, frame = cap.read()
+        try:
+            while True:
+                # Handle seek requests
+                if seek_request != 0:
+                    new_pos = frame_count + seek_request
+                    new_pos = max(0, min(new_pos, total_frames - 1))
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, new_pos)
+                    frame_count = new_pos
+                    seek_request = 0
+                    # Clear queues after seek
+                    while not self.frame_queue.empty():
+                        try:
+                            self.frame_queue.get_nowait()
+                        except:
+                            break
+                    while not self.result_queue.empty():
+                        try:
+                            self.result_queue.get_nowait()
+                        except:
+                            break
+                    self.last_result = None
+                    print(f"⏩ Seeking to frame {frame_count}/{total_frames}")
 
-                if not ret:
-                    print("\n✅ Video finished")
-                    break
-
-                frame_count += 1
-                self.stats['total_frames'] += 1
-
-                # Only run AI detection every N frames for smooth playback
-                if frame_count % self.process_every_n_frames == 0:
-                    result = self.detect_frame(frame)
+                # Check for new AI results (non-blocking)
+                try:
+                    result = self.result_queue.get_nowait()
                     if result:
                         self.last_result = result
-                        self.stats['processed_frames'] += 1
                         processing_time = result.get('processing_time_ms', 0)
+                except queue.Empty:
+                    pass
+
+                if not self.paused:
+                    ret, frame = cap.read()
+
+                    if not ret:
+                        print("\n✅ Video finished")
+                        break
+
+                    frame_count += 1
+                    self.stats['total_frames'] += 1
+
+                    # Send frame to processing queue every N frames (non-blocking)
+                    if frame_count % self.process_every_n_frames == 0:
+                        try:
+                            self.frame_queue.put_nowait(frame.copy())
+                        except queue.Full:
+                            # Queue full, skip this frame
+                            pass
+
+                    # Draw detections using last available result
+                    annotated = self.draw_detections(frame, self.last_result)
+
+                    # Calculate FPS
+                    current_time = time.time()
+                    time_diff = current_time - last_time
+                    if time_diff > 0:
+                        display_fps = 1.0 / time_diff
+                    last_time = current_time
+
+                    # Draw info panel with progress
+                    annotated = self.draw_info_panel(annotated, display_fps, processing_time,
+                                                     frame_count, total_frames)
+
+                    # Store current frame for pause display
+                    self.current_frame = frame
+                    self.current_annotated = annotated
+
+                    # Show frame
+                    cv2.imshow(window_name, annotated)
                 else:
-                    # Reuse last result for intermediate frames
-                    result = self.last_result
-
-                # Draw detections (using last result if not processing this frame)
-                annotated = self.draw_detections(frame, result)
-
-                # Calculate FPS
-                current_time = time.time()
-                time_diff = current_time - last_time
-                if time_diff > 0:
-                    display_fps = 1.0 / time_diff
-                last_time = current_time
-
-                # Draw info panel with progress
-                annotated = self.draw_info_panel(annotated, display_fps, processing_time,
-                                                 frame_count, total_frames)
-
-                # Store current frame for pause display
-                self.current_frame = frame
-                self.current_annotated = annotated
-
-                # Show frame
-                cv2.imshow(window_name, annotated)
-            else:
-                # Display the last frame when paused
-                if self.current_annotated is not None:
-                    cv2.imshow(window_name, self.current_annotated)
+                    # Display the last frame when paused
+                    if self.current_annotated is not None:
+                        cv2.imshow(window_name, self.current_annotated)
 
             # Handle keyboard input with proper timing
             key = cv2.waitKey(frame_delay if not self.paused else 30) & 0xFF
@@ -339,8 +411,11 @@ class VisualTester:
             elif key == 86:  # Page Down
                 seek_request = -int(video_fps * 10)  # Skip 10 seconds backward
 
-        cap.release()
-        cv2.destroyAllWindows()
+        finally:
+            # Stop background processing thread
+            self.stop_async_processing()
+            cap.release()
+            cv2.destroyAllWindows()
 
         # Print final statistics
         self.print_statistics()
@@ -380,70 +455,83 @@ class VisualTester:
         frame_count = 0
         processing_time = 0
 
-        while True:
-            if not self.paused:
-                ret, frame = cap.read()
+        # Start background AI processing thread
+        self.start_async_processing()
 
-                if not ret:
-                    print("❌ Failed to read from camera")
-                    break
-
-                frame_count += 1
-                self.stats['total_frames'] += 1
-
-                # Only run AI detection every N frames for smooth playback
-                if frame_count % self.process_every_n_frames == 0:
-                    result = self.detect_frame(frame)
+        try:
+            while True:
+                # Check for new AI results (non-blocking)
+                try:
+                    result = self.result_queue.get_nowait()
                     if result:
                         self.last_result = result
-                        self.stats['processed_frames'] += 1
                         processing_time = result.get('processing_time_ms', 0)
+                except queue.Empty:
+                    pass
+
+                if not self.paused:
+                    ret, frame = cap.read()
+
+                    if not ret:
+                        print("❌ Failed to read from camera")
+                        break
+
+                    frame_count += 1
+                    self.stats['total_frames'] += 1
+
+                    # Send frame to processing queue every N frames (non-blocking)
+                    if frame_count % self.process_every_n_frames == 0:
+                        try:
+                            self.frame_queue.put_nowait(frame.copy())
+                        except queue.Full:
+                            # Queue full, skip this frame
+                            pass
+
+                    # Draw detections using last available result
+                    annotated = self.draw_detections(frame, self.last_result)
+
+                    # Calculate FPS
+                    current_time = time.time()
+                    time_diff = current_time - last_time
+                    if time_diff > 0:
+                        display_fps = 1.0 / time_diff
+                    last_time = current_time
+
+                    # Draw info panel
+                    annotated = self.draw_info_panel(annotated, display_fps, processing_time, 0, 0)
+
+                    # Store current frame for pause display
+                    self.current_frame = frame
+                    self.current_annotated = annotated
+
+                    # Show frame
+                    cv2.imshow(window_name, annotated)
                 else:
-                    # Reuse last result for intermediate frames
-                    result = self.last_result
+                    # Display the last frame when paused
+                    if self.current_annotated is not None:
+                        cv2.imshow(window_name, self.current_annotated)
 
-                # Draw detections
-                annotated = self.draw_detections(frame, result)
+                # Handle keyboard input
+                key = cv2.waitKey(1) & 0xFF
 
-                # Calculate FPS
-                current_time = time.time()
-                time_diff = current_time - last_time
-                if time_diff > 0:
-                    display_fps = 1.0 / time_diff
-                last_time = current_time
+                if key == ord('q') or key == 27:
+                    print("\n⏹️  Stopped by user")
+                    break
+                elif key == ord(' '):
+                    self.paused = not self.paused
+                    print("⏸️  Paused" if self.paused else "▶️  Resumed")
+                elif key == ord('+') or key == ord('='):
+                    self.confidence = min(1.0, self.confidence + 0.05)
+                    print(f"🎯 Confidence: {self.confidence:.2f}")
+                elif key == ord('-') or key == ord('_'):
+                    self.confidence = max(0.1, self.confidence - 0.05)
+                    print(f"🎯 Confidence: {self.confidence:.2f}")
 
-                # Draw info panel
-                annotated = self.draw_info_panel(annotated, display_fps, processing_time, 0, 0)
-
-                # Store current frame for pause display
-                self.current_frame = frame
-                self.current_annotated = annotated
-
-                # Show frame
-                cv2.imshow(window_name, annotated)
-            else:
-                # Display the last frame when paused
-                if self.current_annotated is not None:
-                    cv2.imshow(window_name, self.current_annotated)
-
-            # Handle keyboard input
-            key = cv2.waitKey(1) & 0xFF
-
-            if key == ord('q') or key == 27:
-                print("\n⏹️  Stopped by user")
-                break
-            elif key == ord(' '):
-                self.paused = not self.paused
-                print("⏸️  Paused" if self.paused else "▶️  Resumed")
-            elif key == ord('+') or key == ord('='):
-                self.confidence = min(1.0, self.confidence + 0.05)
-                print(f"🎯 Confidence: {self.confidence:.2f}")
-            elif key == ord('-') or key == ord('_'):
-                self.confidence = max(0.1, self.confidence - 0.05)
-                print(f"🎯 Confidence: {self.confidence:.2f}")
-
-        cap.release()
-        cv2.destroyAllWindows()
+        finally:
+            # Stop background processing thread
+            self.stop_async_processing()
+            cap.release()
+            cv2.destroyAllWindows()
 
         # Print final statistics
         self.print_statistics()
