@@ -316,7 +316,9 @@ class OptimalTester:
         for det in detections:
             track_id = det.get('track_id', None)
             vehicle_type = det['class']
-            confidence = det['confidence']
+            confidence = det.get('confidence', 0.0)
+            if confidence is None:
+                confidence = 0.0
             bbox = det['bbox']
             is_predicted = det.get('predicted', False)
 
