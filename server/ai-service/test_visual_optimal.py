@@ -20,6 +20,8 @@ import argparse
 from typing import Optional, Dict, List, Any, Tuple
 from collections import defaultdict, deque
 from deep_sort_realtime.deepsort_tracker import DeepSort
+import threading
+import queue
 
 # AI Service URL
 AI_SERVICE_URL = "http://localhost:8000"
@@ -72,23 +74,29 @@ class OptimalTester:
     """30 FPS with ZERO LAG using DeepSORT predictive tracking"""
 
     def __init__(self, confidence: float = 0.5, entry_line_y: float = 0.3,
-                 timeout_seconds: float = 120, ai_every_n_frames: int = 2):
+                 timeout_seconds: float = 120, num_workers: int = 2):
         self.confidence = confidence
         self.paused = False
         self.entry_line_y = entry_line_y
         self.timeout_seconds = timeout_seconds
         self.timeout_frames = 0
-        self.ai_every_n_frames = ai_every_n_frames  # Run AI every N frames
+        self.num_workers = num_workers
 
-        # DeepSORT tracker with predictive tracking
+        # DeepSORT tracker with optimized parameters for fewer ID switches
         self.tracker = DeepSort(
-            max_age=30,
-            n_init=3,
-            max_iou_distance=0.7,
+            max_age=60,  # Keep tracks longer without detection (reduce ID switches)
+            n_init=2,    # Confirm tracks faster (less delay)
+            max_iou_distance=0.8,  # More lenient matching (reduce ID switches)
             embedder="mobilenet",
             half=True,
             embedder_gpu=True
         )
+
+        # Async AI processing
+        self.frame_queue = queue.Queue(maxsize=2)
+        self.result_queue = queue.Queue(maxsize=5)
+        self.stop_processing = threading.Event()
+        self.workers = []
 
         # Vehicle tracking state
         self.vehicles = {}
@@ -112,6 +120,8 @@ class OptimalTester:
         self.frame_width = 0
         self.frame_height = 0
         self.video_fps = 0
+        self.latest_detections = None
+        self.processing_lock = threading.Lock()
 
     def check_ai_service(self) -> bool:
         try:
@@ -119,6 +129,53 @@ class OptimalTester:
             return response.status_code == 200
         except:
             return False
+
+    def _processing_worker(self):
+        """Background worker for async AI processing"""
+        while not self.stop_processing.is_set():
+            try:
+                frame_data = self.frame_queue.get(timeout=0.1)
+                frame, frame_num = frame_data
+
+                # Process with AI (this blocks but it's in background thread)
+                result = self.detect_frame(frame, frame_num)
+
+                if result:
+                    # Clear old results and add new one
+                    while self.result_queue.qsize() > 2:
+                        try:
+                            self.result_queue.get_nowait()
+                        except queue.Empty:
+                            break
+
+                    try:
+                        self.result_queue.put_nowait(result)
+                        self.stats['ai_processed_frames'] += 1
+                    except queue.Full:
+                        pass
+
+                self.frame_queue.task_done()
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Worker error: {e}")
+
+    def start_async_processing(self):
+        """Start background AI workers"""
+        self.stop_processing.clear()
+        for i in range(self.num_workers):
+            worker = threading.Thread(target=self._processing_worker, daemon=True)
+            worker.start()
+            self.workers.append(worker)
+        print(f"🚀 Started {self.num_workers} AI workers in background")
+
+    def stop_async_processing(self):
+        """Stop all workers"""
+        self.stop_processing.set()
+        for worker in self.workers:
+            worker.join(timeout=2)
+        self.workers.clear()
 
     def detect_frame(self, frame: np.ndarray, frame_num: int) -> Optional[Dict[str, Any]]:
         try:
@@ -403,9 +460,8 @@ class OptimalTester:
         frame_delay = int(1000 / self.video_fps) if self.video_fps > 0 else 33
 
         print(f"📹 Video: {total_frames} frames, {self.video_fps:.2f} FPS, {self.frame_width}x{self.frame_height}")
-        print(f"🎯 OPTIMAL MODE - 30 FPS with ZERO LAG")
-        print(f"⚡ DeepSORT predictive tracking enabled")
-        print(f"🤖 Running AI every {self.ai_every_n_frames} frames")
+        print(f"🎯 OPTIMAL MODE - TRUE 30 FPS with ZERO LAG")
+        print(f"⚡ DeepSORT predictive tracking + {self.num_workers} async AI workers")
         print(f"📏 Entry line: {self.entry_line_y*100:.0f}%")
         print()
 
@@ -416,70 +472,91 @@ class OptimalTester:
         last_time = time.time()
         display_fps = 0
         last_ai_time = 0
+        ai_frame_interval = 3  # Send frame to AI every N frames
 
-        while True:
-            if not self.paused:
-                ret, frame = cap.read()
+        # Start async AI workers
+        self.start_async_processing()
 
-                if not ret:
-                    print("\n✅ Video finished")
-                    break
-
-                frame_count += 1
-                self.stats['total_frames'] += 1
-
-                # Determine if this is an AI frame
-                is_ai_frame = (frame_count % self.ai_every_n_frames == 1)
-
-                if is_ai_frame:
-                    # AI Frame: Run detection
-                    result = self.detect_frame(frame, frame_count)
+        try:
+            while True:
+                # Check for AI results (non-blocking)
+                try:
+                    result = self.result_queue.get_nowait()
                     if result:
-                        detections = result.get('detections', [])
-                        last_ai_time = result.get('processing_time_ms', 0)
-                        self.stats['ai_processed_frames'] += 1
-                    else:
-                        detections = None
+                        with self.processing_lock:
+                            self.latest_detections = result.get('detections', [])
+                            last_ai_time = result.get('processing_time_ms', 0)
+                except queue.Empty:
+                    pass
 
-                    # Update tracking with new detections
-                    tracked_detections = self.update_tracking(detections, frame, frame_count, True)
-                else:
-                    # Prediction Frame: Use DeepSORT prediction only
-                    tracked_detections = self.update_tracking(None, frame, frame_count, False)
-                    self.stats['predicted_frames'] += 1
+                if not self.paused:
+                    ret, frame = cap.read()
 
-                # Draw detections (perfectly synced!)
-                annotated = self.draw_detections(frame, tracked_detections)
+                    if not ret:
+                        print("\n✅ Video finished")
+                        break
 
-                # Draw counting lines
-                annotated = self.draw_counting_lines(annotated)
+                    frame_count += 1
+                    self.stats['total_frames'] += 1
 
-                # Calculate display FPS
-                current_time = time.time()
-                time_diff = current_time - last_time
-                if time_diff > 0:
-                    display_fps = 1.0 / time_diff
-                last_time = current_time
+                    # Send frame to AI workers (non-blocking, async)
+                    if frame_count % ai_frame_interval == 1:
+                        try:
+                            self.frame_queue.put_nowait((frame.copy(), frame_count))
+                        except queue.Full:
+                            pass  # Skip if queue full
 
-                # Draw info panel
-                annotated = self.draw_info_panel(annotated, display_fps, last_ai_time,
-                                                 frame_count, total_frames, is_ai_frame)
+                    # ALWAYS use predictions for display (NEVER wait for AI)
+                    with self.processing_lock:
+                        current_detections = self.latest_detections
 
-                # Show frame
-                cv2.imshow(window_name, annotated)
+                    # Update tracking (uses predictions if no new AI data)
+                    has_new_ai = current_detections is not None
+                    tracked_detections = self.update_tracking(
+                        current_detections if has_new_ai else None,
+                        frame,
+                        frame_count,
+                        has_new_ai
+                    )
 
-            # Handle keyboard input
-            key = cv2.waitKey(frame_delay) & 0xFF
+                    if not has_new_ai:
+                        self.stats['predicted_frames'] += 1
 
-            if key == ord('q') or key == 27:
-                print("\n⏹️  Stopped by user")
-                break
-            elif key == ord(' '):
-                self.paused = not self.paused
-                print("⏸️  Paused" if self.paused else "▶️  Resumed")
+                    # Draw detections (always from predictions - no lag!)
+                    annotated = self.draw_detections(frame, tracked_detections)
 
-        cap.release()
-        cv2.destroyAllWindows()
+                    # Draw counting lines
+                    annotated = self.draw_counting_lines(annotated)
+
+                    # Calculate display FPS
+                    current_time = time.time()
+                    time_diff = current_time - last_time
+                    if time_diff > 0:
+                        display_fps = 1.0 / time_diff
+                    last_time = current_time
+
+                    # Draw info panel
+                    is_ai_frame = (frame_count % ai_frame_interval == 1)
+                    annotated = self.draw_info_panel(annotated, display_fps, last_ai_time,
+                                                     frame_count, total_frames, is_ai_frame)
+
+                    # Show frame
+                    cv2.imshow(window_name, annotated)
+
+                # Handle keyboard input
+                key = cv2.waitKey(frame_delay) & 0xFF
+
+                if key == ord('q') or key == 27:
+                    print("\n⏹️  Stopped by user")
+                    break
+                elif key == ord(' '):
+                    self.paused = not self.paused
+                    print("⏸️  Paused" if self.paused else "▶️  Resumed")
+
+        finally:
+            self.stop_async_processing()
+            cap.release()
+            cv2.destroyAllWindows()
 
         # Print final statistics
         self.print_statistics()
@@ -516,11 +593,11 @@ def main():
         description='OPTIMAL Visual Testing - 30 FPS + Zero Lag',
         epilog="""
 Examples:
-  # Test with video (AI every 2 frames)
+  # Test with video (2 async workers - default)
   python test_visual_optimal.py video.mp4
 
-  # AI every 3 frames (smoother if AI is slow)
-  python test_visual_optimal.py video.mp4 --ai-every 3
+  # Use 3 workers for more AI throughput
+  python test_visual_optimal.py video.mp4 --workers 3
 
   # Adjust confidence
   python test_visual_optimal.py video.mp4 --confidence 0.3
@@ -534,8 +611,8 @@ Examples:
                        help='Entry line position (default: 0.3)')
     parser.add_argument('--timeout', type=float, default=120,
                        help='Vehicle timeout in seconds (default: 120)')
-    parser.add_argument('--ai-every', type=int, default=2,
-                       help='Run AI every N frames (default: 2, use 3 if slow)')
+    parser.add_argument('--workers', type=int, default=2,
+                       help='Number of async AI workers (default: 2)')
 
     args = parser.parse_args()
 
@@ -543,7 +620,7 @@ Examples:
         confidence=args.confidence,
         entry_line_y=args.entry,
         timeout_seconds=args.timeout,
-        ai_every_n_frames=args.ai_every
+        num_workers=args.workers
     )
 
     print("=" * 70)
