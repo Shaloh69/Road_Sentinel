@@ -460,10 +460,13 @@ class OptimalTester:
         self.frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         self.timeout_frames = int(self.timeout_seconds * self.video_fps)
-        frame_delay = int(1000 / self.video_fps) if self.video_fps > 0 else 33
 
-        print(f"📹 Video: {total_frames} frames, {self.video_fps:.2f} FPS, {self.frame_width}x{self.frame_height}")
-        print(f"🎯 OPTIMAL MODE - TRUE 30 FPS with ZERO LAG")
+        # ALWAYS use 30 FPS playback regardless of video's native FPS
+        target_fps = 30
+        frame_delay = int(1000 / target_fps)  # 33ms for 30 FPS
+
+        print(f"📹 Video: {total_frames} frames, {self.video_fps:.2f} FPS (native), {self.frame_width}x{self.frame_height}")
+        print(f"🎯 OPTIMAL MODE - Playing at {target_fps} FPS with ZERO LAG")
         print(f"⚡ DeepSORT predictive tracking + {self.num_workers} async AI workers")
         print(f"📏 Entry line: {self.entry_line_y*100:.0f}%")
         print()
