@@ -387,8 +387,8 @@ class VisualTester:
                     if self.current_annotated is not None:
                         cv2.imshow(window_name, self.current_annotated)
 
-            # Handle keyboard input with proper timing
-            key = cv2.waitKey(frame_delay if not self.paused else 30) & 0xFF
+                # Handle keyboard input with proper timing
+                key = cv2.waitKey(frame_delay if not self.paused else 30) & 0xFF
 
             if key == ord('q') or key == 27:  # Q or ESC
                 print("\n⏹️  Stopped by user")
