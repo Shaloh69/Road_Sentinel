@@ -57,15 +57,17 @@ class TrackedBox:
     vx: float = 0.0
     vy: float = 0.0
 
-    def interpolate(self, target_frame: int) -> 'TrackedBox':
+    def interpolate(self, target_frame: int, max_extrapolate_frames: int = 30) -> 'TrackedBox':
         """Interpolate box position to target frame"""
         frames_diff = target_frame - self.frame_num
+        # Limit extrapolation to prevent boxes flying off screen
+        clamped_diff = max(-max_extrapolate_frames, min(frames_diff, max_extrapolate_frames))
         return TrackedBox(
             track_id=self.track_id,
-            x1=self.x1 + self.vx * frames_diff,
-            y1=self.y1 + self.vy * frames_diff,
-            x2=self.x2 + self.vx * frames_diff,
-            y2=self.y2 + self.vy * frames_diff,
+            x1=self.x1 + self.vx * clamped_diff,
+            y1=self.y1 + self.vy * clamped_diff,
+            x2=self.x2 + self.vx * clamped_diff,
+            y2=self.y2 + self.vy * clamped_diff,
             vehicle_type=self.vehicle_type,
             confidence=self.confidence,
             frame_num=target_frame,
