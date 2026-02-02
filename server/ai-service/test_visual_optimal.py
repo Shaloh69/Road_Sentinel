@@ -122,6 +122,7 @@ class OptimalTester:
         self.video_fps = 0
         self.latest_detections = None
         self.processing_lock = threading.Lock()
+        self.ai_frame_interval = 3  # Send frame to AI every N frames
 
     def check_ai_service(self) -> bool:
         try:
@@ -400,7 +401,7 @@ class OptimalTester:
             f"Display FPS: {fps:.1f} (Target: 30 FPS)",
             f"Mode: {mode_text}",
             f"AI Processing: {ai_time:.1f}ms",
-            f"AI Every {self.ai_every_n_frames} frames",
+            f"AI Every {self.ai_frame_interval} frames",
             progress_text if progress_text else f"Frames: {self.stats['total_frames']}",
             "",
             f"🚗 Unique Vehicles: {self.stats['unique_vehicles']}",
@@ -472,7 +473,6 @@ class OptimalTester:
         last_time = time.time()
         display_fps = 0
         last_ai_time = 0
-        ai_frame_interval = 3  # Send frame to AI every N frames
 
         # Start async AI workers
         self.start_async_processing()
@@ -500,7 +500,7 @@ class OptimalTester:
                     self.stats['total_frames'] += 1
 
                     # Send frame to AI workers (non-blocking, async)
-                    if frame_count % ai_frame_interval == 1:
+                    if frame_count % self.ai_frame_interval == 1:
                         try:
                             self.frame_queue.put_nowait((frame.copy(), frame_count))
                         except queue.Full:
@@ -536,7 +536,7 @@ class OptimalTester:
                     last_time = current_time
 
                     # Draw info panel
-                    is_ai_frame = (frame_count % ai_frame_interval == 1)
+                    is_ai_frame = (frame_count % self.ai_frame_interval == 1)
                     annotated = self.draw_info_panel(annotated, display_fps, last_ai_time,
                                                      frame_count, total_frames, is_ai_frame)
 
