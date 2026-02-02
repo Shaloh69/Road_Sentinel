@@ -24,6 +24,27 @@ Complete guide for testing the AI service with your own traffic videos, cameras,
 
 ## 🎥 **VISUAL TESTING (RECOMMENDED)** - See AI in Action!
 
+### 🚀 PROFESSIONAL VERSION (30 FPS + Unique Vehicle Tracking)
+
+**NEW!** For production-ready testing with accurate vehicle counting:
+
+```powershell
+python test_visual_pro.py "C:\path\to\your\video.mp4"
+```
+
+**Features:**
+- ✅ **30+ FPS detection** (multi-threaded with 3-5 workers)
+- ✅ **Unique vehicle tracking** (DeepSORT with IDs)
+- ✅ **No duplicate counting** (same car counted once)
+- ✅ **Bidirectional counting** (IN/OUT with entry/exit lines)
+- ✅ **Vehicle state management** (gracefully handles incomplete journeys)
+
+**[See full documentation](./README_PROFESSIONAL.md)**
+
+---
+
+### 📺 BASIC VERSION (Quick Testing)
+
 **Best for:** Real-time visual feedback with bounding boxes and live detection
 
 ### Test with Your Video File
