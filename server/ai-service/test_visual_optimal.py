@@ -74,7 +74,7 @@ class OptimalTester:
     """30 FPS with ZERO LAG using DeepSORT predictive tracking"""
 
     def __init__(self, confidence: float = 0.5, entry_line_y: float = 0.3,
-                 timeout_seconds: float = 120, num_workers: int = 2):
+                 timeout_seconds: float = 120, num_workers: int = 5):
         self.confidence = confidence
         self.paused = False
         self.entry_line_y = entry_line_y
@@ -82,19 +82,20 @@ class OptimalTester:
         self.timeout_frames = 0
         self.num_workers = num_workers
 
-        # DeepSORT tracker with optimized parameters for fewer ID switches
+        # DeepSORT tracker with AGGRESSIVE parameters for fast predictions
         self.tracker = DeepSort(
-            max_age=60,  # Keep tracks longer without detection (reduce ID switches)
-            n_init=2,    # Confirm tracks faster (less delay)
-            max_iou_distance=0.8,  # More lenient matching (reduce ID switches)
+            max_age=90,  # Keep tracks alive even longer (stronger predictions)
+            n_init=1,    # Confirm tracks immediately (faster response)
+            max_iou_distance=0.9,  # Very lenient matching (reduce ID switches)
             embedder="mobilenet",
             half=True,
-            embedder_gpu=True
+            embedder_gpu=True,
+            max_cosine_distance=0.3  # More aggressive appearance matching
         )
 
-        # Async AI processing
-        self.frame_queue = queue.Queue(maxsize=2)
-        self.result_queue = queue.Queue(maxsize=5)
+        # Async AI processing with larger queues for 5 workers
+        self.frame_queue = queue.Queue(maxsize=10)  # Allow more frames to queue
+        self.result_queue = queue.Queue(maxsize=10)  # Allow more results to queue
         self.stop_processing = threading.Event()
         self.workers = []
 
@@ -122,7 +123,8 @@ class OptimalTester:
         self.video_fps = 0
         self.latest_detections = None
         self.processing_lock = threading.Lock()
-        self.ai_frame_interval = 3  # Send frame to AI every N frames
+        self.ai_frame_interval = 2  # Send frame to AI every 2 frames (more frequent AI)
+        self.cached_tracks = []  # Cache last predictions for ultra-fast display
 
     def check_ai_service(self) -> bool:
         try:
@@ -213,10 +215,10 @@ class OptimalTester:
     def update_tracking(self, detections: Optional[List[Dict]], frame: np.ndarray,
                        frame_num: int, is_ai_frame: bool):
         """
-        Update tracking with AI detections OR use predictions
+        OPTIMIZED: Only update tracker on AI frames, use cached predictions otherwise
 
         is_ai_frame=True: New AI detections, update tracker
-        is_ai_frame=False: No AI, use tracker predictions only
+        is_ai_frame=False: Use cached predictions (ZERO processing time!)
         """
 
         if is_ai_frame and detections:
@@ -228,9 +230,12 @@ class OptimalTester:
                 raw_detections.append(([x1, y1, w, h], det['confidence'], det['class']))
 
             tracks = self.tracker.update_tracks(raw_detections, frame=frame)
+            # Cache these tracks for prediction frames
+            self.cached_tracks = tracks
         else:
-            # Prediction frame: Update tracker without detections (uses Kalman prediction)
-            tracks = self.tracker.update_tracks([], frame=frame)
+            # Prediction frame: Let tracker predict WITHOUT processing frame (fast!)
+            # Don't pass frame to avoid embedder processing
+            tracks = self.tracker.update_tracks([], frame=None)
 
         # Process tracks (both confirmed and predicted)
         tracked_detections = []
@@ -326,13 +331,9 @@ class OptimalTester:
 
             color = VEHICLE_COLORS.get(vehicle_type, VEHICLE_COLORS['unknown'])
 
-            # Draw bounding box (dashed if predicted)
-            if is_predicted:
-                # Dashed box for predictions
-                self.draw_dashed_rectangle(annotated, (x, y), (x + w, y + h), color, 2)
-            else:
-                # Solid box for AI detections
-                cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
+            # Draw bounding box (thinner line if predicted for speed)
+            thickness = 1 if is_predicted else 2
+            cv2.rectangle(annotated, (x, y), (x + w, y + h), color, thickness)
 
             # Draw unique ID and label
             if track_id is not None and track_id != -1:
@@ -383,10 +384,9 @@ class OptimalTester:
                        is_ai_frame: bool = False) -> np.ndarray:
         height, width = frame.shape[:2]
 
-        overlay = frame.copy()
+        # Faster: draw directly on frame without overlay blending
         panel_height = 320
-        cv2.rectangle(overlay, (0, 0), (450, panel_height), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+        cv2.rectangle(frame, (0, 0), (450, panel_height), (0, 0, 0), -1)
 
         y_pos = 25
         line_height = 22
@@ -412,8 +412,8 @@ class OptimalTester:
             f"⏱️  Timed Out ({timeout_mins:.0f}m): {self.stats['vehicles_timed_out']}",
             "",
             "Legend:",
-            "Solid box = AI Detection",
-            "Dashed box = Predicted",
+            "Thick box = AI Detection",
+            "Thin box = Predicted",
             "",
             "Controls: SPACE=Pause Q=Quit"
         ]
@@ -428,8 +428,7 @@ class OptimalTester:
         if self.stats['vehicle_types']:
             x_pos = width - 200
             y_pos = 25
-            cv2.rectangle(overlay, (x_pos - 10, 0), (width, 200), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+            cv2.rectangle(frame, (x_pos - 10, 0), (width, 200), (0, 0, 0), -1)
 
             cv2.putText(frame, "Vehicle Types:", (x_pos, y_pos),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -484,15 +483,18 @@ class OptimalTester:
 
         try:
             while True:
-                # Check for AI results (non-blocking)
-                try:
-                    result = self.result_queue.get_nowait()
-                    if result:
-                        with self.processing_lock:
-                            self.latest_detections = result.get('detections', [])
-                            last_ai_time = result.get('processing_time_ms', 0)
-                except queue.Empty:
-                    pass
+                # Check for ALL available AI results (drain queue for latest)
+                latest_result = None
+                while True:
+                    try:
+                        latest_result = self.result_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
+                if latest_result:
+                    with self.processing_lock:
+                        self.latest_detections = latest_result.get('detections', [])
+                        last_ai_time = latest_result.get('processing_time_ms', 0)
 
                 if not self.paused:
                     ret, frame = cap.read()
@@ -505,7 +507,8 @@ class OptimalTester:
                     self.stats['total_frames'] += 1
 
                     # Send frame to AI workers (non-blocking, async)
-                    if frame_count % self.ai_frame_interval == 1:
+                    # Process every 2nd frame with AI for high detection rate
+                    if frame_count % self.ai_frame_interval == 0:
                         try:
                             self.frame_queue.put_nowait((frame.copy(), frame_count))
                         except queue.Full:
@@ -541,7 +544,7 @@ class OptimalTester:
                     last_time = current_time
 
                     # Draw info panel
-                    is_ai_frame = (frame_count % self.ai_frame_interval == 1)
+                    is_ai_frame = (frame_count % self.ai_frame_interval == 0)
                     annotated = self.draw_info_panel(annotated, display_fps, last_ai_time,
                                                      frame_count, total_frames, is_ai_frame)
 
@@ -616,8 +619,8 @@ Examples:
                        help='Entry line position (default: 0.3)')
     parser.add_argument('--timeout', type=float, default=120,
                        help='Vehicle timeout in seconds (default: 120)')
-    parser.add_argument('--workers', type=int, default=2,
-                       help='Number of async AI workers (default: 2)')
+    parser.add_argument('--workers', type=int, default=5,
+                       help='Number of async AI workers (default: 5, more = faster)')
 
     args = parser.parse_args()
 
