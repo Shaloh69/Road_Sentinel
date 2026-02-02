@@ -49,9 +49,7 @@ class VehicleState:
         self.first_seen_frame = first_seen_frame
         self.last_seen_frame = first_seen_frame
         self.crossed_entry = False
-        self.crossed_exit = False
-        self.entry_time = None
-        self.exit_time = None
+        self.entry_frame = None
         self.bbox_history = deque(maxlen=30)  # Keep last 30 positions
 
     def update_position(self, bbox: Tuple[int, int, int, int], frame_num: int):
@@ -70,19 +68,26 @@ class VehicleState:
         """Check if vehicle is still active (seen recently)"""
         return (current_frame - self.last_seen_frame) < timeout_frames
 
+    def is_timed_out(self, current_frame: int, timeout_frames: int) -> bool:
+        """Check if vehicle has been in frame too long without exiting (2 min timeout)"""
+        if not self.crossed_entry or not self.entry_frame:
+            return False
+        return (current_frame - self.entry_frame) >= timeout_frames
+
 
 class ProVisualTester:
     """Professional visual testing with multi-threading and tracking"""
 
     def __init__(self, confidence: float = 0.5, num_workers: int = 3,
-                 entry_line_y: float = 0.3, exit_line_y: float = 0.7):
+                 entry_line_y: float = 0.3, timeout_seconds: float = 120):
         self.confidence = confidence
         self.num_workers = num_workers
         self.paused = False
 
-        # Counting lines (as fraction of frame height)
+        # Counting line (as fraction of frame height)
         self.entry_line_y = entry_line_y  # 30% from top
-        self.exit_line_y = exit_line_y    # 70% from top
+        self.timeout_seconds = timeout_seconds  # 2 minutes default
+        self.timeout_frames = 0  # Will be calculated based on video FPS
 
         # DeepSORT tracker
         self.tracker = DeepSort(
@@ -104,15 +109,15 @@ class ProVisualTester:
         # Vehicle tracking state
         self.vehicles = {}  # track_id -> VehicleState
         self.counted_in = set()  # IDs that crossed entry line
-        self.counted_out = set()  # IDs that crossed exit line
+        self.timed_out_vehicles = set()  # IDs that timed out
 
         # Statistics
         self.stats = {
             'total_frames': 0,
             'processed_frames': 0,
             'unique_vehicles': 0,
-            'vehicles_in': 0,
-            'vehicles_out': 0,
+            'vehicles_entered': 0,
+            'vehicles_timed_out': 0,
             'active_vehicles': 0,
             'vehicle_types': defaultdict(int),
             'incidents': 0,
@@ -291,14 +296,13 @@ class ProVisualTester:
         return tracked_detections
 
     def check_line_crossing(self, vehicle: VehicleState, frame_num: int):
-        """Check if vehicle crossed entry or exit lines"""
+        """Check if vehicle crossed entry line"""
         center = vehicle.get_center()
         if not center:
             return
 
         cx, cy = center
         entry_line_px = int(self.frame_height * self.entry_line_y)
-        exit_line_px = int(self.frame_height * self.exit_line_y)
 
         # Check entry line crossing (entering from top)
         if not vehicle.crossed_entry and cy > entry_line_px:
@@ -307,24 +311,19 @@ class ProVisualTester:
                 prev_center_y = int((vehicle.bbox_history[-2][1] + vehicle.bbox_history[-2][3]) / 2)
                 if prev_center_y <= entry_line_px:
                     vehicle.crossed_entry = True
-                    vehicle.entry_time = frame_num
+                    vehicle.entry_frame = frame_num
                     if vehicle.track_id not in self.counted_in:
                         self.counted_in.add(vehicle.track_id)
-                        self.stats['vehicles_in'] += 1
+                        self.stats['vehicles_entered'] += 1
                         print(f"✅ Vehicle #{vehicle.track_id} ({vehicle.vehicle_type}) ENTERED")
 
-        # Check exit line crossing (exiting from bottom)
-        if vehicle.crossed_entry and not vehicle.crossed_exit and cy > exit_line_px:
-            if len(vehicle.bbox_history) > 1:
-                # Check if previously above line
-                prev_center_y = int((vehicle.bbox_history[-2][1] + vehicle.bbox_history[-2][3]) / 2)
-                if prev_center_y <= exit_line_px:
-                    vehicle.crossed_exit = True
-                    vehicle.exit_time = frame_num
-                    if vehicle.track_id not in self.counted_out:
-                        self.counted_out.add(vehicle.track_id)
-                        self.stats['vehicles_out'] += 1
-                        print(f"🚪 Vehicle #{vehicle.track_id} ({vehicle.vehicle_type}) EXITED")
+        # Check for timeout (2 minutes after entry)
+        if vehicle.is_timed_out(frame_num, self.timeout_frames):
+            if vehicle.track_id not in self.timed_out_vehicles:
+                self.timed_out_vehicles.add(vehicle.track_id)
+                self.stats['vehicles_timed_out'] += 1
+                time_elapsed = (frame_num - vehicle.entry_frame) / self.video_fps if hasattr(self, 'video_fps') else 0
+                print(f"⏱️  Vehicle #{vehicle.track_id} ({vehicle.vehicle_type}) TIMED OUT after {time_elapsed:.1f}s")
 
     def draw_detections(self, frame: np.ndarray, detections: List[Dict]) -> np.ndarray:
         """Draw bounding boxes with unique IDs and labels on frame"""
@@ -373,20 +372,14 @@ class ProVisualTester:
         return annotated
 
     def draw_counting_lines(self, frame: np.ndarray) -> np.ndarray:
-        """Draw entry and exit counting lines"""
+        """Draw entry counting line"""
         height, width = frame.shape[:2]
 
-        # Entry line (top)
+        # Entry line
         entry_y = int(height * self.entry_line_y)
-        cv2.line(frame, (0, entry_y), (width, entry_y), LINE_COLOR, 2)
+        cv2.line(frame, (0, entry_y), (width, entry_y), LINE_COLOR, 3)
         cv2.putText(frame, "ENTRY LINE", (10, entry_y - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, LINE_COLOR, 2)
-
-        # Exit line (bottom)
-        exit_y = int(height * self.exit_line_y)
-        cv2.line(frame, (0, exit_y), (width, exit_y), LINE_COLOR, 2)
-        cv2.putText(frame, "EXIT LINE", (10, exit_y + 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, LINE_COLOR, 2)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, LINE_COLOR, 2)
 
         return frame
 
@@ -411,6 +404,8 @@ class ProVisualTester:
             progress_pct = (current_pos / total_frames) * 100
             progress_text = f"Progress: {current_pos}/{total_frames} ({progress_pct:.1f}%)"
 
+        timeout_mins = self.timeout_seconds / 60
+
         info_lines = [
             f"Display FPS: {fps:.1f}",
             f"AI Processing: {processing_time:.1f}ms",
@@ -418,9 +413,9 @@ class ProVisualTester:
             progress_text if progress_text else f"Frames: {self.stats['total_frames']}",
             "",
             f"🚗 Unique Vehicles: {self.stats['unique_vehicles']}",
-            f"📥 Vehicles IN: {self.stats['vehicles_in']}",
-            f"📤 Vehicles OUT: {self.stats['vehicles_out']}",
+            f"📥 Vehicles ENTERED: {self.stats['vehicles_entered']}",
             f"🔄 Active Now: {self.stats['active_vehicles']}",
+            f"⏱️  Timed Out ({timeout_mins:.0f}m): {self.stats['vehicles_timed_out']}",
             "",
             "Controls:",
             "SPACE - Pause/Resume",
@@ -467,8 +462,12 @@ class ProVisualTester:
         # Get video properties
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         video_fps = cap.get(cv2.CAP_PROP_FPS)
+        self.video_fps = video_fps  # Store for timeout calculations
         self.frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Calculate timeout in frames (e.g., 2 minutes = 120 seconds * FPS)
+        self.timeout_frames = int(self.timeout_seconds * video_fps)
 
         # Calculate frame delay for playback timing
         frame_delay = int(1000 / video_fps) if video_fps > 0 else 30  # milliseconds
@@ -477,7 +476,8 @@ class ProVisualTester:
         print(f"🤖 Starting AI detection (confidence: {self.confidence})")
         print(f"🧵 Multi-threaded with {self.num_workers} workers")
         print(f"🎯 DeepSORT tracking enabled")
-        print(f"📏 Entry line: {self.entry_line_y*100:.0f}%, Exit line: {self.exit_line_y*100:.0f}%")
+        print(f"📏 Entry line: {self.entry_line_y*100:.0f}%")
+        print(f"⏱️  Vehicle timeout: {self.timeout_seconds/60:.0f} minutes ({self.timeout_frames} frames)")
         print()
 
         window_name = "Road Sentinel - Professional AI Detection"
@@ -619,9 +619,10 @@ class ProVisualTester:
         print(f"Frames processed with AI: {self.stats['processed_frames']}")
         print(f"\n🚗 VEHICLE TRACKING:")
         print(f"   Unique vehicles seen: {self.stats['unique_vehicles']}")
-        print(f"   Vehicles ENTERED (IN): {self.stats['vehicles_in']}")
-        print(f"   Vehicles EXITED (OUT): {self.stats['vehicles_out']}")
-        print(f"   Still in frame: {self.stats['vehicles_in'] - self.stats['vehicles_out']}")
+        print(f"   Vehicles ENTERED: {self.stats['vehicles_entered']}")
+        print(f"   Vehicles timed out ({self.timeout_seconds/60:.0f} min): {self.stats['vehicles_timed_out']}")
+        still_active = self.stats['vehicles_entered'] - self.stats['vehicles_timed_out']
+        print(f"   Still being tracked: {still_active}")
 
         if self.stats['vehicle_types']:
             print("\n🚙 Vehicle Types:")
@@ -638,7 +639,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Test with video file (default 3 workers)
+  # Test with video file (default 3 workers, 2 min timeout)
   python test_visual_pro.py video.mp4
 
   # Use 5 workers for maximum performance
@@ -647,8 +648,8 @@ Examples:
   # Adjust confidence threshold
   python test_visual_pro.py video.mp4 --confidence 0.3
 
-  # Custom counting lines (as percentage of frame height)
-  python test_visual_pro.py video.mp4 --entry 0.2 --exit 0.8
+  # Custom entry line and timeout
+  python test_visual_pro.py video.mp4 --entry 0.2 --timeout 180
         """
     )
 
@@ -659,8 +660,8 @@ Examples:
                        help='Number of AI processing workers (default: 3, recommended: 3-5)')
     parser.add_argument('--entry', type=float, default=0.3,
                        help='Entry line position (0.0-1.0, default: 0.3 = 30%% from top)')
-    parser.add_argument('--exit', type=float, default=0.7,
-                       help='Exit line position (0.0-1.0, default: 0.7 = 70%% from top)')
+    parser.add_argument('--timeout', type=float, default=120,
+                       help='Vehicle timeout in seconds (default: 120 = 2 minutes)')
 
     args = parser.parse_args()
 
@@ -669,7 +670,7 @@ Examples:
         confidence=args.confidence,
         num_workers=args.workers,
         entry_line_y=args.entry,
-        exit_line_y=args.exit
+        timeout_seconds=args.timeout
     )
 
     print("=" * 70)
