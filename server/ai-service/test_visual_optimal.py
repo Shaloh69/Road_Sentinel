@@ -92,11 +92,18 @@ class OptimalTester:
             embedder_gpu=True
         )
 
-        # Async AI processing
-        self.frame_queue = queue.Queue(maxsize=2)
-        self.result_queue = queue.Queue(maxsize=5)
+        # Async AI processing - larger queues for better worker utilization
+        self.frame_queue = queue.Queue(maxsize=max(16, num_workers * 2))
+        self.result_queue = queue.Queue(maxsize=max(20, num_workers * 3))
         self.stop_processing = threading.Event()
         self.workers = []
+
+        # Dynamic AI interval tracking
+        self.base_ai_frame_interval = 3  # Base interval
+        self.current_ai_interval = 3  # Dynamically adjusted
+        self.max_ai_interval = 10  # Don't skip more than this
+        self.queue_high_watermark = max(8, num_workers)  # When to start skipping
+        self.queue_low_watermark = max(2, num_workers // 2)  # When to resume normal rate
 
         # Vehicle tracking state
         self.vehicles = {}
@@ -114,7 +121,10 @@ class OptimalTester:
             'active_vehicles': 0,
             'vehicle_types': defaultdict(int),
             'avg_ai_time': 0,
-            'ai_times': []
+            'ai_times': [],
+            'ai_intervals': [],  # Track dynamic interval changes
+            'frames_queued': 0,
+            'frames_dropped': 0
         }
 
         self.frame_width = 0
@@ -122,7 +132,6 @@ class OptimalTester:
         self.video_fps = 0
         self.latest_detections = None
         self.processing_lock = threading.Lock()
-        self.ai_frame_interval = 3  # Send frame to AI every N frames
 
     def check_ai_service(self) -> bool:
         try:
@@ -142,17 +151,13 @@ class OptimalTester:
                 result = self.detect_frame(frame, frame_num)
 
                 if result:
-                    # Clear old results and add new one
-                    while self.result_queue.qsize() > 2:
-                        try:
-                            self.result_queue.get_nowait()
-                        except queue.Empty:
-                            break
-
+                    result['frame_num'] = frame_num  # Track which frame this is for
+                    # Use blocking put with timeout - don't discard valid results
                     try:
-                        self.result_queue.put_nowait(result)
+                        self.result_queue.put(result, timeout=0.5)
                         self.stats['ai_processed_frames'] += 1
                     except queue.Full:
+                        # Only discard if truly full after waiting
                         pass
 
                 self.frame_queue.task_done()
@@ -380,11 +385,11 @@ class OptimalTester:
 
     def draw_info_panel(self, frame: np.ndarray, fps: float, ai_time: float,
                        current_pos: int = 0, total_frames: int = 0,
-                       is_ai_frame: bool = False) -> np.ndarray:
+                       is_ai_frame: bool = False, queue_size: int = 0) -> np.ndarray:
         height, width = frame.shape[:2]
 
         overlay = frame.copy()
-        panel_height = 320
+        panel_height = 360
         cv2.rectangle(overlay, (0, 0), (450, panel_height), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
 
@@ -399,17 +404,21 @@ class OptimalTester:
         timeout_mins = self.timeout_seconds / 60
         mode_text = "AI FRAME" if is_ai_frame else "PREDICTED"
 
+        # Calculate effective AI FPS
+        effective_ai_fps = 30.0 / self.current_ai_interval if self.current_ai_interval > 0 else 0
+
         info_lines = [
             f"Display FPS: {fps:.1f} (Target: 30 FPS)",
             f"Mode: {mode_text}",
             f"AI Processing: {ai_time:.1f}ms",
-            f"AI Every {self.ai_frame_interval} frames",
+            f"AI Interval: {self.current_ai_interval} frames (~{effective_ai_fps:.1f} AI FPS)",
+            f"Queue: {queue_size}/{self.frame_queue.maxsize} | Workers: {self.num_workers}",
             progress_text if progress_text else f"Frames: {self.stats['total_frames']}",
             "",
-            f"🚗 Unique Vehicles: {self.stats['unique_vehicles']}",
-            f"📥 Vehicles ENTERED: {self.stats['vehicles_entered']}",
-            f"🔄 Active Now: {self.stats['active_vehicles']}",
-            f"⏱️  Timed Out ({timeout_mins:.0f}m): {self.stats['vehicles_timed_out']}",
+            f"Unique Vehicles: {self.stats['unique_vehicles']}",
+            f"Vehicles ENTERED: {self.stats['vehicles_entered']}",
+            f"Active Now: {self.stats['active_vehicles']}",
+            f"Timed Out ({timeout_mins:.0f}m): {self.stats['vehicles_timed_out']}",
             "",
             "Legend:",
             "Solid box = AI Detection",
@@ -468,6 +477,8 @@ class OptimalTester:
         print(f"📹 Video: {total_frames} frames, {self.video_fps:.2f} FPS (native), {self.frame_width}x{self.frame_height}")
         print(f"🎯 OPTIMAL MODE - Playing at {target_fps} FPS with ZERO LAG")
         print(f"⚡ DeepSORT predictive tracking + {self.num_workers} async AI workers")
+        print(f"📦 Queue sizes: frame={self.frame_queue.maxsize}, result={self.result_queue.maxsize}")
+        print(f"🔄 Dynamic AI interval: {self.base_ai_frame_interval}-{self.max_ai_interval} frames (auto-adjusts)")
         print(f"📏 Entry line: {self.entry_line_y*100:.0f}%")
         print()
 
@@ -504,12 +515,23 @@ class OptimalTester:
                     frame_count += 1
                     self.stats['total_frames'] += 1
 
+                    # Dynamic AI interval adjustment based on queue backlog
+                    current_queue_size = self.frame_queue.qsize()
+                    if current_queue_size >= self.queue_high_watermark:
+                        # Queue backing up - skip more frames
+                        self.current_ai_interval = min(self.current_ai_interval + 1, self.max_ai_interval)
+                    elif current_queue_size <= self.queue_low_watermark:
+                        # Queue draining - process more frames
+                        self.current_ai_interval = max(self.current_ai_interval - 1, self.base_ai_frame_interval)
+
                     # Send frame to AI workers (non-blocking, async)
-                    if frame_count % self.ai_frame_interval == 1:
+                    if frame_count % self.current_ai_interval == 1:
                         try:
                             self.frame_queue.put_nowait((frame.copy(), frame_count))
+                            self.stats['frames_queued'] += 1
+                            self.stats['ai_intervals'].append(self.current_ai_interval)
                         except queue.Full:
-                            pass  # Skip if queue full
+                            self.stats['frames_dropped'] += 1  # Track dropped frames
 
                     # ALWAYS use predictions for display (NEVER wait for AI)
                     with self.processing_lock:
@@ -541,9 +563,10 @@ class OptimalTester:
                     last_time = current_time
 
                     # Draw info panel
-                    is_ai_frame = (frame_count % self.ai_frame_interval == 1)
+                    is_ai_frame = (frame_count % self.current_ai_interval == 1)
                     annotated = self.draw_info_panel(annotated, display_fps, last_ai_time,
-                                                     frame_count, total_frames, is_ai_frame)
+                                                     frame_count, total_frames, is_ai_frame,
+                                                     current_queue_size)
 
                     # Show frame
                     cv2.imshow(window_name, annotated)
@@ -568,24 +591,41 @@ class OptimalTester:
 
     def print_statistics(self):
         print("\n" + "=" * 70)
-        print("📊 SESSION STATISTICS")
+        print("SESSION STATISTICS")
         print("=" * 70)
         print(f"Total frames: {self.stats['total_frames']}")
         print(f"AI processed: {self.stats['ai_processed_frames']}")
         print(f"Predicted: {self.stats['predicted_frames']}")
-        print(f"\n🚗 VEHICLE TRACKING:")
+        print(f"Frames queued: {self.stats['frames_queued']}")
+        print(f"Frames dropped (queue full): {self.stats['frames_dropped']}")
+
+        print(f"\nVEHICLE TRACKING:")
         print(f"   Unique vehicles seen: {self.stats['unique_vehicles']}")
         print(f"   Vehicles ENTERED: {self.stats['vehicles_entered']}")
         print(f"   Vehicles timed out ({self.timeout_seconds/60:.0f} min): {self.stats['vehicles_timed_out']}")
 
         if self.stats['ai_times']:
             avg_time = sum(self.stats['ai_times']) / len(self.stats['ai_times'])
-            print(f"\n⚡ Performance:")
+            min_time = min(self.stats['ai_times'])
+            max_time = max(self.stats['ai_times'])
+            print(f"\nPERFORMANCE:")
+            print(f"   Workers: {self.num_workers}")
             print(f"   Avg AI processing: {avg_time:.1f}ms per frame")
-            print(f"   Max achievable FPS: {1000/avg_time:.1f} FPS")
+            print(f"   Min/Max AI time: {min_time:.1f}ms / {max_time:.1f}ms")
+            print(f"   Theoretical max (1 worker): {1000/avg_time:.1f} FPS")
+            print(f"   Theoretical max ({self.num_workers} workers): {self.num_workers * 1000/avg_time:.1f} FPS")
+
+        if self.stats['ai_intervals']:
+            avg_interval = sum(self.stats['ai_intervals']) / len(self.stats['ai_intervals'])
+            min_interval = min(self.stats['ai_intervals'])
+            max_interval = max(self.stats['ai_intervals'])
+            print(f"\nDYNAMIC AI INTERVAL:")
+            print(f"   Avg interval: {avg_interval:.1f} frames")
+            print(f"   Range: {min_interval} - {max_interval} frames")
+            print(f"   Effective AI FPS: ~{30/avg_interval:.1f} FPS")
 
         if self.stats['vehicle_types']:
-            print("\n🚙 Vehicle Types:")
+            print("\nVehicle Types:")
             for vtype, count in sorted(self.stats['vehicle_types'].items(),
                                       key=lambda x: x[1], reverse=True):
                 print(f"   {vtype}: {count}")
