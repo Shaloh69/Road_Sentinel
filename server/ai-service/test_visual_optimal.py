@@ -106,13 +106,15 @@ class BoxCache:
             self._boxes = new_boxes
             self._last_update_frame = frame_num
 
-    def get_interpolated(self, frame_num: int, max_age: int = 30) -> List[TrackedBox]:
+    def get_interpolated(self, frame_num: int, max_age: int = 9999) -> List[TrackedBox]:
         """Get boxes interpolated to current frame (called by main thread)"""
         with self._lock:
             result = []
             for track_id, box in self._boxes.items():
                 age = frame_num - box.frame_num
-                if age <= max_age:
+                # Always show boxes - interpolate to current position
+                # Don't filter by age since detection can lag significantly
+                if age <= max_age and age >= 0:
                     interpolated = box.interpolate(frame_num)
                     result.append(interpolated)
             return result
@@ -120,6 +122,10 @@ class BoxCache:
     def get_last_update_frame(self) -> int:
         with self._lock:
             return self._last_update_frame
+
+    def get_box_count(self) -> int:
+        with self._lock:
+            return len(self._boxes)
 
 
 class VehicleState:
@@ -287,6 +293,10 @@ class OptimalTester:
                 frame = result['frame']
                 detections = result.get('detections', [])
 
+                # Debug: print when we get detections
+                if detections:
+                    print(f"[Track] Frame {frame_num}: {len(detections)} detections received")
+
                 start_time = time.time()
 
                 # Convert detections to DeepSORT format
@@ -340,6 +350,10 @@ class OptimalTester:
 
                 # Update the box cache (main thread will read from this)
                 self.box_cache.update(tracked_boxes, frame_num)
+
+                # Debug: print cached boxes
+                if tracked_boxes:
+                    print(f"[Track] Frame {frame_num}: {len(tracked_boxes)} boxes cached")
 
                 last_frame_num = frame_num
                 self.detection_queue.task_done()
@@ -453,7 +467,7 @@ class OptimalTester:
     def draw_info_panel(self, frame: np.ndarray, display_fps: float,
                        current_pos: int, total_frames: int) -> np.ndarray:
         overlay = frame.copy()
-        panel_height = 320
+        panel_height = 360
         cv2.rectangle(overlay, (0, 0), (420, panel_height), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
 
@@ -474,6 +488,7 @@ class OptimalTester:
         progress_pct = (current_pos / total_frames) * 100 if total_frames > 0 else 0
         last_update = self.box_cache.get_last_update_frame()
         detection_lag = current_pos - last_update
+        cached_boxes = self.box_cache.get_box_count()
 
         info_lines = [
             f"Display FPS: {display_fps:.1f}",
@@ -482,6 +497,7 @@ class OptimalTester:
             f"AI Time: {avg_ai_time:.1f}ms ({1000/avg_ai_time:.1f} FPS)" if avg_ai_time > 0 else "AI Time: --",
             f"Track Time: {avg_tracking_time:.1f}ms" if avg_tracking_time > 0 else "Track Time: --",
             f"Detection Lag: {detection_lag} frames",
+            f"Cached Boxes: {cached_boxes}",
             f"AI Processed: {ai_processed}",
             f"",
             f"Unique Vehicles: {unique_vehicles}",
@@ -565,7 +581,8 @@ class OptimalTester:
                             pass  # Skip if queue full
 
                     # Get interpolated boxes from cache (INSTANT - no blocking!)
-                    boxes = self.box_cache.get_interpolated(frame_count, max_age=60)
+                    # Use large max_age since detection can lag significantly behind display
+                    boxes = self.box_cache.get_interpolated(frame_count, max_age=9999)
 
                     # Draw on frame
                     annotated = self.draw_boxes(frame, boxes)
