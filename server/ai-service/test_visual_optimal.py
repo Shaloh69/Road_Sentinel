@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-OPTIMAL Visual Tester - 30 FPS + ZERO LAG
-Uses DeepSORT predictive tracking for perfect sync at full speed
+OPTIMAL Visual Tester - TRUE 30+ FPS with Decoupled Architecture
 
-How it works:
-- Process AI every 2-3 frames (realistic with 40-50ms processing time)
-- Use DeepSORT's Kalman filter to PREDICT positions for intermediate frames
-- Boxes stay perfectly synced because predictions are very accurate
-- 30 FPS playback with zero visual lag!
+Architecture:
+- MAIN THREAD: Display only (never blocks) - reads video, draws cached boxes
+- TRACKING THREAD: Runs DeepSORT (the slow part) in background
+- AI WORKERS: HTTP requests to AI service in parallel
+
+This ensures smooth video playback regardless of AI/tracking speed.
 """
 
 import cv2
@@ -22,6 +22,8 @@ from collections import defaultdict, deque
 from deep_sort_realtime.deepsort_tracker import DeepSort
 import threading
 import queue
+from dataclasses import dataclass, field
+from copy import deepcopy
 
 # AI Service URL
 AI_SERVICE_URL = "http://localhost:8000"
@@ -38,6 +40,86 @@ VEHICLE_COLORS = {
 
 INCIDENT_COLOR = (0, 0, 255)
 LINE_COLOR = (0, 255, 255)
+
+
+@dataclass
+class TrackedBox:
+    """A single tracked bounding box with interpolation support"""
+    track_id: int
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    vehicle_type: str
+    confidence: float
+    frame_num: int
+    # Velocity for interpolation (pixels per frame)
+    vx: float = 0.0
+    vy: float = 0.0
+
+    def interpolate(self, target_frame: int) -> 'TrackedBox':
+        """Interpolate box position to target frame"""
+        frames_diff = target_frame - self.frame_num
+        return TrackedBox(
+            track_id=self.track_id,
+            x1=self.x1 + self.vx * frames_diff,
+            y1=self.y1 + self.vy * frames_diff,
+            x2=self.x2 + self.vx * frames_diff,
+            y2=self.y2 + self.vy * frames_diff,
+            vehicle_type=self.vehicle_type,
+            confidence=self.confidence,
+            frame_num=target_frame,
+            vx=self.vx,
+            vy=self.vy
+        )
+
+
+class BoxCache:
+    """Thread-safe cache of tracked boxes for display"""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._boxes: Dict[int, TrackedBox] = {}  # track_id -> TrackedBox
+        self._last_update_frame = 0
+        self._history: Dict[int, deque] = {}  # track_id -> history of boxes
+
+    def update(self, boxes: List[TrackedBox], frame_num: int):
+        """Update cache with new tracked boxes (called by tracking thread)"""
+        with self._lock:
+            # Calculate velocities from history
+            new_boxes = {}
+            for box in boxes:
+                if box.track_id in self._history:
+                    history = self._history[box.track_id]
+                    if len(history) > 0:
+                        prev = history[-1]
+                        dt = box.frame_num - prev.frame_num
+                        if dt > 0:
+                            box.vx = (box.x1 - prev.x1) / dt
+                            box.vy = (box.y1 - prev.y1) / dt
+                else:
+                    self._history[box.track_id] = deque(maxlen=10)
+
+                self._history[box.track_id].append(box)
+                new_boxes[box.track_id] = box
+
+            self._boxes = new_boxes
+            self._last_update_frame = frame_num
+
+    def get_interpolated(self, frame_num: int, max_age: int = 30) -> List[TrackedBox]:
+        """Get boxes interpolated to current frame (called by main thread)"""
+        with self._lock:
+            result = []
+            for track_id, box in self._boxes.items():
+                age = frame_num - box.frame_num
+                if age <= max_age:
+                    interpolated = box.interpolate(frame_num)
+                    result.append(interpolated)
+            return result
+
+    def get_last_update_frame(self) -> int:
+        with self._lock:
+            return self._last_update_frame
 
 
 class VehicleState:
@@ -64,14 +146,9 @@ class VehicleState:
     def is_active(self, current_frame: int, timeout_frames: int = 30) -> bool:
         return (current_frame - self.last_seen_frame) < timeout_frames
 
-    def is_timed_out(self, current_frame: int, timeout_frames: int) -> bool:
-        if not self.crossed_entry or not self.entry_frame:
-            return False
-        return (current_frame - self.entry_frame) >= timeout_frames
-
 
 class OptimalTester:
-    """30 FPS with ZERO LAG using DeepSORT predictive tracking"""
+    """TRUE 30+ FPS with fully decoupled architecture"""
 
     def __init__(self, confidence: float = 0.5, entry_line_y: float = 0.3,
                  timeout_seconds: float = 120, num_workers: int = 2,
@@ -82,58 +159,45 @@ class OptimalTester:
         self.timeout_seconds = timeout_seconds
         self.timeout_frames = 0
         self.num_workers = num_workers
-        self.detection_mode = detection_mode  # 'traffic', 'incidents', or 'all'
+        self.detection_mode = detection_mode
 
-        # DeepSORT tracker with optimized parameters for fewer ID switches
-        self.tracker = DeepSort(
-            max_age=60,  # Keep tracks longer without detection (reduce ID switches)
-            n_init=2,    # Confirm tracks faster (less delay)
-            max_iou_distance=0.8,  # More lenient matching (reduce ID switches)
-            embedder="mobilenet",
-            half=True,
-            embedder_gpu=True
-        )
+        # Thread-safe box cache for display
+        self.box_cache = BoxCache()
 
-        # Async AI processing - larger queues for better worker utilization
+        # Queues for inter-thread communication
         self.frame_queue = queue.Queue(maxsize=max(16, num_workers * 2))
-        self.result_queue = queue.Queue(maxsize=max(20, num_workers * 3))
-        self.stop_processing = threading.Event()
-        self.workers = []
+        self.detection_queue = queue.Queue(maxsize=max(20, num_workers * 3))
 
-        # Dynamic AI interval tracking
-        self.base_ai_frame_interval = 3  # Base interval
-        self.current_ai_interval = 3  # Dynamically adjusted
-        self.max_ai_interval = 10  # Don't skip more than this
-        self.queue_high_watermark = max(8, num_workers)  # When to start skipping
-        self.queue_low_watermark = max(2, num_workers // 2)  # When to resume normal rate
+        # Thread control
+        self.stop_event = threading.Event()
+        self.ai_workers = []
+        self.tracking_thread = None
 
-        # Vehicle tracking state
+        # Vehicle tracking state (updated by tracking thread)
         self.vehicles = {}
         self.counted_in = set()
         self.timed_out_vehicles = set()
+        self.vehicles_lock = threading.Lock()
 
         # Statistics
         self.stats = {
             'total_frames': 0,
             'ai_processed_frames': 0,
-            'predicted_frames': 0,
+            'display_fps_samples': deque(maxlen=60),
             'unique_vehicles': 0,
             'vehicles_entered': 0,
             'vehicles_timed_out': 0,
             'active_vehicles': 0,
             'vehicle_types': defaultdict(int),
-            'avg_ai_time': 0,
             'ai_times': [],
-            'ai_intervals': [],  # Track dynamic interval changes
-            'frames_queued': 0,
-            'frames_dropped': 0
+            'tracking_times': [],
         }
+        self.stats_lock = threading.Lock()
 
         self.frame_width = 0
         self.frame_height = 0
         self.video_fps = 0
-        self.latest_detections = None
-        self.processing_lock = threading.Lock()
+        self.current_frame_num = 0
 
     def check_ai_service(self) -> bool:
         try:
@@ -142,301 +206,291 @@ class OptimalTester:
         except:
             return False
 
-    def _processing_worker(self):
-        """Background worker for async AI processing"""
-        while not self.stop_processing.is_set():
+    # ==================== AI WORKER THREAD ====================
+    def _ai_worker(self):
+        """Background worker: sends frames to AI service"""
+        while not self.stop_event.is_set():
             try:
                 frame_data = self.frame_queue.get(timeout=0.1)
+                if frame_data is None:
+                    continue
+
                 frame, frame_num = frame_data
 
-                # Process with AI (this blocks but it's in background thread)
-                result = self.detect_frame(frame, frame_num)
+                # Encode and send to AI service
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+                _, buffer = cv2.imencode('.jpg', frame, encode_param)
 
-                if result:
-                    result['frame_num'] = frame_num  # Track which frame this is for
-                    # Use blocking put with timeout - don't discard valid results
-                    try:
-                        self.result_queue.put(result, timeout=0.5)
+                files = {"image": ("frame.jpg", buffer.tobytes(), "image/jpeg")}
+                data = {
+                    "camera_id": f"OPTIMAL-{frame_num}",
+                    "confidence_threshold": str(self.confidence)
+                }
+
+                # Choose endpoint
+                if self.detection_mode == 'traffic':
+                    endpoint = f"{AI_SERVICE_URL}/api/detect/traffic"
+                elif self.detection_mode == 'incidents':
+                    endpoint = f"{AI_SERVICE_URL}/api/detect/incidents"
+                else:
+                    endpoint = f"{AI_SERVICE_URL}/api/detect"
+
+                start_time = time.time()
+                response = requests.post(endpoint, files=files, data=data, timeout=10)
+                processing_time = (time.time() - start_time) * 1000
+
+                if response.status_code == 200:
+                    result = response.json()
+                    result['frame_num'] = frame_num
+                    result['frame'] = frame  # Include frame for DeepSORT embeddings
+                    result['processing_time_ms'] = processing_time
+
+                    with self.stats_lock:
+                        self.stats['ai_times'].append(processing_time)
                         self.stats['ai_processed_frames'] += 1
+
+                    # Send to tracking thread
+                    try:
+                        self.detection_queue.put_nowait(result)
                     except queue.Full:
-                        # Only discard if truly full after waiting
-                        pass
+                        pass  # Drop if tracking can't keep up
 
                 self.frame_queue.task_done()
 
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"Worker error: {e}")
+                print(f"AI worker error: {e}")
 
-    def start_async_processing(self):
-        """Start background AI workers"""
-        self.stop_processing.clear()
-        for i in range(self.num_workers):
-            worker = threading.Thread(target=self._processing_worker, daemon=True)
-            worker.start()
-            self.workers.append(worker)
-        print(f"🚀 Started {self.num_workers} AI workers in background")
-
-    def stop_async_processing(self):
-        """Stop all workers"""
-        self.stop_processing.set()
-        for worker in self.workers:
-            worker.join(timeout=2)
-        self.workers.clear()
-
-    def detect_frame(self, frame: np.ndarray, frame_num: int) -> Optional[Dict[str, Any]]:
-        try:
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
-            _, buffer = cv2.imencode('.jpg', frame, encode_param)
-
-            files = {"image": ("frame.jpg", buffer.tobytes(), "image/jpeg")}
-            data = {
-                "camera_id": f"OPTIMAL-{frame_num}",
-                "confidence_threshold": str(self.confidence)
-            }
-
-            # Choose endpoint based on detection mode
-            # 'traffic' = ~20 FPS (single model)
-            # 'all' = ~10 FPS (both models sequentially)
-            if self.detection_mode == 'traffic':
-                endpoint = f"{AI_SERVICE_URL}/api/detect/traffic"
-            elif self.detection_mode == 'incidents':
-                endpoint = f"{AI_SERVICE_URL}/api/detect/incidents"
-            else:  # 'all'
-                endpoint = f"{AI_SERVICE_URL}/api/detect"
-
-            start_time = time.time()
-            response = requests.post(
-                endpoint,
-                files=files,
-                data=data,
-                timeout=10
-            )
-            processing_time = (time.time() - start_time) * 1000
-
-            if response.status_code == 200:
-                result = response.json()
-                result['processing_time_ms'] = processing_time
-                self.stats['ai_times'].append(processing_time)
-                return result
-
-            return None
-
-        except Exception as e:
-            print(f"Detection error: {e}")
-            return None
-
-    def update_tracking(self, detections: Optional[List[Dict]], frame: np.ndarray,
-                       frame_num: int, is_ai_frame: bool):
-        """
-        Update tracking with AI detections OR use predictions
-
-        is_ai_frame=True: New AI detections, update tracker
-        is_ai_frame=False: No AI, use tracker predictions only
-        """
-
-        if is_ai_frame and detections:
-            # AI frame: Update tracker with new detections
-            raw_detections = []
-            for det in detections:
-                bbox = det['bbox']
-                x1, y1, w, h = bbox['x'], bbox['y'], bbox['width'], bbox['height']
-                raw_detections.append(([x1, y1, w, h], det['confidence'], det['class']))
-
-            tracks = self.tracker.update_tracks(raw_detections, frame=frame)
-        else:
-            # Prediction frame: Update tracker without detections (uses Kalman prediction)
-            tracks = self.tracker.update_tracks([], frame=frame)
-
-        # Process tracks (both confirmed and predicted)
-        tracked_detections = []
-        for track in tracks:
-            # Accept both confirmed and tentative tracks for smooth display
-            if not track.is_confirmed() and not track.is_tentative():
-                continue
-
-            track_id = int(track.track_id)
-            ltrb = track.to_ltrb()
-            x1, y1, x2, y2 = map(int, ltrb)
-
-            # Ensure bbox stays within frame
-            x1 = max(0, min(x1, self.frame_width))
-            y1 = max(0, min(y1, self.frame_height))
-            x2 = max(0, min(x2, self.frame_width))
-            y2 = max(0, min(y2, self.frame_height))
-
-            det_class = track.get_det_class()
-            det_conf = track.get_det_conf() if hasattr(track, 'get_det_conf') else 0.0
-
-            tracked_det = {
-                'track_id': track_id,
-                'class': det_class if det_class else 'unknown',
-                'confidence': det_conf,
-                'bbox': {'x': x1, 'y': y1, 'width': x2-x1, 'height': y2-y1},
-                'predicted': not is_ai_frame  # Mark if this is a prediction
-            }
-
-            tracked_detections.append(tracked_det)
-
-            # Update vehicle state
-            if track_id not in self.vehicles:
-                self.vehicles[track_id] = VehicleState(track_id, tracked_det['class'], frame_num)
-                self.stats['unique_vehicles'] += 1
-                self.stats['vehicle_types'][tracked_det['class']] += 1
-
-            vehicle = self.vehicles[track_id]
-            vehicle.update_position((x1, y1, x2, y2), frame_num)
-
-            # Check line crossing
-            self.check_line_crossing(vehicle, frame_num)
-
-        # Update active vehicles count
-        self.stats['active_vehicles'] = sum(
-            1 for v in self.vehicles.values() if v.is_active(frame_num)
+    # ==================== TRACKING THREAD ====================
+    def _tracking_worker(self):
+        """Background worker: runs DeepSORT tracking (the slow part)"""
+        # Initialize DeepSORT in this thread
+        tracker = DeepSort(
+            max_age=60,
+            n_init=2,
+            max_iou_distance=0.8,
+            embedder="mobilenet",
+            half=True,
+            embedder_gpu=True
         )
 
-        return tracked_detections
+        last_frame_num = 0
 
-    def check_line_crossing(self, vehicle: VehicleState, frame_num: int):
-        center = vehicle.get_center()
-        if not center:
-            return
+        while not self.stop_event.is_set():
+            try:
+                result = self.detection_queue.get(timeout=0.1)
+                if result is None:
+                    continue
 
-        cx, cy = center
-        entry_line_px = int(self.frame_height * self.entry_line_y)
+                frame_num = result['frame_num']
+                frame = result['frame']
+                detections = result.get('detections', [])
 
-        if not vehicle.crossed_entry and cy > entry_line_px:
-            if len(vehicle.bbox_history) > 1:
-                prev_center_y = int((vehicle.bbox_history[-2][1] + vehicle.bbox_history[-2][3]) / 2)
-                if prev_center_y <= entry_line_px:
-                    vehicle.crossed_entry = True
-                    vehicle.entry_frame = frame_num
-                    if vehicle.track_id not in self.counted_in:
-                        self.counted_in.add(vehicle.track_id)
-                        self.stats['vehicles_entered'] += 1
-                        print(f"✅ Vehicle #{vehicle.track_id} ({vehicle.vehicle_type}) ENTERED")
+                start_time = time.time()
 
-        if vehicle.is_timed_out(frame_num, self.timeout_frames):
-            if vehicle.track_id not in self.timed_out_vehicles:
-                self.timed_out_vehicles.add(vehicle.track_id)
-                self.stats['vehicles_timed_out'] += 1
-                time_elapsed = (frame_num - vehicle.entry_frame) / self.video_fps
-                print(f"⏱️  Vehicle #{vehicle.track_id} ({vehicle.vehicle_type}) TIMED OUT after {time_elapsed:.1f}s")
+                # Convert detections to DeepSORT format
+                raw_detections = []
+                for det in detections:
+                    bbox = det['bbox']
+                    x1, y1, w, h = bbox['x'], bbox['y'], bbox['width'], bbox['height']
+                    conf = det.get('confidence', 0.5)
+                    if conf is None:
+                        conf = 0.5
+                    raw_detections.append(([x1, y1, w, h], conf, det['class']))
 
-    def draw_detections(self, frame: np.ndarray, detections: List[Dict]) -> np.ndarray:
+                # Run DeepSORT (this is the slow operation)
+                tracks = tracker.update_tracks(raw_detections, frame=frame)
+
+                tracking_time = (time.time() - start_time) * 1000
+                with self.stats_lock:
+                    self.stats['tracking_times'].append(tracking_time)
+
+                # Convert tracks to TrackedBox objects
+                tracked_boxes = []
+                for track in tracks:
+                    if not track.is_confirmed() and not track.is_tentative():
+                        continue
+
+                    track_id = int(track.track_id)
+                    ltrb = track.to_ltrb()
+                    x1, y1, x2, y2 = ltrb
+
+                    # Clamp to frame bounds
+                    x1 = max(0, min(x1, self.frame_width))
+                    y1 = max(0, min(y1, self.frame_height))
+                    x2 = max(0, min(x2, self.frame_width))
+                    y2 = max(0, min(y2, self.frame_height))
+
+                    det_class = track.get_det_class() or 'unknown'
+                    det_conf = track.get_det_conf() if hasattr(track, 'get_det_conf') else 0.0
+                    if det_conf is None:
+                        det_conf = 0.0
+
+                    tracked_boxes.append(TrackedBox(
+                        track_id=track_id,
+                        x1=x1, y1=y1, x2=x2, y2=y2,
+                        vehicle_type=det_class,
+                        confidence=det_conf,
+                        frame_num=frame_num
+                    ))
+
+                    # Update vehicle state
+                    self._update_vehicle_state(track_id, det_class, (x1, y1, x2, y2), frame_num)
+
+                # Update the box cache (main thread will read from this)
+                self.box_cache.update(tracked_boxes, frame_num)
+
+                last_frame_num = frame_num
+                self.detection_queue.task_done()
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Tracking worker error: {e}")
+                import traceback
+                traceback.print_exc()
+
+    def _update_vehicle_state(self, track_id: int, vehicle_type: str,
+                              bbox: Tuple[float, float, float, float], frame_num: int):
+        """Update vehicle state and check line crossing (called by tracking thread)"""
+        with self.vehicles_lock:
+            if track_id not in self.vehicles:
+                self.vehicles[track_id] = VehicleState(track_id, vehicle_type, frame_num)
+                with self.stats_lock:
+                    self.stats['unique_vehicles'] += 1
+                    self.stats['vehicle_types'][vehicle_type] += 1
+
+            vehicle = self.vehicles[track_id]
+            vehicle.update_position(bbox, frame_num)
+
+            # Check line crossing
+            center = vehicle.get_center()
+            if center:
+                cx, cy = center
+                entry_line_px = int(self.frame_height * self.entry_line_y)
+
+                if not vehicle.crossed_entry and cy > entry_line_px:
+                    if len(vehicle.bbox_history) > 1:
+                        prev_center_y = int((vehicle.bbox_history[-2][1] + vehicle.bbox_history[-2][3]) / 2)
+                        if prev_center_y <= entry_line_px:
+                            vehicle.crossed_entry = True
+                            vehicle.entry_frame = frame_num
+                            if vehicle.track_id not in self.counted_in:
+                                self.counted_in.add(vehicle.track_id)
+                                with self.stats_lock:
+                                    self.stats['vehicles_entered'] += 1
+                                print(f"Vehicle #{vehicle.track_id} ({vehicle.vehicle_type}) ENTERED")
+
+    # ==================== THREAD MANAGEMENT ====================
+    def start_workers(self):
+        """Start all background workers"""
+        self.stop_event.clear()
+
+        # Start AI workers
+        for i in range(self.num_workers):
+            worker = threading.Thread(target=self._ai_worker, daemon=True)
+            worker.start()
+            self.ai_workers.append(worker)
+
+        # Start single tracking thread
+        self.tracking_thread = threading.Thread(target=self._tracking_worker, daemon=True)
+        self.tracking_thread.start()
+
+        print(f"Started {self.num_workers} AI workers + 1 tracking thread")
+
+    def stop_workers(self):
+        """Stop all workers"""
+        self.stop_event.set()
+        for worker in self.ai_workers:
+            worker.join(timeout=2)
+        if self.tracking_thread:
+            self.tracking_thread.join(timeout=2)
+        self.ai_workers.clear()
+
+    # ==================== DRAWING (Main Thread) ====================
+    def draw_boxes(self, frame: np.ndarray, boxes: List[TrackedBox],
+                   is_interpolated: bool = False) -> np.ndarray:
+        """Draw tracked boxes on frame (called by main thread)"""
         annotated = frame.copy()
 
-        if not detections:
-            return annotated
+        for box in boxes:
+            color = VEHICLE_COLORS.get(box.vehicle_type, VEHICLE_COLORS['unknown'])
 
-        for det in detections:
-            track_id = det.get('track_id', None)
-            vehicle_type = det['class']
-            confidence = det.get('confidence', 0.0)
-            if confidence is None:
-                confidence = 0.0
-            bbox = det['bbox']
-            is_predicted = det.get('predicted', False)
+            x1, y1, x2, y2 = int(box.x1), int(box.y1), int(box.x2), int(box.y2)
 
-            x, y, w, h = bbox['x'], bbox['y'], bbox['width'], bbox['height']
+            # Clamp to frame
+            x1 = max(0, min(x1, self.frame_width - 1))
+            y1 = max(0, min(y1, self.frame_height - 1))
+            x2 = max(0, min(x2, self.frame_width - 1))
+            y2 = max(0, min(y2, self.frame_height - 1))
 
-            color = VEHICLE_COLORS.get(vehicle_type, VEHICLE_COLORS['unknown'])
+            if x2 <= x1 or y2 <= y1:
+                continue
 
-            # Draw bounding box (dashed if predicted)
-            if is_predicted:
-                # Dashed box for predictions
-                self.draw_dashed_rectangle(annotated, (x, y), (x + w, y + h), color, 2)
-            else:
-                # Solid box for AI detections
-                cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
+            # Draw box
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
 
-            # Draw unique ID and label
-            if track_id is not None and track_id != -1:
-                pred_marker = "P" if is_predicted else ""
-                label = f"ID:{track_id}{pred_marker} {vehicle_type} {confidence:.2f}"
-            else:
-                label = f"{vehicle_type} {confidence:.2f}"
+            # Draw label
+            label = f"ID:{box.track_id} {box.vehicle_type}"
+            label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+            label_y = max(y1 - 10, label_size[1] + 10)
 
-            label_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-            label_y = max(y - 10, label_size[1] + 10)
-
-            cv2.rectangle(annotated, (x, label_y - label_size[1] - 10),
-                         (x + label_size[0], label_y), color, -1)
-
-            cv2.putText(annotated, label, (x, label_y - 5),
+            cv2.rectangle(annotated, (x1, label_y - label_size[1] - 10),
+                         (x1 + label_size[0], label_y), color, -1)
+            cv2.putText(annotated, label, (x1, label_y - 5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
 
         return annotated
 
-    def draw_dashed_rectangle(self, img, pt1, pt2, color, thickness, dash_length=10):
-        """Draw dashed rectangle for predicted boxes"""
-        x1, y1 = pt1
-        x2, y2 = pt2
-
-        # Top line
-        for i in range(x1, x2, dash_length * 2):
-            cv2.line(img, (i, y1), (min(i + dash_length, x2), y1), color, thickness)
-        # Bottom line
-        for i in range(x1, x2, dash_length * 2):
-            cv2.line(img, (i, y2), (min(i + dash_length, x2), y2), color, thickness)
-        # Left line
-        for i in range(y1, y2, dash_length * 2):
-            cv2.line(img, (x1, i), (x1, min(i + dash_length, y2)), color, thickness)
-        # Right line
-        for i in range(y1, y2, dash_length * 2):
-            cv2.line(img, (x2, i), (x2, min(i + dash_length, y2)), color, thickness)
-
-    def draw_counting_lines(self, frame: np.ndarray) -> np.ndarray:
-        height, width = frame.shape[:2]
-        entry_y = int(height * self.entry_line_y)
-        cv2.line(frame, (0, entry_y), (width, entry_y), LINE_COLOR, 3)
+    def draw_counting_line(self, frame: np.ndarray) -> np.ndarray:
+        entry_y = int(self.frame_height * self.entry_line_y)
+        cv2.line(frame, (0, entry_y), (self.frame_width, entry_y), LINE_COLOR, 3)
         cv2.putText(frame, "ENTRY LINE", (10, entry_y - 10),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, LINE_COLOR, 2)
         return frame
 
-    def draw_info_panel(self, frame: np.ndarray, fps: float, ai_time: float,
-                       current_pos: int = 0, total_frames: int = 0,
-                       is_ai_frame: bool = False, queue_size: int = 0) -> np.ndarray:
-        height, width = frame.shape[:2]
-
+    def draw_info_panel(self, frame: np.ndarray, display_fps: float,
+                       current_pos: int, total_frames: int) -> np.ndarray:
         overlay = frame.copy()
-        panel_height = 360
-        cv2.rectangle(overlay, (0, 0), (450, panel_height), (0, 0, 0), -1)
+        panel_height = 320
+        cv2.rectangle(overlay, (0, 0), (420, panel_height), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
 
         y_pos = 25
         line_height = 22
 
-        progress_text = ""
-        if total_frames > 0:
-            progress_pct = (current_pos / total_frames) * 100
-            progress_text = f"Progress: {current_pos}/{total_frames} ({progress_pct:.1f}%)"
+        # Calculate stats
+        with self.stats_lock:
+            ai_times = self.stats['ai_times'][-100:] if self.stats['ai_times'] else [0]
+            tracking_times = self.stats['tracking_times'][-100:] if self.stats['tracking_times'] else [0]
+            ai_processed = self.stats['ai_processed_frames']
+            unique_vehicles = self.stats['unique_vehicles']
+            vehicles_entered = self.stats['vehicles_entered']
 
-        timeout_mins = self.timeout_seconds / 60
-        mode_text = "AI FRAME" if is_ai_frame else "PREDICTED"
+        avg_ai_time = sum(ai_times) / len(ai_times) if ai_times else 0
+        avg_tracking_time = sum(tracking_times) / len(tracking_times) if tracking_times else 0
 
-        # Calculate effective AI FPS
-        effective_ai_fps = 30.0 / self.current_ai_interval if self.current_ai_interval > 0 else 0
+        progress_pct = (current_pos / total_frames) * 100 if total_frames > 0 else 0
+        last_update = self.box_cache.get_last_update_frame()
+        detection_lag = current_pos - last_update
 
         info_lines = [
-            f"Display FPS: {fps:.1f} (Target: 30 FPS)",
-            f"Frame: {mode_text} | Detect: {self.detection_mode.upper()}",
-            f"AI Processing: {ai_time:.1f}ms",
-            f"AI Interval: {self.current_ai_interval} frames (~{effective_ai_fps:.1f} AI FPS)",
-            f"Queue: {queue_size}/{self.frame_queue.maxsize} | Workers: {self.num_workers}",
-            progress_text if progress_text else f"Frames: {self.stats['total_frames']}",
-            "",
-            f"Unique Vehicles: {self.stats['unique_vehicles']}",
-            f"Vehicles ENTERED: {self.stats['vehicles_entered']}",
-            f"Active Now: {self.stats['active_vehicles']}",
-            f"Timed Out ({timeout_mins:.0f}m): {self.stats['vehicles_timed_out']}",
-            "",
-            "Legend:",
-            "Solid box = AI Detection",
-            "Dashed box = Predicted",
-            "",
-            "Controls: SPACE=Pause Q=Quit"
+            f"Display FPS: {display_fps:.1f}",
+            f"Video: {current_pos}/{total_frames} ({progress_pct:.1f}%)",
+            f"",
+            f"AI Time: {avg_ai_time:.1f}ms ({1000/avg_ai_time:.1f} FPS)" if avg_ai_time > 0 else "AI Time: --",
+            f"Track Time: {avg_tracking_time:.1f}ms" if avg_tracking_time > 0 else "Track Time: --",
+            f"Detection Lag: {detection_lag} frames",
+            f"AI Processed: {ai_processed}",
+            f"",
+            f"Unique Vehicles: {unique_vehicles}",
+            f"Vehicles ENTERED: {vehicles_entered}",
+            f"",
+            f"Mode: {self.detection_mode.upper()}",
+            f"Workers: {self.num_workers}",
+            f"",
+            f"SPACE=Pause Q=Quit"
         ]
 
         for line in info_lines:
@@ -445,221 +499,156 @@ class OptimalTester:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             y_pos += line_height
 
-        # Draw vehicle type counts
-        if self.stats['vehicle_types']:
-            x_pos = width - 200
-            y_pos = 25
-            cv2.rectangle(overlay, (x_pos - 10, 0), (width, 200), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-
-            cv2.putText(frame, "Vehicle Types:", (x_pos, y_pos),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            y_pos += line_height
-
-            for vtype, count in sorted(self.stats['vehicle_types'].items(),
-                                      key=lambda x: x[1], reverse=True):
-                color = VEHICLE_COLORS.get(vtype, VEHICLE_COLORS['unknown'])
-                cv2.putText(frame, f"{vtype}: {count}", (x_pos, y_pos),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-                y_pos += line_height
-
         return frame
 
+    # ==================== MAIN LOOP ====================
     def process_video(self, video_path: str):
-        print(f"🎬 Opening video: {video_path}")
+        print(f"Opening video: {video_path}")
 
         cap = cv2.VideoCapture(video_path)
-
         if not cap.isOpened():
-            print(f"❌ Could not open video: {video_path}")
+            print(f"Could not open video: {video_path}")
             return
 
-        # Get video properties
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.video_fps = cap.get(cv2.CAP_PROP_FPS)
         self.frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
         self.timeout_frames = int(self.timeout_seconds * self.video_fps)
 
-        # ALWAYS use 30 FPS playback regardless of video's native FPS
-        target_fps = 30
-        frame_delay = int(1000 / target_fps)  # 33ms for 30 FPS
+        # Use video's native FPS or cap at 60
+        target_fps = min(self.video_fps, 60) if self.video_fps > 0 else 30
+        frame_delay = max(1, int(1000 / target_fps))
 
-        mode_fps = {'traffic': '~20', 'incidents': '~20', 'all': '~10'}
-        print(f"Video: {total_frames} frames, {self.video_fps:.2f} FPS (native), {self.frame_width}x{self.frame_height}")
-        print(f"OPTIMAL MODE - Playing at {target_fps} FPS with ZERO LAG")
-        print(f"Detection: {self.detection_mode.upper()} mode ({mode_fps[self.detection_mode]} FPS per model)")
-        print(f"DeepSORT predictive tracking + {self.num_workers} async AI workers")
-        print(f"Queue sizes: frame={self.frame_queue.maxsize}, result={self.result_queue.maxsize}")
-        print(f"Dynamic AI interval: {self.base_ai_frame_interval}-{self.max_ai_interval} frames (auto-adjusts)")
-        print(f"Entry line: {self.entry_line_y*100:.0f}%")
+        print(f"Video: {total_frames} frames, {self.video_fps:.2f} FPS, {self.frame_width}x{self.frame_height}")
+        print(f"Target display: {target_fps:.1f} FPS ({frame_delay}ms delay)")
+        print(f"Mode: {self.detection_mode.upper()}")
         print()
 
-        window_name = "Road Sentinel - OPTIMAL (30 FPS + Zero Lag)"
+        window_name = "Road Sentinel - Decoupled Architecture"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+        # Start background workers
+        self.start_workers()
 
         frame_count = 0
         last_time = time.time()
-        display_fps = 0
-        last_ai_time = 0
+        display_fps = 0.0
+        fps_update_interval = 0.5  # Update FPS display every 0.5 seconds
+        last_fps_update = time.time()
+        frame_times = deque(maxlen=30)
 
-        # Start async AI workers
-        self.start_async_processing()
+        # AI frame interval (send every N frames to AI)
+        ai_interval = 3
 
         try:
             while True:
-                # Check for AI results (non-blocking)
-                try:
-                    result = self.result_queue.get_nowait()
-                    if result:
-                        with self.processing_lock:
-                            self.latest_detections = result.get('detections', [])
-                            last_ai_time = result.get('processing_time_ms', 0)
-                except queue.Empty:
-                    pass
+                loop_start = time.time()
 
                 if not self.paused:
                     ret, frame = cap.read()
-
                     if not ret:
-                        print("\n✅ Video finished")
+                        print("\nVideo finished")
                         break
 
                     frame_count += 1
-                    self.stats['total_frames'] += 1
+                    self.current_frame_num = frame_count
 
-                    # Dynamic AI interval adjustment based on queue backlog
-                    current_queue_size = self.frame_queue.qsize()
-                    if current_queue_size >= self.queue_high_watermark:
-                        # Queue backing up - skip more frames
-                        self.current_ai_interval = min(self.current_ai_interval + 1, self.max_ai_interval)
-                    elif current_queue_size <= self.queue_low_watermark:
-                        # Queue draining - process more frames
-                        self.current_ai_interval = max(self.current_ai_interval - 1, self.base_ai_frame_interval)
+                    with self.stats_lock:
+                        self.stats['total_frames'] = frame_count
 
-                    # Send frame to AI workers (non-blocking, async)
-                    if frame_count % self.current_ai_interval == 1:
+                    # Send frame to AI workers (every N frames)
+                    if frame_count % ai_interval == 1:
                         try:
                             self.frame_queue.put_nowait((frame.copy(), frame_count))
-                            self.stats['frames_queued'] += 1
-                            self.stats['ai_intervals'].append(self.current_ai_interval)
                         except queue.Full:
-                            self.stats['frames_dropped'] += 1  # Track dropped frames
+                            pass  # Skip if queue full
 
-                    # ALWAYS use predictions for display (NEVER wait for AI)
-                    with self.processing_lock:
-                        current_detections = self.latest_detections
+                    # Get interpolated boxes from cache (INSTANT - no blocking!)
+                    boxes = self.box_cache.get_interpolated(frame_count, max_age=60)
 
-                    # Update tracking (uses predictions if no new AI data)
-                    has_new_ai = current_detections is not None
-                    tracked_detections = self.update_tracking(
-                        current_detections if has_new_ai else None,
-                        frame,
-                        frame_count,
-                        has_new_ai
-                    )
-
-                    if not has_new_ai:
-                        self.stats['predicted_frames'] += 1
-
-                    # Draw detections (always from predictions - no lag!)
-                    annotated = self.draw_detections(frame, tracked_detections)
-
-                    # Draw counting lines
-                    annotated = self.draw_counting_lines(annotated)
+                    # Draw on frame
+                    annotated = self.draw_boxes(frame, boxes)
+                    annotated = self.draw_counting_line(annotated)
 
                     # Calculate display FPS
                     current_time = time.time()
-                    time_diff = current_time - last_time
-                    if time_diff > 0:
-                        display_fps = 1.0 / time_diff
-                    last_time = current_time
+                    frame_times.append(current_time - loop_start)
+
+                    if current_time - last_fps_update >= fps_update_interval:
+                        if frame_times:
+                            avg_frame_time = sum(frame_times) / len(frame_times)
+                            display_fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
+                        last_fps_update = current_time
 
                     # Draw info panel
-                    is_ai_frame = (frame_count % self.current_ai_interval == 1)
-                    annotated = self.draw_info_panel(annotated, display_fps, last_ai_time,
-                                                     frame_count, total_frames, is_ai_frame,
-                                                     current_queue_size)
+                    annotated = self.draw_info_panel(annotated, display_fps, frame_count, total_frames)
 
                     # Show frame
                     cv2.imshow(window_name, annotated)
 
-                # Handle keyboard input
-                key = cv2.waitKey(frame_delay) & 0xFF
+                # Handle input - use remaining time for waitKey
+                elapsed = (time.time() - loop_start) * 1000
+                wait_time = max(1, frame_delay - int(elapsed))
+                key = cv2.waitKey(wait_time) & 0xFF
 
                 if key == ord('q') or key == 27:
-                    print("\n⏹️  Stopped by user")
+                    print("\nStopped by user")
                     break
                 elif key == ord(' '):
                     self.paused = not self.paused
-                    print("⏸️  Paused" if self.paused else "▶️  Resumed")
+                    print("Paused" if self.paused else "Resumed")
 
         finally:
-            self.stop_async_processing()
+            self.stop_workers()
             cap.release()
             cv2.destroyAllWindows()
 
-        # Print final statistics
         self.print_statistics()
 
     def print_statistics(self):
         print("\n" + "=" * 70)
         print("SESSION STATISTICS")
         print("=" * 70)
-        print(f"Total frames: {self.stats['total_frames']}")
-        print(f"AI processed: {self.stats['ai_processed_frames']}")
-        print(f"Predicted: {self.stats['predicted_frames']}")
-        print(f"Frames queued: {self.stats['frames_queued']}")
-        print(f"Frames dropped (queue full): {self.stats['frames_dropped']}")
 
-        print(f"\nVEHICLE TRACKING:")
-        print(f"   Unique vehicles seen: {self.stats['unique_vehicles']}")
-        print(f"   Vehicles ENTERED: {self.stats['vehicles_entered']}")
-        print(f"   Vehicles timed out ({self.timeout_seconds/60:.0f} min): {self.stats['vehicles_timed_out']}")
+        with self.stats_lock:
+            print(f"Total frames displayed: {self.stats['total_frames']}")
+            print(f"AI frames processed: {self.stats['ai_processed_frames']}")
 
-        if self.stats['ai_times']:
-            avg_time = sum(self.stats['ai_times']) / len(self.stats['ai_times'])
-            min_time = min(self.stats['ai_times'])
-            max_time = max(self.stats['ai_times'])
-            print(f"\nPERFORMANCE:")
-            print(f"   Workers: {self.num_workers}")
-            print(f"   Avg AI processing: {avg_time:.1f}ms per frame")
-            print(f"   Min/Max AI time: {min_time:.1f}ms / {max_time:.1f}ms")
-            print(f"   Theoretical max (1 worker): {1000/avg_time:.1f} FPS")
-            print(f"   Theoretical max ({self.num_workers} workers): {self.num_workers * 1000/avg_time:.1f} FPS")
+            print(f"\nVEHICLE TRACKING:")
+            print(f"   Unique vehicles: {self.stats['unique_vehicles']}")
+            print(f"   Vehicles entered: {self.stats['vehicles_entered']}")
 
-        if self.stats['ai_intervals']:
-            avg_interval = sum(self.stats['ai_intervals']) / len(self.stats['ai_intervals'])
-            min_interval = min(self.stats['ai_intervals'])
-            max_interval = max(self.stats['ai_intervals'])
-            print(f"\nDYNAMIC AI INTERVAL:")
-            print(f"   Avg interval: {avg_interval:.1f} frames")
-            print(f"   Range: {min_interval} - {max_interval} frames")
-            print(f"   Effective AI FPS: ~{30/avg_interval:.1f} FPS")
+            if self.stats['ai_times']:
+                ai_times = self.stats['ai_times']
+                print(f"\nAI PERFORMANCE:")
+                print(f"   Avg: {sum(ai_times)/len(ai_times):.1f}ms")
+                print(f"   Min: {min(ai_times):.1f}ms")
+                print(f"   Max: {max(ai_times):.1f}ms")
 
-        if self.stats['vehicle_types']:
-            print("\nVehicle Types:")
-            for vtype, count in sorted(self.stats['vehicle_types'].items(),
-                                      key=lambda x: x[1], reverse=True):
-                print(f"   {vtype}: {count}")
+            if self.stats['tracking_times']:
+                track_times = self.stats['tracking_times']
+                print(f"\nTRACKING PERFORMANCE:")
+                print(f"   Avg: {sum(track_times)/len(track_times):.1f}ms")
+                print(f"   Min: {min(track_times):.1f}ms")
+                print(f"   Max: {max(track_times):.1f}ms")
+
+            if self.stats['vehicle_types']:
+                print("\nVEHICLE TYPES:")
+                for vtype, count in sorted(self.stats['vehicle_types'].items(),
+                                          key=lambda x: x[1], reverse=True):
+                    print(f"   {vtype}: {count}")
 
         print("=" * 70)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='OPTIMAL Visual Testing - 30 FPS + Zero Lag',
+        description='Road Sentinel - Decoupled Architecture (TRUE 30+ FPS)',
         epilog="""
 Examples:
-  # Fast mode - traffic only (~20 FPS per worker)
-  python test_visual_optimal.py video.mp4 --workers 8
-
-  # Full detection - traffic + incidents (~10 FPS per worker)
+  python test_visual_optimal.py video.mp4 --workers 4
   python test_visual_optimal.py video.mp4 --workers 8 --mode all
-
-  # Adjust confidence
-  python test_visual_optimal.py video.mp4 --confidence 0.3
         """
     )
 
@@ -670,11 +659,11 @@ Examples:
                        help='Entry line position (default: 0.3)')
     parser.add_argument('--timeout', type=float, default=120,
                        help='Vehicle timeout in seconds (default: 120)')
-    parser.add_argument('--workers', type=int, default=2,
-                       help='Number of async AI workers (default: 2)')
+    parser.add_argument('--workers', type=int, default=4,
+                       help='Number of AI workers (default: 4)')
     parser.add_argument('--mode', type=str, default='traffic',
                        choices=['traffic', 'incidents', 'all'],
-                       help='Detection mode: traffic (~20 FPS), incidents, or all (~10 FPS). Default: traffic')
+                       help='Detection mode (default: traffic)')
 
     args = parser.parse_args()
 
@@ -687,16 +676,14 @@ Examples:
     )
 
     print("=" * 70)
-    print("Road Sentinel - OPTIMAL Testing (30 FPS + Zero Lag)")
+    print("Road Sentinel - Decoupled Architecture")
     print("=" * 70)
     print()
-
-    mode_info = {
-        'traffic': 'TRAFFIC ONLY (~20 FPS per model)',
-        'incidents': 'INCIDENTS ONLY (~20 FPS per model)',
-        'all': 'FULL DETECTION (~10 FPS - runs both models)'
-    }
-    print(f"Detection mode: {mode_info[args.mode]}")
+    print("Architecture:")
+    print("  - Main Thread: Display only (never blocks)")
+    print("  - AI Workers: HTTP requests to AI service")
+    print("  - Tracking Thread: DeepSORT (runs in background)")
+    print()
 
     if not tester.check_ai_service():
         print("AI service is not running!")
