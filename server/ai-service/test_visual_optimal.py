@@ -74,13 +74,15 @@ class OptimalTester:
     """30 FPS with ZERO LAG using DeepSORT predictive tracking"""
 
     def __init__(self, confidence: float = 0.5, entry_line_y: float = 0.3,
-                 timeout_seconds: float = 120, num_workers: int = 2):
+                 timeout_seconds: float = 120, num_workers: int = 2,
+                 detection_mode: str = 'traffic'):
         self.confidence = confidence
         self.paused = False
         self.entry_line_y = entry_line_y
         self.timeout_seconds = timeout_seconds
         self.timeout_frames = 0
         self.num_workers = num_workers
+        self.detection_mode = detection_mode  # 'traffic', 'incidents', or 'all'
 
         # DeepSORT tracker with optimized parameters for fewer ID switches
         self.tracker = DeepSort(
@@ -194,9 +196,19 @@ class OptimalTester:
                 "confidence_threshold": str(self.confidence)
             }
 
+            # Choose endpoint based on detection mode
+            # 'traffic' = ~20 FPS (single model)
+            # 'all' = ~10 FPS (both models sequentially)
+            if self.detection_mode == 'traffic':
+                endpoint = f"{AI_SERVICE_URL}/api/detect/traffic"
+            elif self.detection_mode == 'incidents':
+                endpoint = f"{AI_SERVICE_URL}/api/detect/incidents"
+            else:  # 'all'
+                endpoint = f"{AI_SERVICE_URL}/api/detect"
+
             start_time = time.time()
             response = requests.post(
-                f"{AI_SERVICE_URL}/api/detect",
+                endpoint,
                 files=files,
                 data=data,
                 timeout=10
@@ -409,7 +421,7 @@ class OptimalTester:
 
         info_lines = [
             f"Display FPS: {fps:.1f} (Target: 30 FPS)",
-            f"Mode: {mode_text}",
+            f"Frame: {mode_text} | Detect: {self.detection_mode.upper()}",
             f"AI Processing: {ai_time:.1f}ms",
             f"AI Interval: {self.current_ai_interval} frames (~{effective_ai_fps:.1f} AI FPS)",
             f"Queue: {queue_size}/{self.frame_queue.maxsize} | Workers: {self.num_workers}",
@@ -474,12 +486,14 @@ class OptimalTester:
         target_fps = 30
         frame_delay = int(1000 / target_fps)  # 33ms for 30 FPS
 
-        print(f"📹 Video: {total_frames} frames, {self.video_fps:.2f} FPS (native), {self.frame_width}x{self.frame_height}")
-        print(f"🎯 OPTIMAL MODE - Playing at {target_fps} FPS with ZERO LAG")
-        print(f"⚡ DeepSORT predictive tracking + {self.num_workers} async AI workers")
-        print(f"📦 Queue sizes: frame={self.frame_queue.maxsize}, result={self.result_queue.maxsize}")
-        print(f"🔄 Dynamic AI interval: {self.base_ai_frame_interval}-{self.max_ai_interval} frames (auto-adjusts)")
-        print(f"📏 Entry line: {self.entry_line_y*100:.0f}%")
+        mode_fps = {'traffic': '~20', 'incidents': '~20', 'all': '~10'}
+        print(f"Video: {total_frames} frames, {self.video_fps:.2f} FPS (native), {self.frame_width}x{self.frame_height}")
+        print(f"OPTIMAL MODE - Playing at {target_fps} FPS with ZERO LAG")
+        print(f"Detection: {self.detection_mode.upper()} mode ({mode_fps[self.detection_mode]} FPS per model)")
+        print(f"DeepSORT predictive tracking + {self.num_workers} async AI workers")
+        print(f"Queue sizes: frame={self.frame_queue.maxsize}, result={self.result_queue.maxsize}")
+        print(f"Dynamic AI interval: {self.base_ai_frame_interval}-{self.max_ai_interval} frames (auto-adjusts)")
+        print(f"Entry line: {self.entry_line_y*100:.0f}%")
         print()
 
         window_name = "Road Sentinel - OPTIMAL (30 FPS + Zero Lag)"
@@ -638,11 +652,11 @@ def main():
         description='OPTIMAL Visual Testing - 30 FPS + Zero Lag',
         epilog="""
 Examples:
-  # Test with video (2 async workers - default)
-  python test_visual_optimal.py video.mp4
+  # Fast mode - traffic only (~20 FPS per worker)
+  python test_visual_optimal.py video.mp4 --workers 8
 
-  # Use 3 workers for more AI throughput
-  python test_visual_optimal.py video.mp4 --workers 3
+  # Full detection - traffic + incidents (~10 FPS per worker)
+  python test_visual_optimal.py video.mp4 --workers 8 --mode all
 
   # Adjust confidence
   python test_visual_optimal.py video.mp4 --confidence 0.3
@@ -658,6 +672,9 @@ Examples:
                        help='Vehicle timeout in seconds (default: 120)')
     parser.add_argument('--workers', type=int, default=2,
                        help='Number of async AI workers (default: 2)')
+    parser.add_argument('--mode', type=str, default='traffic',
+                       choices=['traffic', 'incidents', 'all'],
+                       help='Detection mode: traffic (~20 FPS), incidents, or all (~10 FPS). Default: traffic')
 
     args = parser.parse_args()
 
@@ -665,20 +682,28 @@ Examples:
         confidence=args.confidence,
         entry_line_y=args.entry,
         timeout_seconds=args.timeout,
-        num_workers=args.workers
+        num_workers=args.workers,
+        detection_mode=args.mode
     )
 
     print("=" * 70)
-    print("🚦 Road Sentinel - OPTIMAL Testing (30 FPS + Zero Lag)")
+    print("Road Sentinel - OPTIMAL Testing (30 FPS + Zero Lag)")
     print("=" * 70)
     print()
 
+    mode_info = {
+        'traffic': 'TRAFFIC ONLY (~20 FPS per model)',
+        'incidents': 'INCIDENTS ONLY (~20 FPS per model)',
+        'all': 'FULL DETECTION (~10 FPS - runs both models)'
+    }
+    print(f"Detection mode: {mode_info[args.mode]}")
+
     if not tester.check_ai_service():
-        print("❌ AI service is not running!")
+        print("AI service is not running!")
         print("Please start: python -m app.main")
         sys.exit(1)
 
-    print("✅ AI service is running")
+    print("AI service is running")
     print()
 
     tester.process_video(args.video)
