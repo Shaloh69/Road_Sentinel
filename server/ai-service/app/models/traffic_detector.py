@@ -12,8 +12,8 @@ class TrafficDetector:
     YOLOv8-based traffic detector for vehicle detection and classification
     """
 
-    # Vehicle class mappings (COCO dataset)
-    VEHICLE_CLASSES = {
+    # Vehicle class mappings (COCO dataset) - used for fallback model
+    COCO_VEHICLE_CLASSES = {
         2: 'car',
         3: 'motorcycle',
         5: 'bus',
@@ -32,11 +32,22 @@ class TrafficDetector:
         """
         self.device = device
         self.confidence = confidence
+        self.is_custom_model = False
 
         try:
             # Load YOLOv8 model
             self.model = YOLO(model_path)
             self.model.to(device)
+
+            # Check if custom model (not COCO-based)
+            model_classes = self.model.names
+            if model_classes and 0 in model_classes:
+                # Check if class 0 is a vehicle type (custom model)
+                first_class = model_classes[0].lower()
+                if first_class in ['car', 'vehicle', 'truck', 'motorcycle', 'bus', 'bike']:
+                    self.is_custom_model = True
+                    logger.info(f"Custom vehicle model detected with classes: {model_classes}")
+
             logger.info(f"Traffic model loaded successfully on {device}")
         except Exception as e:
             logger.error(f"Failed to load traffic model: {e}")
@@ -44,6 +55,7 @@ class TrafficDetector:
             logger.info("Loading pretrained YOLOv8n model as fallback...")
             self.model = YOLO('yolov8n.pt')
             self.model.to(device)
+            self.is_custom_model = False
 
     def detect(self, image_bytes: bytes, confidence: float = None) -> List[Dict[str, Any]]:
         """
@@ -68,14 +80,24 @@ class TrafficDetector:
                 logger.error("Failed to decode image")
                 return []
 
-            # Run inference
-            results = self.model.predict(
-                source=image,
-                conf=conf_threshold,
-                iou=0.45,
-                classes=list(self.VEHICLE_CLASSES.keys()),  # Filter only vehicle classes
-                verbose=False
-            )
+            # Run inference - filter by COCO vehicle classes only for fallback model
+            if self.is_custom_model:
+                # Custom model: detect all classes (model is trained for vehicles)
+                results = self.model.predict(
+                    source=image,
+                    conf=conf_threshold,
+                    iou=0.45,
+                    verbose=False
+                )
+            else:
+                # COCO model: filter to vehicle classes only
+                results = self.model.predict(
+                    source=image,
+                    conf=conf_threshold,
+                    iou=0.45,
+                    classes=list(self.COCO_VEHICLE_CLASSES.keys()),
+                    verbose=False
+                )
 
             detections = []
 
@@ -93,7 +115,12 @@ class TrafficDetector:
                     conf = float(box.conf[0].cpu().numpy())
 
                     # Map class to vehicle type
-                    vehicle_type = self.VEHICLE_CLASSES.get(cls, 'unknown')
+                    if self.is_custom_model:
+                        # Use model's class names directly
+                        vehicle_type = self.model.names.get(cls, 'unknown')
+                    else:
+                        # Use COCO mapping
+                        vehicle_type = self.COCO_VEHICLE_CLASSES.get(cls, 'unknown')
 
                     detection = {
                         'class': vehicle_type,
