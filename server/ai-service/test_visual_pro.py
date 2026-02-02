@@ -253,7 +253,7 @@ class ProVisualTester:
             if not track.is_confirmed():
                 continue
 
-            track_id = track.track_id
+            track_id = int(track.track_id)  # Ensure track_id is integer
             ltrb = track.to_ltrb()  # Get bbox as [left, top, right, bottom]
 
             # Convert to our format
@@ -333,7 +333,7 @@ class ProVisualTester:
             return annotated
 
         for det in detections:
-            track_id = det.get('track_id', -1)
+            track_id = det.get('track_id', None)
             vehicle_type = det['class']
             confidence = det['confidence']
             bbox = det['bbox']
@@ -350,7 +350,7 @@ class ProVisualTester:
             cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
 
             # Draw unique ID and label
-            if track_id >= 0:
+            if track_id is not None and track_id != -1:
                 label = f"ID:{track_id} {vehicle_type} {confidence:.2f}"
             else:
                 label = f"{vehicle_type} {confidence:.2f}"
