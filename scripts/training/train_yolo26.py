@@ -23,6 +23,7 @@ GPU Memory Guide (RTX 3060 Ti - 8GB VRAM):
 import argparse
 import os
 import sys
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -151,6 +152,20 @@ def train_model(
         print("  python download_roboflow_datasets.py")
         return None
 
+    # Fix data.yaml path to be absolute (YOLO resolves relative to CWD, not yaml location)
+    import yaml
+    with open(data_yaml, 'r') as f:
+        data_config = yaml.safe_load(f)
+    yaml_dir = data_yaml.resolve().parent
+    data_path = Path(data_config.get('path', '.'))
+    if not data_path.is_absolute():
+        data_config['path'] = str(yaml_dir / data_path)
+    # Write a resolved copy next to the original
+    resolved_yaml = yaml_dir / 'data_resolved.yaml'
+    with open(resolved_yaml, 'w') as f:
+        yaml.dump(data_config, f, default_flow_style=False)
+    data_yaml = resolved_yaml
+
     # Auto-detect batch size for 8GB GPUs
     if batch == -1:
         if device != "cpu" and torch.cuda.is_available():
@@ -195,7 +210,7 @@ def train_model(
 
     # Training parameters optimized for RTX 3060 Ti
     train_args = {
-        "data": str(data_yaml),
+        "data": str(data_yaml.resolve()),
         "epochs": epochs,
         "imgsz": imgsz,
         "batch": batch,
