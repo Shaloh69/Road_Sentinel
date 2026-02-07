@@ -208,7 +208,7 @@ def merge_vehicle_detection_datasets(traffic_surveillance_path, day_night_path, 
         actual_splits['val'] = 'train/images'
 
     merged_config = {
-        'path': str(output_path.absolute()),
+        'path': '.',
         **actual_splits,
         'nc': 5,
         'names': ['car', 'motorcycle', 'bicycle', 'bus', 'truck']
@@ -349,7 +349,7 @@ def prepare_accident_dataset(accident_path, output_path):
         actual_splits['val'] = 'train/images'
 
     accident_config = {
-        'path': str(output_path.absolute()),
+        'path': '.',
         **actual_splits,
         'nc': 2,
         'names': ['no_accident', 'accident']

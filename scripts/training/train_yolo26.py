@@ -195,7 +195,7 @@ def train_model(
 
     # Training parameters optimized for RTX 3060 Ti
     train_args = {
-        "data": str(data_yaml),
+        "data": str(data_yaml.resolve()),
         "epochs": epochs,
         "imgsz": imgsz,
         "batch": batch,
