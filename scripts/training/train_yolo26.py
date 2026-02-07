@@ -85,7 +85,7 @@ def check_gpu():
         return "cpu"
 
     gpu_name = torch.cuda.get_device_name(0)
-    gpu_memory = torch.cuda.get_device_properties(0).total_mem / 1e9
+    gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
     cuda_version = torch.version.cuda
     print(f"GPU:          {gpu_name}")
     print(f"VRAM:         {gpu_memory:.1f} GB")
@@ -154,14 +154,14 @@ def train_model(
     # Auto-detect batch size for 8GB GPUs
     if batch == -1:
         if device != "cpu" and torch.cuda.is_available():
-            vram = torch.cuda.get_device_properties(0).total_mem / 1e9
+            vram = torch.cuda.get_device_properties(0).total_memory / 1e9
             batch = get_recommended_batch(model_size, vram)
         else:
             batch = 4  # Conservative CPU default
 
     # Warn if model is too large for 8GB
     if model_size in ("l", "x") and device != "cpu" and torch.cuda.is_available():
-        vram = torch.cuda.get_device_properties(0).total_mem / 1e9
+        vram = torch.cuda.get_device_properties(0).total_memory / 1e9
         if vram <= 8:
             print(f"WARNING: YOLO26-{model_size.upper()} may not fit in {vram:.0f}GB VRAM.")
             print(f"Recommended: use model size 'n' or 's' for your GPU.")
