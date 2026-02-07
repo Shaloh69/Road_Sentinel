@@ -1,7 +1,7 @@
 # Core Dependencies for Road Sentinel Vehicle Speed Detection System
 
-# YOLOv8 - Object Detection
-ultralytics>=8.0.0
+# YOLO26 - Object Detection (requires ultralytics >= 8.3.0)
+ultralytics>=8.3.0
 
 # Computer Vision
 opencv-python>=4.8.0

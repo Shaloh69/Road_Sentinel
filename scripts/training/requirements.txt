@@ -1,12 +1,11 @@
-# Requirements for YOLOv8 Training Pipeline (training folder)
-# For training vehicle detection models on COCO dataset
-
+# Requirements for YOLO26 Training Pipeline (training folder)
+# For training vehicle detection models for Road Sentinel
+#
 # ============================================================================
 # IMPORTANT: PyTorch Installation for GPU Support
 # ============================================================================
 #
-# ⚠️ Python Version Required: 3.8 - 3.12 (NOT 3.13+)
-#    PyTorch with CUDA doesn't support Python 3.13 yet!
+# Python Version Required: 3.9 - 3.12
 #
 # GPU USERS (NVIDIA GPU with CUDA):
 # Run ONE of these commands BEFORE installing this requirements.txt:
@@ -17,6 +16,9 @@
 #   For CUDA 12.1+ (Recommended for RTX 30/40 series):
 #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 #
+#   For CUDA 12.4+ (Latest):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+#
 # CPU ONLY USERS:
 #   pip install torch torchvision torchaudio
 #
@@ -25,8 +27,8 @@
 #
 # ============================================================================
 
-# YOLOv8 - Training and Validation
-ultralytics>=8.0.0
+# YOLO26 - Training and Validation (requires ultralytics >= 8.3.0)
+ultralytics>=8.3.0
 
 # Deep Learning Framework (Install separately - see instructions above!)
 # torch>=2.0.0
