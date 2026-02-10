@@ -2,8 +2,8 @@
 
 # Core AI/ML
 ultralytics>=8.3.0
-torch>=2.0.0
-torchvision>=0.15.0
+# torch>=2.0.0
+# torchvision>=0.15.0
 
 # Computer Vision & Image Processing
 opencv-python>=4.8.0
