@@ -45,7 +45,7 @@ def find_available_cameras(max_cameras: int = 5) -> List[int]:
     print(f"Scanning for available cameras (checking indices 0-{max_cameras-1})...")
 
     for camera_id in range(max_cameras):
-        cap = cv2.VideoCapture(camera_id)
+        cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
         if cap.isOpened():
             # Try to read a frame to verify camera is working
             ret, frame = cap.read()
@@ -275,8 +275,8 @@ def run_camera_test(camera_id: int, use_ai: bool = True, confidence: float = 0.5
         use_ai: Whether to use AI detection
         confidence: Confidence threshold for AI detection
     """
-    # Open camera
-    cap = cv2.VideoCapture(camera_id)
+    # Open camera with DirectShow backend (more reliable on Windows)
+    cap = cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
 
     if not cap.isOpened():
         print(f"Error: Could not open camera {camera_id}")
