@@ -11,6 +11,8 @@ import sys
 import time
 import argparse
 import requests
+import threading
+import queue
 from typing import Optional, Tuple, List, Dict
 
 # AI Service configuration
@@ -97,12 +99,12 @@ def detect_with_ai(frame: np.ndarray, confidence: float = 0.5) -> Optional[Dict]
             "confidence_threshold": str(confidence)
         }
 
-        # Send request to AI service
+        # Send request to AI service with shorter timeout
         response = requests.post(
             f"{AI_SERVICE_URL}/api/detect",
             files=files,
             data=data,
-            timeout=5
+            timeout=2  # Reduced timeout for faster response
         )
 
         if response.status_code == 200:
@@ -152,8 +154,12 @@ def draw_detections(frame: np.ndarray, result: Dict) -> np.ndarray:
             cv2.putText(annotated, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
 
     # Draw incident detections
-    if 'incidents' in result:
+    if 'incidents' in result and isinstance(result['incidents'], list):
         for incident in result['incidents']:
+            # Check if incident has bbox (some incidents may not have location)
+            if 'bbox' not in incident:
+                continue
+
             bbox = incident['bbox']
             x, y = bbox['x'], bbox['y']
             w, h = bbox['width'], bbox['height']
@@ -227,9 +233,42 @@ def add_info_overlay(frame: np.ndarray, camera_id: int, fps: float,
     return frame
 
 
+def detection_worker(frame_queue: queue.Queue, result_queue: queue.Queue, confidence: float, stop_event: threading.Event):
+    """
+    Background worker thread for AI detection
+    Processes frames asynchronously without blocking the main video feed
+    """
+    while not stop_event.is_set():
+        try:
+            # Get frame from queue (non-blocking with timeout)
+            frame = frame_queue.get(timeout=0.1)
+
+            # Run detection
+            result = detect_with_ai(frame, confidence)
+
+            if result:
+                # Put result in queue (discard old results if queue is full)
+                try:
+                    result_queue.put_nowait(result)
+                except queue.Full:
+                    # Remove oldest result and add new one
+                    try:
+                        result_queue.get_nowait()
+                        result_queue.put_nowait(result)
+                    except:
+                        pass
+
+            frame_queue.task_done()
+        except queue.Empty:
+            continue
+        except Exception as e:
+            # Silent error handling - don't spam console
+            pass
+
+
 def run_camera_test(camera_id: int, use_ai: bool = True, confidence: float = 0.5):
     """
-    Run camera test with optional AI detection
+    Run camera test with optional AI detection (ASYNC - Full 30 FPS)
 
     Args:
         camera_id: Camera index to use
@@ -246,6 +285,7 @@ def run_camera_test(camera_id: int, use_ai: bool = True, confidence: float = 0.5
     # Set camera properties for better quality
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FPS, 30)  # Request 30 FPS
 
     # Get actual properties
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -256,7 +296,7 @@ def run_camera_test(camera_id: int, use_ai: bool = True, confidence: float = 0.5
     print(f"Camera {camera_id} opened successfully!")
     print(f"Resolution: {width}x{height}")
     print(f"Camera FPS: {fps_cap}")
-    print(f"AI Detection: {'Enabled' if use_ai else 'Disabled'}")
+    print(f"AI Detection: {'Enabled (ASYNC - Full FPS)' if use_ai else 'Disabled'}")
     if use_ai:
         print(f"Confidence Threshold: {confidence}")
     print(f"{'='*60}\n")
@@ -270,18 +310,33 @@ def run_camera_test(camera_id: int, use_ai: bool = True, confidence: float = 0.5
     fps_frame_count = 0
     current_fps = 0
 
+    # Async processing queues and thread
+    frame_queue = queue.Queue(maxsize=2)
+    result_queue = queue.Queue(maxsize=5)
+    stop_event = threading.Event()
+    detection_thread = None
+
     # Processing control
     ai_enabled = use_ai
-    process_every_n_frames = 3  # Process every 3rd frame with AI
+    process_every_n_frames = 5  # Send every 5th frame for detection (still get 30 FPS display)
     frame_count = 0
     last_result = None
     detection_count = 0
+
+    # Start detection thread if AI is enabled
+    if ai_enabled:
+        detection_thread = threading.Thread(
+            target=detection_worker,
+            args=(frame_queue, result_queue, confidence, stop_event),
+            daemon=True
+        )
+        detection_thread.start()
 
     print("Camera feed started. Press 'Q' to quit, SPACE to toggle AI, 'C' to change camera")
 
     try:
         while True:
-            # Read frame
+            # Read frame at full FPS
             ret, frame = cap.read()
 
             if not ret:
@@ -291,13 +346,23 @@ def run_camera_test(camera_id: int, use_ai: bool = True, confidence: float = 0.5
             frame_count += 1
             annotated_frame = frame.copy()
 
-            # AI Detection (every N frames to maintain smooth FPS)
+            # Send frame for AI detection (non-blocking)
             if ai_enabled and frame_count % process_every_n_frames == 0:
-                result = detect_with_ai(frame, confidence)
-                if result:
-                    last_result = result
-                    # Count detections
-                    detection_count = len(result.get('detections', []))
+                try:
+                    # Non-blocking put - if queue is full, skip this frame
+                    frame_queue.put_nowait(frame.copy())
+                except queue.Full:
+                    pass  # Skip this frame if queue is full
+
+            # Check for new detection results (non-blocking)
+            if ai_enabled:
+                try:
+                    # Get latest result without blocking
+                    new_result = result_queue.get_nowait()
+                    last_result = new_result
+                    detection_count = len(last_result.get('detections', []))
+                except queue.Empty:
+                    pass  # No new results, use last_result
 
             # Draw detections if we have results
             if ai_enabled and last_result:
@@ -331,10 +396,24 @@ def run_camera_test(camera_id: int, use_ai: bool = True, confidence: float = 0.5
             elif key == ord(' '):  # Space bar - toggle AI
                 ai_enabled = not ai_enabled
                 print(f"AI Detection: {'Enabled' if ai_enabled else 'Disabled'}")
+
+                # Start or stop detection thread
+                if ai_enabled and (detection_thread is None or not detection_thread.is_alive()):
+                    stop_event.clear()
+                    detection_thread = threading.Thread(
+                        target=detection_worker,
+                        args=(frame_queue, result_queue, confidence, stop_event),
+                        daemon=True
+                    )
+                    detection_thread.start()
+                elif not ai_enabled:
+                    stop_event.set()
+
                 last_result = None
                 detection_count = 0
             elif key == ord('c') or key == ord('C'):  # C - change camera
                 print("\nChanging camera...")
+                stop_event.set()
                 cap.release()
                 return 'change_camera'
 
@@ -342,6 +421,9 @@ def run_camera_test(camera_id: int, use_ai: bool = True, confidence: float = 0.5
         print("\nInterrupted by user")
     finally:
         # Cleanup
+        stop_event.set()
+        if detection_thread and detection_thread.is_alive():
+            detection_thread.join(timeout=1)
         cap.release()
         cv2.destroyAllWindows()
 
