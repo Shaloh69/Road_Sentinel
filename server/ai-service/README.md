@@ -225,7 +225,51 @@ python -m app.main
 
 ## 🧪 Testing the AI Service
 
-### Quick Test (Sample Image)
+### Available Test Scripts
+
+The AI service includes multiple test scripts for different use cases:
+
+| Script | Purpose | Use Case |
+|--------|---------|----------|
+| `test_camera.py` | **Camera testing** | Auto-detect cameras, live testing with YOLO26 |
+| `test_visual.py` | **Visual GUI testing** | Real-time video/camera with GUI, statistics |
+| `test_visual_pro.py` | **Advanced tracking** | DeepSORT tracking, vehicle counting |
+| `test_video.py` | **Video file testing** | Process video files frame-by-frame |
+| `test_images.py` | **Image testing** | Test on single images or folders |
+| `test_ai.py` | **Quick API test** | Simple API endpoint test |
+
+### 1. Test Camera (NEW!) 🎥
+
+**Auto-detect and connect to any available camera with optional YOLO26 detection.**
+
+```bash
+# List all available cameras
+python test_camera.py --list
+
+# Auto-detect and use first camera (with AI)
+python test_camera.py
+
+# Test specific camera
+python test_camera.py --camera 0
+
+# Camera only mode (no AI)
+python test_camera.py --no-ai
+
+# Custom confidence threshold
+python test_camera.py --confidence 0.7
+```
+
+**Features:**
+- ✅ Auto-detects available cameras (indices 0-4)
+- ✅ Live preview with FPS monitoring
+- ✅ Optional YOLO26 vehicle/incident detection
+- ✅ Interactive controls (Q=quit, SPACE=toggle AI, C=change camera)
+- ✅ Visual bounding boxes and labels
+- ✅ Works without AI service (camera-only mode)
+
+See [CAMERA_TEST_GUIDE.md](../../CAMERA_TEST_GUIDE.md) for detailed documentation.
+
+### 2. Quick Test (Sample Image)
 
 Open a **new terminal** (keep the service running), activate venv, and run:
 
@@ -243,7 +287,7 @@ source venv/bin/activate
 python test_ai.py
 ```
 
-### Test with Your Own Video
+### 3. Test with Your Own Video
 
 ```powershell
 # Windows
@@ -266,7 +310,25 @@ python test_video.py /path/to/your/traffic_video.mp4
 python test_video.py video.mp4 --save --frame-rate 5 --confidence 0.5
 ```
 
-### Test with Images
+### 4. Visual Testing with GUI
+
+**For real-time visualization with statistics:**
+
+```bash
+# Test with video file
+python test_visual.py path/to/video.mp4
+
+# Test with live camera
+python test_visual.py 0  # Camera index 0
+```
+
+**For advanced tracking with vehicle counting:**
+
+```bash
+python test_visual_pro.py path/to/video.mp4
+```
+
+### 5. Test with Images
 
 ```powershell
 # Single image
@@ -399,18 +461,26 @@ For CPU inference, set `DEVICE=cpu` in `.env` (10-20x slower).
 ```
 app/
 ├── models/
-│   ├── traffic_detector.py   # YOLOv8 traffic detection
-│   └── incident_detector.py  # YOLOv8 incident detection
-└── main.py                    # FastAPI application
+│   ├── traffic_detector.py      # YOLOv8 traffic detection
+│   └── incident_detector.py     # YOLOv8 incident detection
+└── main.py                       # FastAPI application
 
-models/                        # Model weights directory
-├── traffic.pt                 # Traffic detection weights
-└── incident.pt                # Incident detection weights
+models/                           # Model weights directory
+├── traffic.pt                    # Traffic detection weights
+└── incident.pt                   # Incident detection weights
 
-test_ai.py                     # Quick test script
-test_video.py                  # Video testing script
-test_images.py                 # Image testing script
-TESTING.md                     # Complete testing guide
+# Test Scripts
+test_camera.py                    # Camera testing with auto-detection ⭐ NEW
+test_visual.py                    # Real-time visual testing with GUI
+test_visual_pro.py                # Advanced tracking with DeepSORT
+test_visual_optimal.py            # Performance-optimized visual testing
+test_video.py                     # Video file testing
+test_images.py                    # Image batch testing
+test_ai.py                        # Quick API test
+
+# Documentation
+TESTING.md                        # Complete testing guide
+README.md                         # This file
 ```
 
 ---

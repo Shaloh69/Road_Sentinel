@@ -4,6 +4,8 @@
 
 This guide explains how to use the `test_camera.py` script to test camera connections with the Road Sentinel system.
 
+**Location**: `server/ai-service/test_camera.py`
+
 ## Features
 
 - **Auto-Detection**: Automatically scans for available cameras (indices 0-4)
@@ -27,6 +29,7 @@ pip install opencv-python numpy requests
 Find all connected cameras:
 
 ```bash
+cd server/ai-service
 python test_camera.py --list
 ```
 
@@ -44,6 +47,7 @@ Found 2 camera(s): [0, 1]
 Run with the first available camera:
 
 ```bash
+cd server/ai-service
 python test_camera.py
 ```
 
@@ -58,6 +62,7 @@ This will:
 Test a specific camera by ID:
 
 ```bash
+cd server/ai-service
 python test_camera.py --camera 0
 ```
 
@@ -66,6 +71,7 @@ python test_camera.py --camera 0
 Test camera feed without AI detection:
 
 ```bash
+cd server/ai-service
 python test_camera.py --no-ai
 ```
 
@@ -79,6 +85,7 @@ This is useful for:
 Adjust detection sensitivity (0.0 to 1.0):
 
 ```bash
+cd server/ai-service
 python test_camera.py --confidence 0.7
 ```
 
@@ -146,6 +153,7 @@ If the service is not available, you'll see:
 ### 1. Quick Camera Check
 
 ```bash
+cd server/ai-service
 python test_camera.py --no-ai
 ```
 
@@ -158,7 +166,8 @@ Verify camera is working without starting the AI service.
 cd server/ai-service
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# Terminal 2: Run camera test
+# Terminal 2: Run camera test (same directory)
+cd server/ai-service
 python test_camera.py
 ```
 
@@ -167,6 +176,7 @@ Test complete pipeline with vehicle/incident detection.
 ### 3. Test Multiple Cameras
 
 ```bash
+cd server/ai-service
 python test_camera.py
 # Press 'C' to cycle through cameras
 ```
@@ -176,6 +186,7 @@ Compare quality and positioning of different cameras.
 ### 4. Optimize Detection Settings
 
 ```bash
+cd server/ai-service
 python test_camera.py --confidence 0.6
 # Adjust confidence until you get optimal results
 ```
@@ -292,6 +303,7 @@ After training your YOLO26 models, use this script to test them:
    python -m uvicorn app.main:app --reload
 
    # In another terminal
+   cd server/ai-service
    python test_camera.py --confidence 0.6
    ```
 
