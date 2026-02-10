@@ -1,0 +1,19 @@
+# Testing Suite Dependencies
+
+# Core AI/ML
+ultralytics>=8.3.0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Computer Vision & Image Processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# API Testing
+requests>=2.31.0
+fastapi>=0.109.0
+uvicorn>=0.27.0
+
+# Utilities
+python-dotenv>=1.0.0

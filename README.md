@@ -57,37 +57,53 @@ This project is a **thesis project** for a blind curve warning system at Baranga
 
 ```
 Road_Sentinel/
-├── datasets/                    # 🗂️  Training datasets
-│   ├── downloaded/              # Raw Roboflow datasets
-│   └── processed/               # Merged/ready-to-train datasets
+├── 📂 training/                 # 🚀 YOLO26 Model Training
+│   ├── train.py                 # Main training script (YOLO26 optimized)
+│   ├── validate.py              # Model validation & testing
+│   ├── merge_busay_datasets.py # Dataset merger
+│   ├── analyze_datasets.py     # Dataset analysis
+│   ├── requirements.txt         # Training dependencies
+│   ├── .venv/                   # Isolated environment
+│   └── *.md                     # Training guides
 │
-├── models/                      # 🎯 Trained models (version-based)
-│   ├── v1/                      # First training run
-│   ├── v2/                      # Fine-tuned versions
-│   └── production/              # Production models (symlinks)
+├── 📂 testing/                  # 🧪 Testing Suite
+│   ├── test_camera.py           # Camera testing with auto-detection
+│   ├── test_visual.py           # Visual GUI testing
+│   ├── test_video.py            # Video file testing
+│   ├── test_images.py           # Image testing
+│   ├── test_api.py              # API endpoint testing
+│   ├── requirements.txt         # Testing dependencies
+│   └── .venv/                   # Isolated environment
 │
-├── scripts/
-│   ├── training/                # 🚀 Model training
-│   │   ├── train_vehicle_detector.py       # Main training script
-│   │   ├── run_merge_busay.py              # ⭐ Dataset merger (run this first!)
-│   │   ├── merge_busay_datasets.py         # Custom merger for your datasets
-│   │   ├── analyze_datasets.py             # Dataset analysis tool
-│   │   ├── convert_aicity_track*.py        # AI City converters
-│   │   └── *.md                            # Training guides
-│   │
-│   ├── download/                # 🚗 Speed detection & deployment
-│   │   ├── auto_download_coco.py           # Vehicle speed detector
-│   │   └── angled_camera_calibration.py   # Camera calibration
-│   │
-│   └── extract_frames/          # 🎬 Video processing
-│       └── extract_frames.py                # Frame extraction
+├── 📂 inference/                # 🚗 Production Inference
+│   ├── speed_detection.py       # Multi-vehicle speed detection
+│   ├── camera_calibration.py   # Perspective calibration
+│   ├── extract_frames.py        # Frame extraction utility
+│   ├── requirements.txt         # Inference dependencies
+│   └── .venv/                   # Isolated environment
 │
-├── PROJECT_STRUCTURE.md         # 📖 Detailed structure guide
-├── TRAINING_GUIDE.md            # Training documentation
-└── README.md                    # This file
+├── 📂 server/                   # 🖥️ Backend Services
+│   ├── ai-service/              # FastAPI AI microservice
+│   ├── node-service/            # Node.js backend
+│   └── database/                # MySQL schema
+│
+├── 📂 client/                   # 💻 Frontend
+│   └── web/                     # Next.js React app
+│
+├── 📂 datasets/                 # 🗂️ Training Data
+│   ├── downloaded/              # Raw datasets
+│   └── processed/               # Ready-to-train
+│
+├── 📂 models/                   # 🎯 Trained Models
+│   ├── v1/, v2/                 # Versions
+│   └── production/              # Production models
+│
+├── 📖 CAMERA_TEST_GUIDE.md      # Camera testing guide
+├── 📖 PROJECT_STRUCTURE.md      # Detailed structure
+└── 📖 TRAINING_GUIDE.md         # Training documentation
 ```
 
-📖 **See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for complete details**
+✨ **Clean, organized structure with isolated environments for each component!**
 
 ## 🚀 Quick Start for Busay Project
 
@@ -102,7 +118,7 @@ mv ~/Downloads/Vehicle-Detection-Day-Night-1 datasets/downloaded/
 mv ~/Downloads/Accident-detection-1 datasets/downloaded/
 
 # 2. Setup environment
-cd scripts/training
+cd training
 python3 -m venv venv_training
 source venv_training/bin/activate  # Linux/Mac
 # venv_training\Scripts\activate   # Windows
@@ -120,7 +136,7 @@ python run_merge_busay.py
 #   - datasets/processed/busay_accident_detection/
 
 # 6. Train Model 1 (Vehicle Detection)
-python train_vehicle_detector.py \
+python train.py \
   --data ../../datasets/processed/busay_vehicle_detection/data.yaml \
   --model n \
   --batch 4 \
@@ -129,7 +145,7 @@ python train_vehicle_detector.py \
   --name vehicle_detection
 
 # 7. Train Model 2 (Crash Detection)
-python train_vehicle_detector.py \
+python train.py \
   --data ../../datasets/processed/busay_accident_detection/data.yaml \
   --model n \
   --batch 4 \
@@ -159,17 +175,17 @@ python train_vehicle_detector.py \
 # https://www.aicitychallenge.org/
 
 # 2. Convert to YOLO format
-cd scripts/training
+cd training
 python convert_aicity_track1_to_yolo.py  # Vehicle tracking
 python convert_aicity_track4_to_yolo.py  # Crash detection
 
 # 3. Train dual models
-# See: scripts/training/DUAL_MODEL_TRAINING_GUIDE.md
+# See: training/DUAL_MODEL_TRAINING_GUIDE.md
 ```
 
 **Total time:** 30-60 min conversion + 10-13 hours training for both models
 
-📖 **Full guide:** [scripts/training/OVERHEAD_CAMERA_GUIDE.md](scripts/training/OVERHEAD_CAMERA_GUIDE.md)
+📖 **Full guide:** [training/OVERHEAD_CAMERA_GUIDE.md](training/OVERHEAD_CAMERA_GUIDE.md)
 
 ---
 
@@ -177,9 +193,10 @@ python convert_aicity_track4_to_yolo.py  # Crash detection
 
 ```bash
 # Quick training on COCO (includes all 80 classes)
-cd scripts/training
+cd training
 source venv_training/bin/activate
-python quick_train.py
+# Note: quick_train.py removed - use train.py instead
+python train.py --dataset vehicle --model-size n --epochs 50
 ```
 
 ⚠️ **Note:** COCO includes pizzas, dogs, etc. Use Roboflow or AI City for traffic-specific training.
@@ -194,7 +211,7 @@ cd scripts/download
 python auto_download_coco.py  # Has speed detection built-in
 
 # Or use your trained weights
-python train_vehicle_detector.py \
+python train.py \
   --test \
   --model-path ../runs/vehicle_speed/roboflow_busay_v1/weights/best.pt \
   --source your_busay_video.mp4
@@ -259,7 +276,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # 3. Model Training (~3GB)
-cd scripts/training
+cd training
 python3 -m venv venv_training
 source venv_training/bin/activate
 pip install -r requirements.txt
@@ -341,7 +358,7 @@ from ultralytics import YOLO  # This should work
 3. Reduce image size: `--imgsz 416`
 
 ```bash
-python train_vehicle_detector.py --model n --batch 4 --imgsz 416
+python train.py --model n --batch 4 --imgsz 416
 ```
 
 ### Slow Training
@@ -434,8 +451,8 @@ python extract_frames.py videos_folder/ -o frames_output -f 60
 
 ### Training Guides
 - **[YOLO_NATIVE_DATASETS.md](scripts/training/YOLO_NATIVE_DATASETS.md)** ⭐ - Roboflow Universe guide (RECOMMENDED)
-- **[OVERHEAD_CAMERA_GUIDE.md](scripts/training/OVERHEAD_CAMERA_GUIDE.md)** - Angled camera setup & AI City Challenge
-- **[DUAL_MODEL_TRAINING_GUIDE.md](scripts/training/DUAL_MODEL_TRAINING_GUIDE.md)** - Complete dual-model system
+- **[OVERHEAD_CAMERA_GUIDE.md](training/OVERHEAD_CAMERA_GUIDE.md)** - Angled camera setup & AI City Challenge
+- **[DUAL_MODEL_TRAINING_GUIDE.md](training/DUAL_MODEL_TRAINING_GUIDE.md)** - Complete dual-model system
 - **[NIGHT_VISION_DATASETS.md](scripts/training/NIGHT_VISION_DATASETS.md)** - Night vision & infrared datasets
 - **[TRAINING_GUIDE.md](TRAINING_GUIDE.md)** - Comprehensive training guide
 
@@ -469,7 +486,7 @@ For thesis and educational use.
 
 1. ✅ **Setup Environment**
    ```bash
-   cd scripts/training
+   cd training
    python3 -m venv venv_training
    source venv_training/bin/activate
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
@@ -483,11 +500,11 @@ For thesis and educational use.
 3. 🚀 **Train Models**
    ```bash
    # For Roboflow (already YOLO format)
-   python train_vehicle_detector.py --data roboflow_data.yaml --epochs 100 --batch 4
+   python train.py --data roboflow_data.yaml --epochs 100 --batch 4
 
    # For AI City (after conversion)
    python convert_aicity_track1_to_yolo.py
-   python train_vehicle_detector.py --data aicity_2022_track1.yaml --epochs 100 --batch 4
+   python train.py --data aicity_2022_track1.yaml --epochs 100 --batch 4
    ```
 
 4. 📐 **Calibrate Camera**
@@ -511,7 +528,7 @@ For thesis and educational use.
 ### Quick References
 
 📖 **First time?** Read [YOLO_NATIVE_DATASETS.md](scripts/training/YOLO_NATIVE_DATASETS.md)
-📖 **Overhead camera?** Read [OVERHEAD_CAMERA_GUIDE.md](scripts/training/OVERHEAD_CAMERA_GUIDE.md)
+📖 **Overhead camera?** Read [OVERHEAD_CAMERA_GUIDE.md](training/OVERHEAD_CAMERA_GUIDE.md)
 📖 **Need help?** Read [TRAINING_GUIDE.md](TRAINING_GUIDE.md)
 
 ---
