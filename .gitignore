@@ -1,3 +1,10 @@
+# Virtual Environments
+.venv/
+venv/
+venv_yolo26/
+env/
+ENV/
+*.pt
 # ============================================
 # GLOBAL IGNORES
 # ============================================

@@ -225,8 +225,8 @@ def train_model(
         "patience": 50,           # Early stopping patience
         "save": True,
         "save_period": 10,        # Save checkpoint every 10 epochs
-        "cache": "ram",           # Cache images in RAM for faster training
-        "workers": 8,             # Data loading workers
+        "cache": "false",           # Cache images in RAM for faster training
+        "workers": 4,             # Data loading workers
         "cos_lr": True,           # Cosine learning rate scheduler
         "close_mosaic": 10,       # Disable mosaic for last 10 epochs
         "amp": True,              # Mixed precision - CRITICAL for 8GB VRAM (saves ~40%)
