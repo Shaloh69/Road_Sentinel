@@ -1,17 +1,17 @@
-# Lightweight CPU-only requirements for testing
-fastapi==0.109.2
-uvicorn[standard]==0.27.1
-python-multipart==0.0.9
-pydantic==2.6.1
-pydantic-settings==2.1.0
+# Lightweight CPU-only requirements for testing / Cloudflare Tunnel local dev
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+pydantic>=2.6.1
+pydantic-settings>=2.1.0
 
-# AI/ML - CPU only versions (much smaller)
-ultralytics==8.1.11
-torch==2.2.0+cpu
-torchvision==0.17.0+cpu
+# AI/ML — CPU-only PyTorch (much smaller download)
+ultralytics>=8.3.0
 --extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0+cpu
+torchvision>=0.17.0+cpu
 
-opencv-python-headless==4.9.0.80
-numpy==1.26.4
-pillow==10.2.0
-python-dotenv==1.0.1
+opencv-python-headless>=4.9.0.80
+numpy>=1.26.4
+pillow>=10.2.0
+python-dotenv>=1.0.1

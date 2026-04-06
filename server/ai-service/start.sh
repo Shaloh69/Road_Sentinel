@@ -14,12 +14,18 @@ if [ ! -f ".env" ]; then
     echo ""
 fi
 
+# Load env vars for use in this script
+set -a
+source .env
+set +a
+
 # Check if Python dependencies are installed
 echo "📦 Checking Python dependencies..."
-python3 -c "import fastapi, ultralytics" 2>/dev/null
+python3 -c "import fastapi, ultralytics, uvicorn" 2>/dev/null
 if [ $? -ne 0 ]; then
-    echo "❌ Dependencies not installed. Please run:"
-    echo "   pip install -r requirements.txt"
+    echo "❌ Dependencies not installed. Run:"
+    echo "   pip install -r requirements.txt        # GPU"
+    echo "   pip install -r requirements-cpu.txt    # CPU only"
     exit 1
 fi
 echo "✅ Dependencies OK"
@@ -30,10 +36,19 @@ mkdir -p models
 echo "📁 Models directory: ./models/"
 echo ""
 
-# Start the service
-echo "🤖 Starting AI service on http://0.0.0.0:8000"
+# Resolve settings with defaults
+HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-8000}"
+# GPU: keep workers=1 so only one process owns CUDA context
+WORKERS="${WORKERS:-1}"
+
+echo "🤖 Starting AI service on http://${HOST}:${PORT}  (workers=${WORKERS})"
+echo "   Device: ${DEVICE:-cuda}"
 echo "   Press Ctrl+C to stop"
 echo "================================================"
 echo ""
 
-python3 -m app.main
+exec uvicorn app.main:app \
+    --host "$HOST" \
+    --port "$PORT" \
+    --workers "$WORKERS"

@@ -1,5 +1,5 @@
 # Road Sentinel AI Service Dockerfile
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
@@ -34,4 +34,5 @@ ENV PYTHONUNBUFFERED=1
 ENV DEVICE=cpu
 
 # Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# WORKERS controlled by env var (default 1 for GPU — only one process can own CUDA)
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-1}"]

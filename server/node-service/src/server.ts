@@ -8,6 +8,12 @@ import { testConnection, closePool } from './config/database';
 import { initializeStorageBuckets } from './config/supabase';
 import { aiService } from './services/ai.service';
 
+// Routes
+import cameraRoutes from './routes/cameras';
+import detectionRoutes from './routes/detections';
+import incidentRoutes from './routes/incidents';
+import analyticsRoutes from './routes/analytics';
+
 // Load environment variables
 dotenv.config();
 
@@ -38,7 +44,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Health check endpoint
+// ── Health & status ────────────────────────────────────────────────────────
+
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
@@ -47,7 +54,6 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
-// API status endpoint
 app.get('/api/status', async (req: Request, res: Response) => {
   const dbHealthy = await testConnection();
   const aiHealthy = await aiService.healthCheck();
@@ -63,7 +69,15 @@ app.get('/api/status', async (req: Request, res: Response) => {
   });
 });
 
-// Socket.IO connection handling
+// ── API routes ─────────────────────────────────────────────────────────────
+
+app.use('/api/cameras',    cameraRoutes);
+app.use('/api/detections', detectionRoutes);
+app.use('/api/incidents',  incidentRoutes);
+app.use('/api/analytics',  analyticsRoutes);
+
+// ── Socket.IO ──────────────────────────────────────────────────────────────
+
 io.on('connection', (socket) => {
   logger.info(`Client connected: ${socket.id}`);
 
@@ -71,6 +85,7 @@ io.on('connection', (socket) => {
     logger.info(`Client disconnected: ${socket.id}`);
   });
 
+  // Subscribe to a specific camera feed
   socket.on('subscribe_camera', (cameraId: string) => {
     socket.join(`camera:${cameraId}`);
     logger.info(`Client ${socket.id} subscribed to camera ${cameraId}`);
@@ -80,12 +95,23 @@ io.on('connection', (socket) => {
     socket.leave(`camera:${cameraId}`);
     logger.info(`Client ${socket.id} unsubscribed from camera ${cameraId}`);
   });
+
+  // Subscribe to all incidents regardless of camera
+  socket.on('subscribe_incidents', () => {
+    socket.join('incidents');
+    logger.info(`Client ${socket.id} subscribed to incidents`);
+  });
+
+  socket.on('unsubscribe_incidents', () => {
+    socket.leave('incidents');
+  });
 });
 
-// Export io for use in other modules
+// Export io so route handlers can broadcast
 export { io };
 
-// Error handling middleware
+// ── Error handling ─────────────────────────────────────────────────────────
+
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   logger.error('Unhandled error:', err);
   res.status(500).json({
@@ -95,7 +121,6 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   });
 });
 
-// 404 handler
 app.use((req: Request, res: Response) => {
   res.status(404).json({
     success: false,
@@ -104,44 +129,35 @@ app.use((req: Request, res: Response) => {
   });
 });
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
+// ── Graceful shutdown ──────────────────────────────────────────────────────
+
+async function shutdown() {
+  logger.info('Shutting down server...');
   server.close(async () => {
-    logger.info('HTTP server closed');
     await closePool();
     process.exit(0);
   });
-});
+}
 
-process.on('SIGINT', async () => {
-  logger.info('SIGINT signal received: closing HTTP server');
-  server.close(async () => {
-    logger.info('HTTP server closed');
-    await closePool();
-    process.exit(0);
-  });
-});
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
-// Start server
+// ── Start ──────────────────────────────────────────────────────────────────
+
 async function startServer() {
   try {
-    // Test database connection
     const dbConnected = await testConnection();
     if (!dbConnected) {
-      logger.warn('Database connection failed - server will start but some features may not work');
+      logger.warn('Database connection failed — server will start but some features may not work');
     }
 
-    // Initialize Supabase storage
     await initializeStorageBuckets();
 
-    // Check AI service
     const aiHealthy = await aiService.healthCheck();
     if (!aiHealthy) {
-      logger.warn('AI service is not available - detection features will not work');
+      logger.warn('AI service is not available — detection features will not work');
     }
 
-    // Start listening
     server.listen(PORT, () => {
       logger.info(`🚀 Server running on http://${HOST}:${PORT}`);
       logger.info(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -155,5 +171,4 @@ async function startServer() {
   }
 }
 
-// Start the server
 startServer();
