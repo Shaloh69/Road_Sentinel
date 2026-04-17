@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Projects/Thesis/2026/RoadSentinel/**)",
+      "Read(//d/Projects-Shem/Thesis/2026/RoadSentinel/**)",
+      "WebFetch(domain:learn.adafruit.com)",
+      "WebFetch(domain:www.cnx-software.com)",
+      "WebFetch(domain:seengreat.com)",
+      "Bash(gh api *)",
+      "Bash(python3 -c \"import sys,json; [print\\(x['path']\\) for x in json.load\\(sys.stdin\\)['tree'] if 'pinout' in x['path'].lower\\(\\) or x['path'].endswith\\('.pyi'\\) or x['path'].endswith\\('.h'\\) or x['path'].endswith\\('.hpp'\\) or x['path'].endswith\\('.cpp'\\)]\")",
+      "WebFetch(domain:pypi.org)"
+    ]
+  }
+}
