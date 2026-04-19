@@ -513,25 +513,17 @@ def render_color_bar_test(phase: int) -> Image.Image:
 # ── hzeller RGBMatrix setup (Pi 4 specific) ───────────────────────────────────
 
 def build_matrix(gpio_slowdown: int, hardware_mapping: str,
-                 no_hardware_pulse: bool = True) -> "RGBMatrix":
+                 no_hardware_pulse: bool = True,
+                 cols_per_panel: int = 64) -> "RGBMatrix":
     """
-    Create an RGBMatrix driver for Raspberry Pi 4.
-
-    gpio_slowdown:
-      Pi 4 typically needs 4. If display is garbled/flickering try 3 or 5.
-
-    hardware_mapping:
-      'regular' — hzeller "regular" pinout, matches the ₱149 Chinese adapter board.
-
-    no_hardware_pulse:
-      True by default — avoids conflict with the Pi's built-in snd_bcm2835 sound
-      module. Slight extra flicker vs hardware pulse, acceptable for a status board.
-      Set False only after disabling the sound module in raspi-config.
+    cols_per_panel:
+      64  → two 64×32 panels chained (chain_length=2)  ← try first
+      128 → one 128×32 logical panel  (chain_length=1)  ← try if content duplicates
     """
     options = RGBMatrixOptions()
     options.rows                     = HEIGHT
-    options.cols                     = 64
-    options.chain_length             = WIDTH // 64
+    options.cols                     = cols_per_panel
+    options.chain_length             = WIDTH // cols_per_panel
     options.parallel                 = 1
     options.hardware_mapping         = hardware_mapping
     options.gpio_slowdown            = gpio_slowdown
@@ -541,8 +533,13 @@ def build_matrix(gpio_slowdown: int, hardware_mapping: str,
 
 
 def show_frame(matrix: "RGBMatrix", canvas, img: Image.Image):
-    """Push a PIL image to the LED matrix and swap to vsync."""
-    canvas.SetImage(img.convert("RGB"))
+    """Push PIL image pixel-by-pixel — works reliably across all chained panel configs."""
+    rgb = img.convert("RGB")
+    px  = rgb.load()
+    for y in range(HEIGHT):
+        for x in range(WIDTH):
+            r, g, b = px[x, y]
+            canvas.SetPixel(x, y, r, g, b)
     return matrix.SwapOnVSync(canvas)
 
 
@@ -616,6 +613,9 @@ Examples:
                         help="Node Service base URL (default: http://localhost:3001)")
     parser.add_argument("--slowdown",      type=int, default=4,
                         help="GPIO slowdown for Pi 4 (default: 4, try 3-5 if garbled)")
+    parser.add_argument("--cols",          type=int, default=64, choices=[64, 128],
+                        help="Columns per panel: 64=two chained 64x32 panels (default), "
+                             "128=single 128x32 logical panel. Use 128 if content duplicates.")
     parser.add_argument("--mapping",       default="regular",
                         choices=["regular", "adafruit-hat", "adafruit-hat-pwm"],
                         help="GPIO mapping (default: regular = ₱149 Chinese adapter board)")
@@ -640,6 +640,7 @@ Examples:
         gpio_slowdown      = args.slowdown,
         hardware_mapping   = args.mapping,
         no_hardware_pulse  = not args.hardware_pulse,
+        cols_per_panel     = args.cols,
     )
     state  = SystemState()
 
