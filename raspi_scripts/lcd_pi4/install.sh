@@ -28,21 +28,18 @@ else
   git clone https://github.com/hzeller/rpi-rgb-led-matrix.git "$BUILD_DIR"
 fi
 
-# ── Step 3: build Python bindings ────────────────────────────────────────────
-echo "[3/4] Building Python bindings (this takes ~2 minutes)..."
-cd "$BUILD_DIR/bindings/python"
-make build-python PYTHON="$(which python3)"
-
-# ── Step 4: install into venv ────────────────────────────────────────────────
-echo "[4/4] Creating venv at $VENV and installing..."
+# ── Step 3: create venv ───────────────────────────────────────────────────────
+echo "[3/4] Creating venv at $VENV..."
 python3 -m venv "$VENV"
 source "$VENV/bin/activate"
 pip install --upgrade pip -q
 pip install Pillow requests
 
-# Install rgbmatrix wheel built in step 3
-pip install dist/*.whl 2>/dev/null \
-  || pip install "$BUILD_DIR/bindings/python"
+# ── Step 4: build and install rgbmatrix Python bindings ──────────────────────
+echo "[4/4] Building Python bindings (this takes ~2 minutes)..."
+# Use pip to build from source — works across all hzeller repo versions.
+# (The old 'make build-python' target was removed in newer versions of the repo.)
+pip install "$BUILD_DIR/bindings/python/"
 
 echo
 echo "=== Done! ==="

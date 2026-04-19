@@ -53,8 +53,9 @@ bash install.sh
 This takes about **2 minutes**. It will:
 - Install `python3-dev`, `build-essential` via apt
 - Clone `hzeller/rpi-rgb-led-matrix` from GitHub
-- Compile the Python bindings from C source
-- Create `~/venvs/led_venv` with `rgbmatrix`, `Pillow`, and `requests`
+- Create `~/venvs/led_venv`
+- Compile and install the `rgbmatrix` Python bindings from C source via `pip`
+- Install `Pillow` and `requests`
 
 ---
 
