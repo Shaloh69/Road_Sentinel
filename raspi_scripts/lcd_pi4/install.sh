@@ -37,11 +37,8 @@ pip install Pillow requests
 
 # ── Step 4: build and install rgbmatrix Python bindings ──────────────────────
 echo "[4/4] Building Python bindings (this takes ~2 minutes)..."
-# The hzeller Makefile generates setup.py before building — run make first,
-# then install the built package into the venv with pip.
-cd "$BUILD_DIR/bindings/python"
-make
-pip install .
+# Newer hzeller repo uses pyproject.toml at the repo root — install from there.
+pip install "$BUILD_DIR/"
 
 echo
 echo "=== Done! ==="
