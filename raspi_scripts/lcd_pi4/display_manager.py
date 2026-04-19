@@ -553,7 +553,7 @@ def build_matrix(gpio_slowdown: int, hardware_mapping: str,
 
 def show_frame(matrix: "RGBMatrix", canvas, img: Image.Image):
     """Push PIL image to the chained matrix via SetImage (C-level, handles full chain width)."""
-    rgb = img.convert("RGB").resize((matrix.width, matrix.height), Image.NEAREST)
+    rgb = img.convert("RGB")
     canvas.SetImage(rgb)
     return matrix.SwapOnVSync(canvas)
 
