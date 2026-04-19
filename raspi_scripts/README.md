@@ -9,7 +9,8 @@ Scripts and utilities that run **on the Raspberry Pi** at the Busay blind-curve 
 | Script | Purpose |
 |---|---|
 | [`camera_reboot_autostart_setup.sh`](#camera_reboot_autostart_setupsh-analysis) | Installs both RTSP camera streams as a desktop autostart entry |
-| [`lcd/display_manager.py`](lcd/display_manager.py) | 128×32 SSD1306 OLED status display controller |
+| [`lcd/display_manager.py`](lcd/display_manager.py) | HUB75 128×32 RGB LED matrix — **Raspberry Pi 5** (Adafruit PioMatter) |
+| [`lcd_pi4/display_manager.py`](lcd_pi4/display_manager.py) | HUB75 128×32 RGB LED matrix — **Raspberry Pi 4 Model B** (hzeller rgbmatrix) |
 
 ---
 
@@ -96,9 +97,17 @@ tail -f ~/camera_logs/ir_auto.log
 
 ---
 
-## LCD Status Display
+## LED Matrix Status Display
 
-See [`lcd/README.md`](lcd/README.md) for wiring, setup, and usage.
+Two separate implementations — pick the one matching your Pi:
 
-The 128×32 SSD1306 OLED shows live system status fetched from the Node Service API,
-and flashes alerts when incidents are detected.
+| Pi model | Folder | Library | sudo needed? |
+|---|---|---|---|
+| **Raspberry Pi 5** | [`lcd/`](lcd/) | Adafruit PioMatter (`pip install`) | No |
+| **Raspberry Pi 4 Model B** | [`lcd_pi4/`](lcd_pi4/) | hzeller rpi-rgb-led-matrix (build from source) | **Yes** |
+
+Both use the same **₱149 Chinese HUB75 adapter board** (hzeller "regular" / active3 GPIO mapping)
+and display identical screens — color-coded REAL/TEST alerts on a 128×32 full-RGB panel.
+
+See [`lcd/README.md`](lcd/README.md) for Pi 5 setup.
+See [`lcd_pi4/README.md`](lcd_pi4/README.md) for Pi 4 setup.

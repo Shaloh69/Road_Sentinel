@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """
 Road Sentinel — HUB75 128×32 RGB LED Matrix Display Manager
-Raspberry Pi 5 version — uses Adafruit PioMatter (RP1 PIO-based driver)
+Raspberry Pi 4 Model B version — uses hzeller/rpi-rgb-led-matrix
 
-NOTE: The old hzeller/rpi-rgb-led-matrix library does NOT work on Pi 5.
-      Pi 5 uses the RP1 peripheral chip for GPIO — direct Broadcom GPIO is gone.
-      PioMatter uses the PIO blocks inside RP1 (same concept as RP2040) instead.
+Pi 4 retains Broadcom direct GPIO, so the hzeller library works here.
+(Pi 5 users: see ../lcd/display_manager.py which uses Adafruit PioMatter instead.)
 
 Hardware: HUB75 RGB LED matrix — 128×32 pixels (full color)
   Default config: two 64×32 panels chained  → total 128×32
   Single panel:   one 128×32 panel
 
-Wiring: Default pinout is 'active3' — matches the cheap ₱149 Chinese HUB75
-  adapter board (hzeller "regular" GPIO mapping).
-  For Adafruit RGB Matrix Bonnet use --pinout bonnet.
-  See lcd/README.md for full wiring details.
+Wiring: Plug the ₱149 Chinese HUB75 adapter board onto the 40-pin GPIO header.
+  Uses hzeller "regular" GPIO mapping — same physical pins as the adapter board.
+  See lcd_pi4/README.md for full wiring/install details.
 
-Install:
-  pip install Adafruit-Blinka-Raspberry-Pi5-Piomatter pillow numpy requests
+Install (build from source — no pip):
+  See lcd_pi4/README.md Step 3, or run install.sh
 
 Run:
-  python3 display_manager.py           # real mode (live API)
-  python3 display_manager.py --test    # test mode (fake data, no API)
+  sudo python3 display_manager.py           # real mode (live API)
+  sudo python3 display_manager.py --test    # test mode (fake data, no API)
+  (sudo required for direct GPIO /dev/mem access)
 """
 
 import argparse
@@ -33,19 +32,22 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
-import numpy as np
-import requests
 from PIL import Image, ImageDraw, ImageFont
 
-# ── Try to import PioMatter (only on Raspberry Pi 5) ─────────────────────────
+# ── Try to import rgbmatrix (only on Raspberry Pi with hzeller library built) ──
 try:
-    import adafruit_blinka_raspberry_pi5_piomatter as piomatter
+    from rgbmatrix import RGBMatrix, RGBMatrixOptions
     HW_AVAILABLE = True
 except ImportError:
     HW_AVAILABLE = False
-    print("WARNING: PioMatter not found.")
-    print("Install: pip install Adafruit-Blinka-Raspberry-Pi5-Piomatter")
-    print("Or see lcd/README.md for full setup steps.")
+    print("WARNING: rgbmatrix not found.")
+    print("Build it from source — see lcd_pi4/README.md or run install.sh")
+
+try:
+    import requests as _requests
+    _REQUESTS_OK = True
+except ImportError:
+    _REQUESTS_OK = False
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -69,8 +71,8 @@ YELLOW  = (220, 200, 0  )
 ORANGE  = (255, 110, 0  )
 CYAN    = (0,   200, 200)
 GRAY    = (90,  90,  90 )
-AMBER   = (255, 160, 0  )   # TEST alert color
-DARK_GREEN = (0, 80, 0  )
+AMBER   = (255, 160, 0  )
+DARK_GREEN = (0, 80,  0 )
 
 SEVERITY_COLORS = {
     "critical": RED,
@@ -80,7 +82,6 @@ SEVERITY_COLORS = {
 }
 
 # ── Font & layout ─────────────────────────────────────────────────────────────
-# 8 px font → 4 text rows (y=0, 8, 16, 24) on a 32 px tall panel
 ROW_H = 8
 ROWS  = [0, 8, 16, 24]
 
@@ -101,6 +102,14 @@ FONT_SM = _load_font(8)
 
 def _trunc(text: str, max_chars: int = 21) -> str:
     return text if len(text) <= max_chars else text[:max_chars - 1] + "…"
+
+def _get_local_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "?.?.?.?"
 
 # ── Frame helpers ─────────────────────────────────────────────────────────────
 
@@ -178,18 +187,8 @@ class SystemState:
                 "last_poll_ok":    self.last_poll_ok,
                 "is_test_mode":    self.is_test_mode,
                 "local_ip":        self.local_ip,
+                "uptime":          self.uptime(),
             }
-
-
-def _get_local_ip() -> str:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "?.?.?.?"
 
 
 # ── Data providers ────────────────────────────────────────────────────────────
@@ -201,74 +200,75 @@ class DataProvider(ABC):
     @abstractmethod
     def start(self): ...
 
-    @abstractmethod
-    def trigger_test_alert(self): ...
+    def trigger_test_alert(self):
+        pass
 
 
 class ApiDataProvider(DataProvider):
-    """Polls the Node Service REST API. New incidents → REAL alerts."""
+    """Polls Node Service REST API every 10 seconds."""
 
-    POLL_INTERVAL = 5
+    POLL_INTERVAL = 10
 
     def __init__(self, state: SystemState, base_url: str):
         super().__init__(state)
-        self.base_url                   = base_url.rstrip("/")
-        self._seen_incident_ids: set    = set()
+        self._base = base_url.rstrip("/")
+        self._last_incident_id: Optional[int] = None
 
     def start(self):
-        threading.Thread(target=self._loop, daemon=True).start()
-        log.info("API poller started → %s (every %ds)", self.base_url, self.POLL_INTERVAL)
+        threading.Thread(target=self._poll_loop, daemon=True).start()
+        log.info("API data provider started — polling %s", self._base)
 
-    def trigger_test_alert(self):
-        self.state.push_alert({
-            "is_test": True, "incident_type": "speeding", "severity": "high",
-            "title": "Test Alert", "description": "Manual test from CLI",
-            "camera_name": "Camera A", "timestamp": datetime.now().isoformat(),
-        })
-
-    def _loop(self):
+    def _poll_loop(self):
         while True:
             try:
                 self._poll()
-            except Exception as e:
-                log.warning("Poll error: %s", e)
+            except Exception as exc:
+                log.warning("Poll error: %s", exc)
                 self.state.last_poll_ok = False
             time.sleep(self.POLL_INTERVAL)
 
     def _poll(self):
-        r = requests.get(f"{self.base_url}/api/analytics/summary", timeout=4)
-        if r.ok:
-            self.state.update_summary(r.json().get("data", {}))
+        if not _REQUESTS_OK:
+            raise RuntimeError("requests library not installed")
 
-        r = requests.get(f"{self.base_url}/api/cameras", timeout=4)
-        if r.ok:
-            self.state.update_cameras(r.json().get("data", []))
+        r = _requests.get(f"{self._base}/api/analytics/summary", timeout=5)
+        r.raise_for_status()
+        self.state.update_summary(r.json())
 
-        r = requests.get(f"{self.base_url}/api/incidents",
-                         params={"status": "active", "limit": "5"}, timeout=4)
-        if r.ok:
-            for inc in r.json().get("data", []):
-                inc_id = inc.get("id")
-                if inc_id not in self._seen_incident_ids:
-                    self._seen_incident_ids.add(inc_id)
-                    inc["is_test"] = False
-                    self.state.push_alert(inc, hold_secs=12.0)
-                    log.info("REAL alert: %s (%s)", inc.get("incident_type"), inc.get("severity"))
+        r = _requests.get(f"{self._base}/api/cameras", timeout=5)
+        r.raise_for_status()
+        self.state.update_cameras(r.json())
+
+        r = _requests.get(
+            f"{self._base}/api/incidents",
+            params={"status": "active", "limit": 1},
+            timeout=5,
+        )
+        r.raise_for_status()
+        items = r.json()
+        if items:
+            inc = items[0]
+            inc_id = inc.get("id")
+            if inc_id != self._last_incident_id:
+                self._last_incident_id = inc_id
+                inc["is_test"] = False
+                self.state.push_alert(inc, hold_secs=12.0)
+                log.info("REAL alert: %s (%s)", inc.get("incident_type"), inc.get("severity"))
 
 
 class TestDataProvider(DataProvider):
     """Fake data — no network. Cycles simulated TEST alerts (amber)."""
 
     _FAKE_INCIDENTS = [
-        {"is_test": True, "incident_type": "speeding",  "severity": "high",
-         "title": "Test Speeding",   "description": "85 km/h on Camera A",
-         "camera_name": "Camera A",  "timestamp": ""},
-        {"is_test": True, "incident_type": "crash",     "severity": "critical",
-         "title": "Test Crash",      "description": "Simulated collision",
-         "camera_name": "Camera B",  "timestamp": ""},
-        {"is_test": True, "incident_type": "congestion","severity": "low",
-         "title": "Test Congestion", "description": "Slow traffic detected",
-         "camera_name": "Camera A",  "timestamp": ""},
+        {"is_test": True, "incident_type": "speeding",   "severity": "high",
+         "title": "Test Speeding",    "description": "85 km/h on Camera A",
+         "camera_name": "Camera A",   "timestamp": ""},
+        {"is_test": True, "incident_type": "crash",      "severity": "critical",
+         "title": "Test Crash",       "description": "Simulated collision",
+         "camera_name": "Camera B",   "timestamp": ""},
+        {"is_test": True, "incident_type": "congestion", "severity": "low",
+         "title": "Test Congestion",  "description": "Slow traffic detected",
+         "camera_name": "Camera A",   "timestamp": ""},
     ]
 
     def __init__(self, state: SystemState):
@@ -338,29 +338,30 @@ def render_main_status(state: SystemState) -> Image.Image:
     draw.text((1,  ROWS[2]), _trunc(f"Veh:{snap['vehicles_today']:,}"), font=FONT_SM, fill=CYAN)
     draw.text((70, ROWS[2]), speed_str, font=FONT_SM, fill=YELLOW)
     _draw_row(draw, 3, _trunc(f"{snap['local_ip']}  {state.uptime()}"), GRAY)
-
-    if snap["is_test_mode"]:
-        draw.text((98, 0), "[TST]", font=FONT_SM, fill=AMBER)
     return img
 
 
 def render_camera_detail(state: SystemState) -> Image.Image:
     img, draw = _new_frame()
-    _draw_row(draw, 0, "--- Camera Status ---", WHITE)
-    cams = state.snapshot()["cameras"]
-    if len(cams) >= 1:
-        c   = cams[0]
-        ip  = c.get("rtsp_url", "").split("//")[-1].split(":")[0] or "?"
-        col = GREEN if c.get("status") == "online" else RED
-        _draw_row(draw, 1, _trunc(f"{c.get('name','Cam A')} {ip}"), col)
-        _draw_row(draw, 2, _trunc(f"{c.get('fps','?')}fps {c.get('resolution','?')}"), GRAY)
-    else:
-        _draw_row(draw, 1, "No camera data", ORANGE)
-        _draw_row(draw, 2, "Check Node Service", GRAY)
-    if len(cams) >= 2:
-        c   = cams[1]
-        col = GREEN if c.get("status") == "online" else RED
-        _draw_row(draw, 3, _trunc(f"{c.get('name','Cam B')} {c.get('status','?').upper()[:2]}"), col)
+    snap = state.snapshot()
+    cams = snap["cameras"]
+
+    _draw_row(draw, 0, "CAMERA STATUS", WHITE)
+
+    if not cams:
+        _draw_row(draw, 1, "No camera data", GRAY)
+        return img
+
+    for i, cam in enumerate(cams[:2]):
+        row    = i + 1
+        name   = cam.get("name", f"Cam {i+1}")[:8]
+        status = cam.get("status", "unknown")
+        fps    = cam.get("fps")
+        col    = GREEN if status == "online" else (ORANGE if status == "error" else RED)
+        fps_s  = f" {fps}fps" if fps else ""
+        _draw_row(draw, row, _trunc(f"{name}: {status.upper()}{fps_s}"), col)
+
+    _draw_row(draw, 3, _trunc(f"Inc: {snap['incidents_today']}  Up:{state.uptime()}"), GRAY)
     return img
 
 
@@ -371,22 +372,19 @@ def render_daily_stats(state: SystemState) -> Image.Image:
     _draw_row(draw, 1, _trunc(f"Incidents: {snap['incidents_today']}"), ORANGE)
     speed_str = f"{snap['avg_speed']} km/h" if snap["avg_speed"] else "N/A"
     _draw_row(draw, 2, _trunc(f"Avg speed: {speed_str}"), CYAN)
-    _draw_row(draw, 3, _trunc(f"Up: {state.uptime()}  {snap['local_ip']}"), GRAY)
+    _draw_row(draw, 3, _trunc(f"Up: {state.uptime()}"), GRAY)
     return img
 
 
-def render_alert(state: SystemState, alert: dict, flash_phase: int) -> Image.Image:
-    """
-    TEST alerts  → amber header, [TEST] label, "SIMULATED" subtitle
-    REAL alerts  → severity-colored header (red/orange/yellow/cyan)
-    """
+def render_alert(state: SystemState, incident: dict, flash_phase: int = 0) -> Image.Image:
     img, draw = _new_frame()
-    is_test   = alert.get("is_test", False)
-    inc_type  = alert.get("incident_type", "INCIDENT").upper()
-    severity  = alert.get("severity", "high")
-    cam_name  = alert.get("camera_name", alert.get("camera_id", ""))
-    desc      = alert.get("description", "")
-    ts_raw    = alert.get("timestamp", "")
+
+    is_test   = incident.get("is_test", False)
+    inc_type  = str(incident.get("incident_type", "ALERT")).upper()
+    severity  = str(incident.get("severity", "high")).lower()
+    cam_name  = str(incident.get("camera_name", "Camera ?"))
+    desc      = str(incident.get("description", ""))
+    ts_raw    = incident.get("timestamp", "")
     try:
         ts = datetime.fromisoformat(str(ts_raw).replace("Z", "")).strftime("%H:%M:%S")
     except Exception:
@@ -428,11 +426,9 @@ def render_test_static(state: SystemState) -> Image.Image:
     img, draw = _new_frame()
     snap = state.snapshot()
 
-    # Row 0: header with [TEST] badge
     draw.text((1, ROWS[0]), "ROAD SENTINEL", font=FONT_SM, fill=WHITE)
     draw.text((103, ROWS[0]), "[TST]", font=FONT_SM, fill=AMBER)
 
-    # Row 1: camera status — static coloured labels
     cams = snap["cameras"]
     if cams:
         cam_a = next((c for c in cams if "A" in c.get("name", "")), cams[0] if cams else None)
@@ -449,20 +445,17 @@ def render_test_static(state: SystemState) -> Image.Image:
     else:
         _draw_row(draw, 1, "CAMERAS: SIMULATED", AMBER)
 
-    # Row 2: static vehicle/speed counts
     speed_str = f"{snap['avg_speed']}km/h" if snap["avg_speed"] else "N/A"
     draw.text((1,  ROWS[2]), f"Veh:{snap['vehicles_today']:,}", font=FONT_SM, fill=CYAN)
     draw.text((70, ROWS[2]), speed_str, font=FONT_SM, fill=YELLOW)
-
-    # Row 3: IP + uptime
     _draw_row(draw, 3, _trunc(f"{snap['local_ip']}  {state.uptime()}"), GRAY)
     return img
 
 
 def render_color_bar_test(phase: int) -> Image.Image:
-    """Startup color-bar test — cycles through brightness levels to verify all RGB channels."""
+    """Startup color-bar test — cycles through brightness levels."""
     img, draw = _new_frame()
-    bars = [RED, ORANGE, YELLOW, GREEN, CYAN, BLUE, WHITE]
+    bars  = [RED, ORANGE, YELLOW, GREEN, CYAN, BLUE, WHITE]
     bar_w = WIDTH // len(bars)
     intensity = [255, 180, 80][min(phase // 2, 2)]
     for i, color in enumerate(bars):
@@ -473,77 +466,54 @@ def render_color_bar_test(phase: int) -> Image.Image:
     return img
 
 
-# ── PioMatter matrix setup (Pi 5 specific) ────────────────────────────────────
+# ── hzeller RGBMatrix setup (Pi 4 specific) ───────────────────────────────────
 
-def build_matrix(n_addr_lines: int, pinout_name: str):
+def build_matrix(gpio_slowdown: int, hardware_mapping: str) -> "RGBMatrix":
     """
-    Create a PioMatter matrix driver.
+    Create an RGBMatrix driver for Raspberry Pi 4.
 
-    n_addr_lines:
-      4 = 32-row panels (2^4 = 16 half-rows, 1:16 mux) ← use this for 128×32
-      5 = 64-row panels (1:32 mux)
+    gpio_slowdown:
+      Pi 4 typically needs 4. If display is garbled/flickering try 3 or 5.
 
-    pinout_name:
-      'bonnet'  → piomatter.Pinout.AdafruitMatrixBonnet  (Adafruit RGB Matrix Bonnet)
-      'active3' → piomatter.Pinout.Active3
+    hardware_mapping:
+      'regular' — hzeller "regular" pinout, matches the ₱149 Chinese adapter board.
     """
-    pinout_map = {
-        "bonnet":  piomatter.Pinout.AdafruitMatrixBonnet,
-        "active3": piomatter.Pinout.Active3,
-    }
-    if pinout_name not in pinout_map:
-        raise ValueError(f"Unknown pinout '{pinout_name}'. Choose: {list(pinout_map)}")
-
-    geometry = piomatter.Geometry(
-        width        = WIDTH,
-        height       = HEIGHT,
-        n_addr_lines = n_addr_lines,
-        rotation     = piomatter.Orientation.Normal,
-    )
-
-    # Create the initial blank canvas and a writable numpy framebuffer
-    canvas     = Image.new("RGB", (WIDTH, HEIGHT), BLACK)
-    # +0 forces a writeable copy (np.asarray alone gives read-only)
-    framebuffer = np.asarray(canvas) + 0
-
-    matrix = piomatter.PioMatter(
-        colorspace  = piomatter.Colorspace.RGB888Packed,
-        pinout      = pinout_map[pinout_name],
-        framebuffer = framebuffer,
-        geometry    = geometry,
-    )
-
-    return matrix, framebuffer
+    options = RGBMatrixOptions()
+    options.rows            = HEIGHT          # 32
+    options.cols            = 64              # each panel is 64 wide
+    options.chain_length    = WIDTH // 64     # 2 panels → total 128 wide
+    options.parallel        = 1
+    options.hardware_mapping = hardware_mapping
+    options.gpio_slowdown   = gpio_slowdown
+    options.drop_privileges = False           # keep root so we can control GPIO
+    options.disable_hardware_pulsing = False
+    return RGBMatrix(options=options)
 
 
-def show_frame(framebuffer: np.ndarray, matrix, img: Image.Image):
-    """Push a PIL image to the LED matrix via the numpy framebuffer."""
-    framebuffer[:] = np.asarray(img)
-    matrix.show()
-
-
-def clear_matrix(framebuffer: np.ndarray, matrix):
-    framebuffer[:] = 0
-    matrix.show()
+def show_frame(matrix: "RGBMatrix", canvas, img: Image.Image):
+    """Push a PIL image to the LED matrix and swap to vsync."""
+    canvas.SetImage(img.convert("RGB"))
+    return matrix.SwapOnVSync(canvas)
 
 
 # ── Main display loop ─────────────────────────────────────────────────────────
 
 NORMAL_SCREENS     = [render_main_status, render_camera_detail, render_daily_stats]
 SCREEN_ROTATE_SECS = 5
-TICK               = 0.25   # 4 fps — plenty for a status board
+TICK               = 0.25   # 4 fps
 
 
-def run(matrix, framebuffer: np.ndarray, state: SystemState):
-    screen_idx   = 0
-    last_rotate  = time.monotonic()
-    flash_tick   = 0
+def run(matrix: "RGBMatrix", state: SystemState):
+    canvas     = matrix.CreateFrameCanvas()
+    screen_idx = 0
+    last_rotate = time.monotonic()
+    flash_tick  = 0
 
     log.info("Display loop started (%d×%d)", WIDTH, HEIGHT)
 
     # Startup color-bar test (3 seconds)
     for phase in range(6):
-        show_frame(framebuffer, matrix, render_color_bar_test(phase))
+        canvas = show_frame(matrix, canvas, render_color_bar_test(phase))
         time.sleep(0.5)
 
     while True:
@@ -552,8 +522,7 @@ def run(matrix, framebuffer: np.ndarray, state: SystemState):
         alert = state.pop_alert()
 
         if state.is_test_mode:
-            # Test mode: static screen only — no rotation, no sliding content.
-            # Only interrupts for alert flashes, then returns to static view.
+            # Test mode: static screen — no rotation, no sliding content.
             img = render_alert(state, alert, flash_phase=flash_tick % 2) if alert \
                   else render_test_static(state)
         elif alert:
@@ -566,7 +535,7 @@ def run(matrix, framebuffer: np.ndarray, state: SystemState):
                 last_rotate = now
             img = NORMAL_SCREENS[screen_idx](state)
 
-        show_frame(framebuffer, matrix, img)
+        canvas = show_frame(matrix, canvas, img)
         time.sleep(TICK)
 
 
@@ -574,32 +543,32 @@ def run(matrix, framebuffer: np.ndarray, state: SystemState):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Road Sentinel HUB75 128×32 RGB LED Matrix — Raspberry Pi 5",
+        description="Road Sentinel HUB75 128×32 RGB LED Matrix — Raspberry Pi 4 Model B",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Modes:
   Real mode (default) — polls Node Service API
     REAL alerts: severity-colored (red=crash, orange=high, yellow=medium, cyan=low)
-  Test mode (--test)  — fake data, no API, cycles TEST alerts
-    TEST alerts: amber header with [TEST] label
+  Test mode (--test)  — fake data, no API, cycles TEST alerts (amber)
+    Static test screen — no sliding/rotating content
 
 Examples:
-  python3 display_manager.py                         # real mode
-  python3 display_manager.py --test                  # test mode
-  python3 display_manager.py --trigger-alert         # fire one test alert then go live
-  python3 display_manager.py --api http://192.168.8.50:3001
-  python3 display_manager.py --pinout bonnet         # if using Adafruit RGB Matrix Bonnet
+  sudo python3 display_manager.py                         # real mode
+  sudo python3 display_manager.py --test                  # test mode
+  sudo python3 display_manager.py --trigger-alert         # fire one test alert then go live
+  sudo python3 display_manager.py --api http://192.168.8.50:3001
+  sudo python3 display_manager.py --slowdown 3            # if display is garbled (try 3–5)
         """,
     )
     parser.add_argument("--test",          action="store_true",
                         help="Test mode: fake data, amber alerts, no API")
     parser.add_argument("--api",           default="http://localhost:3001",
                         help="Node Service base URL (default: http://localhost:3001)")
-    parser.add_argument("--pinout",        default="active3",
-                        choices=["bonnet", "active3"],
-                        help="GPIO pinout (default: active3 = ₱149 Chinese adapter / hzeller regular)")
-    parser.add_argument("--addr-lines",    type=int, default=4,
-                        help="Address lines (default: 4 for 32-row panels)")
+    parser.add_argument("--slowdown",      type=int, default=4,
+                        help="GPIO slowdown for Pi 4 (default: 4, try 3-5 if garbled)")
+    parser.add_argument("--mapping",       default="regular",
+                        choices=["regular", "adafruit-hat", "adafruit-hat-pwm"],
+                        help="GPIO mapping (default: regular = ₱149 Chinese adapter board)")
     parser.add_argument("--trigger-alert", action="store_true",
                         help="Fire one test alert immediately, then continue normally")
 
@@ -607,17 +576,16 @@ Examples:
 
     if not HW_AVAILABLE:
         parser.error(
-            "PioMatter not installed.\n"
-            "Run: pip install Adafruit-Blinka-Raspberry-Pi5-Piomatter\n"
-            "See lcd/README.md for full setup steps."
+            "rgbmatrix not installed.\n"
+            "Build from source — see lcd_pi4/README.md or run install.sh\n"
         )
 
-    log.info("Initialising matrix %d×%d  pinout=%s  addr_lines=%d",
-             WIDTH, HEIGHT, args.pinout, args.addr_lines)
+    log.info("Initialising matrix %d×%d  mapping=%s  slowdown=%d",
+             WIDTH, HEIGHT, args.mapping, args.slowdown)
     log.info("Mode: %s", "TEST" if args.test else "REAL")
 
-    matrix, framebuffer = build_matrix(args.addr_lines, args.pinout)
-    state = SystemState()
+    matrix = build_matrix(gpio_slowdown=args.slowdown, hardware_mapping=args.mapping)
+    state  = SystemState()
 
     provider: DataProvider = (
         TestDataProvider(state) if args.test
@@ -630,11 +598,11 @@ Examples:
         provider.trigger_test_alert()
 
     try:
-        run(matrix, framebuffer, state)
+        run(matrix, state)
     except KeyboardInterrupt:
         log.info("Stopped by user")
     finally:
-        clear_matrix(framebuffer, matrix)
+        matrix.Clear()
         log.info("Display cleared")
 
 
