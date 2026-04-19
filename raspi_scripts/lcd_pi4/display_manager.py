@@ -546,17 +546,15 @@ def build_matrix(gpio_slowdown: int, hardware_mapping: str,
         options.multiplexing, options.scan_mode,
         options.gpio_slowdown, options.hardware_mapping,
     )
-    return RGBMatrix(options=options)
+    matrix = RGBMatrix(options=options)
+    log.info("Matrix created: width=%d  height=%d", matrix.width, matrix.height)
+    return matrix
 
 
 def show_frame(matrix: "RGBMatrix", canvas, img: Image.Image):
-    """Push PIL image pixel-by-pixel — works reliably across all chained panel configs."""
-    rgb = img.convert("RGB")
-    px  = rgb.load()
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            r, g, b = px[x, y]
-            canvas.SetPixel(x, y, r, g, b)
+    """Push PIL image to the chained matrix via SetImage (C-level, handles full chain width)."""
+    rgb = img.convert("RGB").resize((matrix.width, matrix.height), Image.NEAREST)
+    canvas.SetImage(rgb)
     return matrix.SwapOnVSync(canvas)
 
 
