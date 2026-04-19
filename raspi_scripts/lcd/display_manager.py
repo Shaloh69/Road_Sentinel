@@ -80,27 +80,14 @@ SEVERITY_COLORS = {
 }
 
 # ── Font & layout ─────────────────────────────────────────────────────────────
-# 8 px font → 4 text rows (y=0, 8, 16, 24) on a 32 px tall panel
-ROW_H = 8
-ROWS  = [0, 8, 16, 24]
+# 4px font  →  6 rows on a 32px panel  (4px text + 1px gap = 5px per row)
+ROW_H = 5
+ROWS  = [0, 5, 10, 15, 20, 25]
 
-def _load_font(size: int = 8) -> ImageFont.ImageFont:
-    candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeMono.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-    ]
-    for path in candidates:
-        try:
-            return ImageFont.truetype(path, size)
-        except (IOError, OSError):
-            pass
-    return ImageFont.load_default()
+FONT_SM = ImageFont.load_default(size=4)
 
-FONT_SM = _load_font(8)
-
-def _trunc(text: str, max_chars: int = 21) -> str:
-    return text if len(text) <= max_chars else text[:max_chars - 1] + "…"
+def _trunc(text: str, max_chars: int = 42) -> str:
+    return text if len(text) <= max_chars else text[:max_chars - 1] + "."
 
 # ── Frame helpers ─────────────────────────────────────────────────────────────
 
