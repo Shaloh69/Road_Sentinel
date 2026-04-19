@@ -210,8 +210,14 @@ python3 display_manager.py --test
 
 What you should see:
 1. **Color bars** — red, orange, yellow, green, cyan, blue, white (3 seconds)
-2. **Status screen** — fake vehicle/camera data with `[TST]` label
-3. Every ~20 seconds: **amber flashing alert** with `[TEST]` header
+2. **Static test screen** — fixed layout, no rotating/sliding content:
+   ```
+   ROAD SENTINEL             [TST]
+   A: ON   B: ON   SIMULATED
+   Veh:999               45km/h
+   192.168.8.x         0h00m
+   ```
+3. Every ~20 seconds: **amber flashing alert** with `[TEST]` header, then back to static
 
 ### Real mode — live data from Node Service
 
@@ -237,7 +243,7 @@ python3 display_manager.py --pinout bonnet
 
 ## Screen Layout & Color Meaning
 
-### Normal screens (rotate every 5 seconds)
+### Normal screens (rotate every 5 seconds — real mode only)
 
 ```
 ┌──────────────────────────────────┐
@@ -248,10 +254,22 @@ python3 display_manager.py --pinout bonnet
 └──────────────────────────────────┘
 ```
 
-### TEST alert (amber — from `--test` or `--trigger-alert`)
+### Test mode screen (static — no rotation in `--test` mode)
+
 ```
 ┌──────────────────────────────────┐
-│ [TEST] SPEEDING  Camera A ██████│  ← amber background (flashing)
+│ ROAD SENTINEL             [TST] │  white / amber badge
+│ A: ON   B: ON   SIMULATED       │  green / amber
+│ Veh:999               45km/h   │  cyan / yellow
+│ 192.168.8.50         0h05m     │  gray
+└──────────────────────────────────┘
+```
+
+### TEST alert (amber — fires every ~20 s in `--test`, or via `--trigger-alert`)
+
+```
+┌──────────────────────────────────┐
+│ [TEST] SPEEDING  Camera A       │  ← amber background (flashing)
 │ SIMULATED                       │  amber text
 │ 85 km/h on Camera A             │  gray
 │ 14:22:07                        │  gray

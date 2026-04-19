@@ -6,6 +6,8 @@ Shows live system status with color-coded **REAL** and **TEST** alerts.
 > **Pi 5 users:** Use [`../lcd/`](../lcd/) instead — Pi 5 requires Adafruit PioMatter,
 > not this library.
 
+> **Quick setup?** See [SETUP.md](SETUP.md) for a concise step-by-step guide.
+
 ---
 
 ## Key Difference vs Pi 5
