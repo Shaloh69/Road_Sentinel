@@ -468,7 +468,8 @@ def render_color_bar_test(phase: int) -> Image.Image:
 
 # ── hzeller RGBMatrix setup (Pi 4 specific) ───────────────────────────────────
 
-def build_matrix(gpio_slowdown: int, hardware_mapping: str) -> "RGBMatrix":
+def build_matrix(gpio_slowdown: int, hardware_mapping: str,
+                 no_hardware_pulse: bool = True) -> "RGBMatrix":
     """
     Create an RGBMatrix driver for Raspberry Pi 4.
 
@@ -477,16 +478,21 @@ def build_matrix(gpio_slowdown: int, hardware_mapping: str) -> "RGBMatrix":
 
     hardware_mapping:
       'regular' — hzeller "regular" pinout, matches the ₱149 Chinese adapter board.
+
+    no_hardware_pulse:
+      True by default — avoids conflict with the Pi's built-in snd_bcm2835 sound
+      module. Slight extra flicker vs hardware pulse, acceptable for a status board.
+      Set False only after disabling the sound module in raspi-config.
     """
     options = RGBMatrixOptions()
-    options.rows            = HEIGHT          # 32
-    options.cols            = 64              # each panel is 64 wide
-    options.chain_length    = WIDTH // 64     # 2 panels → total 128 wide
-    options.parallel        = 1
-    options.hardware_mapping = hardware_mapping
-    options.gpio_slowdown   = gpio_slowdown
-    options.drop_privileges = False           # keep root so we can control GPIO
-    options.disable_hardware_pulsing = False
+    options.rows                     = HEIGHT
+    options.cols                     = 64
+    options.chain_length             = WIDTH // 64
+    options.parallel                 = 1
+    options.hardware_mapping         = hardware_mapping
+    options.gpio_slowdown            = gpio_slowdown
+    options.drop_privileges          = False
+    options.disable_hardware_pulsing = no_hardware_pulse
     return RGBMatrix(options=options)
 
 
@@ -569,6 +575,8 @@ Examples:
     parser.add_argument("--mapping",       default="regular",
                         choices=["regular", "adafruit-hat", "adafruit-hat-pwm"],
                         help="GPIO mapping (default: regular = ₱149 Chinese adapter board)")
+    parser.add_argument("--hardware-pulse", action="store_true", default=False,
+                        help="Enable hardware PWM pulse (only after disabling snd_bcm2835 in raspi-config)")
     parser.add_argument("--trigger-alert", action="store_true",
                         help="Fire one test alert immediately, then continue normally")
 
@@ -584,7 +592,11 @@ Examples:
              WIDTH, HEIGHT, args.mapping, args.slowdown)
     log.info("Mode: %s", "TEST" if args.test else "REAL")
 
-    matrix = build_matrix(gpio_slowdown=args.slowdown, hardware_mapping=args.mapping)
+    matrix = build_matrix(
+        gpio_slowdown      = args.slowdown,
+        hardware_mapping   = args.mapping,
+        no_hardware_pulse  = not args.hardware_pulse,
+    )
     state  = SystemState()
 
     provider: DataProvider = (

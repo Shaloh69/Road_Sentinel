@@ -106,6 +106,29 @@ You should see:
    ```
 3. Every ~20 seconds — amber flashing alert (TEST mode indicator)
 
+**If you see "snd_bcm2835 sound module" error and the program exits:**
+The Pi's built-in sound conflicts with the LED driver. The script handles this
+automatically (`--led-no-hardware-pulse` is on by default). If you still see the
+error, run with the explicit flag:
+```bash
+sudo $VIRTUAL_ENV/bin/python3 display_manager.py --test
+# hardware pulse is disabled by default — should just work
+```
+To get zero-flicker mode (optional), disable the sound module properly:
+```bash
+sudo raspi-config
+# → Advanced Options → Audio → None (disable onboard audio)
+# Then reboot, then run with: --hardware-pulse
+```
+
+**If you see a one-wire warning** ("This Raspberry Pi has the one-wire protocol enabled"):
+This is just a warning — the display will still work. To silence it:
+```bash
+sudo raspi-config
+# → Interface Options → 1-Wire → No
+# Then reboot
+```
+
 **If the display is garbled or flickering**, try adjusting the GPIO slowdown:
 ```bash
 sudo $VIRTUAL_ENV/bin/python3 display_manager.py --test --slowdown 3

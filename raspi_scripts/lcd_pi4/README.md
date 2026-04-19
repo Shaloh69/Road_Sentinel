@@ -261,8 +261,11 @@ nohup sudo "$VIRTUAL_ENV/bin/python3" "$HOME/raspi_scripts/lcd_pi4/display_manag
 | `ModuleNotFoundError: rgbmatrix` | Run `install.sh` — the library must be built from C source |
 | `Permission denied: /dev/mem` | Run with `sudo` — required for Pi 4 direct GPIO access |
 | `sudo python3` uses wrong Python | Use `sudo $VIRTUAL_ENV/bin/python3` (not `sudo python3`) |
+| **"snd_bcm2835 sound module" → program exits** | Already fixed by default (`disable_hardware_pulsing=True`). If still failing, disable onboard audio in `raspi-config → Advanced → Audio → None` and reboot |
+| **"one-wire protocol enabled" warning** | Warning only — display still works. To silence: `raspi-config → Interface Options → 1-Wire → No` |
 | Color bars don't appear | Check power — panels need 5V from a **separate** PSU |
 | Display garbled/flickering | Adjust `--slowdown` (try 3, 4, or 5) |
+| Slight flicker on display | Normal with `disable_hardware_pulsing=True`. Add `--hardware-pulse` after disabling onboard audio |
 | Only half the panel works | Ribbon cable between the two panels is loose or reversed |
 | Display is corrupted stripes | HUB75 ribbon pin 1 (red stripe) may be flipped |
 | Stats show `N/A` | Node Service not reachable — check `--api` URL |
