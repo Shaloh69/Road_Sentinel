@@ -298,115 +298,159 @@ class TestDataProvider(DataProvider):
 
 # ── Screen renderers — all return a PIL Image ─────────────────────────────────
 
+def _safe_or_danger(snap: dict) -> tuple:
+    """Return (text, color) SAFE/DANGER based on active incidents."""
+    if snap["incidents_today"] > 0:
+        return "!! DANGER !!", RED
+    return "-- SAFE --", GREEN
+
+
 def render_main_status(state: SystemState) -> Image.Image:
     img, draw = _new_frame()
     snap = state.snapshot()
     now  = datetime.now().strftime("%H:%M")
-    _draw_row(draw, 0, _trunc(f"ROAD SENTINEL  {now}"), WHITE)
 
+    # Row 0: header + time
+    _draw_row(draw, 0, f"ROAD SENTINEL  {now}", WHITE)
+
+    # Row 1: SAFE (green) / DANGER (red) — explicit colored background
+    status_text, status_col = _safe_or_danger(snap)
+    _fill_row(draw, 1, (0, 40, 0) if status_col == GREEN else (60, 0, 0))
+    _draw_row(draw, 1, status_text, status_col)
+
+    # Row 2: Camera A / B — explicit GREEN online, RED offline
     cams = snap["cameras"]
     if cams:
-        cam_a = next((c for c in cams if "A" in c.get("name","") or "001" in c.get("id","")), None)
-        cam_b = next((c for c in cams if "B" in c.get("name","") or "002" in c.get("id","")), None)
-        a_col = GREEN if cam_a and cam_a.get("status") == "online" else RED
-        b_col = GREEN if cam_b and cam_b.get("status") == "online" else RED
-        a_st  = "ONLINE" if (cam_a and cam_a.get("status") == "online") else "OFFLINE"
-        b_st  = "ONLINE" if (cam_b and cam_b.get("status") == "online") else "OFFLINE"
-        draw.text((1,  ROWS[1]), "A:", font=FONT_SM, fill=GRAY)
-        draw.text((13, ROWS[1]), a_st, font=FONT_SM, fill=a_col)
-        draw.text((65, ROWS[1]), "B:", font=FONT_SM, fill=GRAY)
-        draw.text((77, ROWS[1]), b_st, font=FONT_SM, fill=b_col)
+        cam_a = next((c for c in cams if "A" in c.get("name", "") or "001" in c.get("id", "")), None)
+        cam_b = next((c for c in cams if "B" in c.get("name", "") or "002" in c.get("id", "")), None)
+        a_on  = cam_a and cam_a.get("status") == "online"
+        b_on  = cam_b and cam_b.get("status") == "online"
+        draw.text((1,  ROWS[2]), "A:", font=FONT_SM, fill=GRAY)
+        draw.text((9,  ROWS[2]), "ON" if a_on else "OFF", font=FONT_SM, fill=GREEN if a_on else RED)
+        draw.text((33, ROWS[2]), "B:", font=FONT_SM, fill=GRAY)
+        draw.text((41, ROWS[2]), "ON" if b_on else "OFF", font=FONT_SM, fill=GREEN if b_on else RED)
     else:
         online = snap["cameras_online"]
-        col    = GREEN if online == snap["cameras_total"] else (ORANGE if online > 0 else RED)
-        _draw_row(draw, 1, f"Cameras: {online}/{snap['cameras_total']}", col)
+        col = GREEN if online == snap["cameras_total"] else RED
+        _draw_row(draw, 2, f"Cams: {online}/{snap['cameras_total']}", col)
 
-    speed_str = f"{snap['avg_speed']}km/h" if snap["avg_speed"] else "N/A"
-    draw.text((1,  ROWS[2]), _trunc(f"Veh:{snap['vehicles_today']:,}"), font=FONT_SM, fill=CYAN)
-    draw.text((70, ROWS[2]), speed_str, font=FONT_SM, fill=YELLOW)
-    _draw_row(draw, 3, _trunc(f"{snap['local_ip']}  {state.uptime()}"), GRAY)
+    # Row 3: Vehicle count + incidents
+    draw.text((1,  ROWS[3]), f"Veh: {snap['vehicles_today']:,}", font=FONT_SM, fill=CYAN)
+    draw.text((70, ROWS[3]), f"Inc: {snap['incidents_today']}", font=FONT_SM,
+              fill=RED if snap["incidents_today"] > 0 else GRAY)
 
-    if snap["is_test_mode"]:
-        draw.text((98, 0), "[TST]", font=FONT_SM, fill=AMBER)
+    # Row 4: Avg speed
+    speed_str = f"Avg: {snap['avg_speed']} km/h" if snap["avg_speed"] else "Avg speed: N/A"
+    _draw_row(draw, 4, speed_str, YELLOW)
+
+    # Row 5: IP + uptime
+    _draw_row(draw, 5, _trunc(f"{snap['local_ip']}  {state.uptime()}"), GRAY)
     return img
 
 
 def render_camera_detail(state: SystemState) -> Image.Image:
     img, draw = _new_frame()
-    _draw_row(draw, 0, "--- Camera Status ---", WHITE)
-    cams = state.snapshot()["cameras"]
-    if len(cams) >= 1:
-        c   = cams[0]
-        ip  = c.get("rtsp_url", "").split("//")[-1].split(":")[0] or "?"
-        col = GREEN if c.get("status") == "online" else RED
-        _draw_row(draw, 1, _trunc(f"{c.get('name','Cam A')} {ip}"), col)
-        _draw_row(draw, 2, _trunc(f"{c.get('fps','?')}fps {c.get('resolution','?')}"), GRAY)
-    else:
-        _draw_row(draw, 1, "No camera data", ORANGE)
-        _draw_row(draw, 2, "Check Node Service", GRAY)
-    if len(cams) >= 2:
-        c   = cams[1]
-        col = GREEN if c.get("status") == "online" else RED
-        _draw_row(draw, 3, _trunc(f"{c.get('name','Cam B')} {c.get('status','?').upper()[:2]}"), col)
+    snap = state.snapshot()
+    cams = snap["cameras"]
+
+    _draw_row(draw, 0, "CAMERA STATUS", WHITE)
+
+    if not cams:
+        _draw_row(draw, 1, "No camera data", GRAY)
+        return img
+
+    for i, cam in enumerate(cams[:2]):
+        base  = i * 2 + 1
+        name  = cam.get("name", f"Cam {i+1}")
+        st    = cam.get("status", "unknown")
+        fps   = cam.get("fps")
+        res   = cam.get("resolution", "")
+        col   = GREEN if st == "online" else (ORANGE if st == "error" else RED)
+        _draw_row(draw, base,     f"{name}: {st.upper()}", col)
+        detail = f"  {fps}fps  {res}" if fps else f"  {res}"
+        _draw_row(draw, base + 1, _trunc(detail), GRAY)
+
+    _draw_row(draw, 5, _trunc(f"Inc: {snap['incidents_today']}  Up: {state.uptime()}"), GRAY)
     return img
 
 
 def render_daily_stats(state: SystemState) -> Image.Image:
     img, draw = _new_frame()
     snap = state.snapshot()
-    _draw_row(draw, 0, _trunc(f"Today: {snap['vehicles_today']:,} vehicles"), WHITE)
-    _draw_row(draw, 1, _trunc(f"Incidents: {snap['incidents_today']}"), ORANGE)
     speed_str = f"{snap['avg_speed']} km/h" if snap["avg_speed"] else "N/A"
-    _draw_row(draw, 2, _trunc(f"Avg speed: {speed_str}"), CYAN)
-    _draw_row(draw, 3, _trunc(f"Up: {state.uptime()}  {snap['local_ip']}"), GRAY)
+
+    _draw_row(draw, 0, "TODAY'S STATS", WHITE)
+    _draw_row(draw, 1, f"Vehicles:  {snap['vehicles_today']:,}", CYAN)
+    _draw_row(draw, 2, f"Avg speed: {speed_str}", YELLOW)
+    _draw_row(draw, 3, f"Incidents: {snap['incidents_today']}",
+              RED if snap["incidents_today"] > 0 else GREEN)
+    online = snap["cameras_online"]
+    cam_col = GREEN if online == snap["cameras_total"] else RED
+    _draw_row(draw, 4, f"Cameras:   {online}/{snap['cameras_total']} online", cam_col)
+    _draw_row(draw, 5, f"Uptime:    {state.uptime()}", GRAY)
     return img
 
 
 def render_alert(state: SystemState, alert: dict, flash_phase: int) -> Image.Image:
-    """
-    TEST alerts  → amber header, [TEST] label, "SIMULATED" subtitle
-    REAL alerts  → severity-colored header (red/orange/yellow/cyan)
-    """
     img, draw = _new_frame()
-    is_test   = alert.get("is_test", False)
-    inc_type  = alert.get("incident_type", "INCIDENT").upper()
-    severity  = alert.get("severity", "high")
-    cam_name  = alert.get("camera_name", alert.get("camera_id", ""))
-    desc      = alert.get("description", "")
-    ts_raw    = alert.get("timestamp", "")
+    is_test  = alert.get("is_test", False)
+    inc_type = alert.get("incident_type", "INCIDENT").upper()
+    severity = alert.get("severity", "high")
+    cam_name = alert.get("camera_name", alert.get("camera_id", ""))
+    desc     = alert.get("description", "")
+    ts_raw   = alert.get("timestamp", "")
     try:
         ts = datetime.fromisoformat(str(ts_raw).replace("Z", "")).strftime("%H:%M:%S")
     except Exception:
         ts = datetime.now().strftime("%H:%M:%S")
 
     if is_test:
-        bg        = AMBER if flash_phase == 0 else (180, 110, 0)
+        bg        = AMBER if flash_phase == 0 else (160, 100, 0)
         fg        = BLACK
-        label_col = AMBER
-        header    = _trunc(f"[TEST] {inc_type}  {cam_name}")
-        label     = "SIMULATED"
+        sev_label = "SIMULATED"
+        sev_col   = AMBER
     else:
         sev_color = SEVERITY_COLORS.get(severity, ORANGE)
-        bg        = sev_color if flash_phase == 0 else tuple(max(0, c - 80) for c in sev_color)
-        fg        = BLACK if severity in ("medium", "low") else WHITE
-        label_col = sev_color
-        header    = _trunc(f"!! {inc_type}  {cam_name}  !!")
-        label     = severity.upper()
+        bg        = sev_color if flash_phase == 0 else tuple(max(0, c - 70) for c in sev_color)
+        fg        = WHITE if severity in ("critical", "high") else BLACK
+        sev_label = severity.upper()
+        sev_col   = sev_color
 
+    # Row 0: type + camera on colored header bar
     _fill_row(draw, 0, bg)
-    draw.text((1, ROWS[0]), header, font=FONT_SM, fill=fg)
-    _draw_row(draw, 1, label,                label_col)
-    _draw_row(draw, 2, _trunc(desc or "See dashboard"), GRAY)
-    _draw_row(draw, 3, ts, GRAY)
+    prefix = "[TEST]" if is_test else "!!"
+    draw.text((1, ROWS[0]), _trunc(f"{prefix} {inc_type}"), font=FONT_SM, fill=fg)
+
+    # Row 1: severity — explicit RED background for critical
+    label_bg = (50, 0, 0) if severity == "critical" and not is_test else BLACK
+    _fill_row(draw, 1, label_bg)
+    _draw_row(draw, 1, sev_label, RED if (severity == "critical" and not is_test) else sev_col)
+
+    # Row 2: camera name
+    _draw_row(draw, 2, cam_name, WHITE)
+
+    # Row 3: description
+    _draw_row(draw, 3, _trunc(desc or "See dashboard"), GRAY)
+
+    # Row 4: timestamp
+    _draw_row(draw, 4, ts, GRAY)
+
+    # Row 5: DANGER / TEST label bar
+    _fill_row(draw, 5, (60, 0, 0) if not is_test else (80, 50, 0))
+    _draw_row(draw, 5, "!! DANGER !!" if not is_test else "-- TEST MODE --",
+              RED if not is_test else AMBER)
     return img
 
 
 def render_offline(state: SystemState) -> Image.Image:
     img, draw = _new_frame()
     _draw_row(draw, 0, "ROAD SENTINEL", WHITE)
-    _draw_row(draw, 1, "API: OFFLINE", RED)
-    _draw_row(draw, 2, _trunc(state.local_ip), GRAY)
-    _draw_row(draw, 3, _trunc(f"Up: {state.uptime()}"), GRAY)
+    _fill_row(draw, 1, (60, 0, 0))
+    _draw_row(draw, 1, "!! OFFLINE !!", RED)
+    _draw_row(draw, 2, "API not reachable", GRAY)
+    _draw_row(draw, 3, "", GRAY)
+    _draw_row(draw, 4, _trunc(state.local_ip), GRAY)
+    _draw_row(draw, 5, f"Up: {state.uptime()}", GRAY)
     return img
 
 
@@ -415,34 +459,39 @@ def render_test_static(state: SystemState) -> Image.Image:
     img, draw = _new_frame()
     snap = state.snapshot()
 
-    # Row 0: header with [TEST] badge
-    draw.text((1, ROWS[0]), "ROAD SENTINEL", font=FONT_SM, fill=WHITE)
-    draw.text((103, ROWS[0]), "[TST]", font=FONT_SM, fill=AMBER)
+    # Row 0: header
+    _draw_row(draw, 0, "ROAD SENTINEL", WHITE)
+    draw.text((90, ROWS[0]), "[TEST]", font=FONT_SM, fill=AMBER)
 
-    # Row 1: camera status — static coloured labels
+    # Row 1: SAFE in green (no real incidents in test mode)
+    _fill_row(draw, 1, (0, 40, 0))
+    _draw_row(draw, 1, "-- SAFE -- (simulated)", GREEN)
+
+    # Row 2: Camera status — explicit green/red
     cams = snap["cameras"]
     if cams:
         cam_a = next((c for c in cams if "A" in c.get("name", "")), cams[0] if cams else None)
         cam_b = next((c for c in cams if "B" in c.get("name", "")), cams[1] if len(cams) > 1 else None)
-        a_col = GREEN if cam_a and cam_a.get("status") == "online" else RED
-        b_col = GREEN if cam_b and cam_b.get("status") == "online" else RED
-        a_st  = "ON" if cam_a and cam_a.get("status") == "online" else "OFF"
-        b_st  = "ON" if cam_b and cam_b.get("status") == "online" else "OFF"
-        draw.text((1,  ROWS[1]), "A:", font=FONT_SM, fill=GRAY)
-        draw.text((13, ROWS[1]), a_st, font=FONT_SM, fill=a_col)
-        draw.text((47, ROWS[1]), "B:", font=FONT_SM, fill=GRAY)
-        draw.text((59, ROWS[1]), b_st, font=FONT_SM, fill=b_col)
-        draw.text((88, ROWS[1]), "SIMULATED", font=FONT_SM, fill=AMBER)
+        a_on = cam_a and cam_a.get("status") == "online"
+        b_on = cam_b and cam_b.get("status") == "online"
+        draw.text((1,  ROWS[2]), "A:", font=FONT_SM, fill=GRAY)
+        draw.text((9,  ROWS[2]), "ON" if a_on else "OFF", font=FONT_SM, fill=GREEN if a_on else RED)
+        draw.text((33, ROWS[2]), "B:", font=FONT_SM, fill=GRAY)
+        draw.text((41, ROWS[2]), "ON" if b_on else "OFF", font=FONT_SM, fill=GREEN if b_on else RED)
+        draw.text((65, ROWS[2]), "SIMULATED", font=FONT_SM, fill=AMBER)
     else:
-        _draw_row(draw, 1, "CAMERAS: SIMULATED", AMBER)
+        _draw_row(draw, 2, "SIMULATED", AMBER)
 
-    # Row 2: static vehicle/speed counts
-    speed_str = f"{snap['avg_speed']}km/h" if snap["avg_speed"] else "N/A"
-    draw.text((1,  ROWS[2]), f"Veh:{snap['vehicles_today']:,}", font=FONT_SM, fill=CYAN)
-    draw.text((70, ROWS[2]), speed_str, font=FONT_SM, fill=YELLOW)
+    # Row 3: vehicle count (static — no animation)
+    draw.text((1,  ROWS[3]), f"Veh: {snap['vehicles_today']:,}", font=FONT_SM, fill=CYAN)
+    speed_str = f"{snap['avg_speed']} km/h" if snap["avg_speed"] else "N/A"
+    draw.text((70, ROWS[3]), speed_str, font=FONT_SM, fill=YELLOW)
 
-    # Row 3: IP + uptime
-    _draw_row(draw, 3, _trunc(f"{snap['local_ip']}  {state.uptime()}"), GRAY)
+    # Row 4: IP
+    _draw_row(draw, 4, snap["local_ip"], GRAY)
+
+    # Row 5: uptime
+    _draw_row(draw, 5, f"Up: {state.uptime()}", GRAY)
     return img
 
 
@@ -517,7 +566,7 @@ def clear_matrix(framebuffer: np.ndarray, matrix):
 # ── Main display loop ─────────────────────────────────────────────────────────
 
 NORMAL_SCREENS     = [render_main_status, render_camera_detail, render_daily_stats]
-SCREEN_ROTATE_SECS = 5
+SCREEN_ROTATE_SECS = 12     # slow rotation — enough time to read all 6 rows
 TICK               = 0.25   # 4 fps — plenty for a status board
 
 
