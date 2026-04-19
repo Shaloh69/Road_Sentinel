@@ -270,6 +270,55 @@ nohup sudo "$VIRTUAL_ENV/bin/python3" "$HOME/raspi_scripts/lcd_pi4/display_manag
 | Display is corrupted stripes | HUB75 ribbon pin 1 (red stripe) may be flipped |
 | Stats show `N/A` | Node Service not reachable — check `--api` URL |
 | Works but very dim | 3.3V GPIO into 5V panel — add level shifter or accept lower brightness |
+| **Both panels show identical content (mirrored)** | See "Fixing Panel Mirroring" below |
+
+---
+
+## Fixing Panel Mirroring
+
+Both 64×32 panels showing the same content is almost always a panel scan-mode mismatch.
+
+### Step 1 — Run the C-level demo first
+
+This tests the library directly, bypassing Python bindings.
+If the C demo also mirrors, the fix is a hardware parameter, not a code fix.
+
+```bash
+cd ~/rpi-rgb-led-matrix
+make examples-api-use          # only needed once
+
+# Standard 64×32 chained panels:
+sudo ./examples-api-use/demo \
+  --led-rows=32 --led-cols=64 --led-chain=2 \
+  --led-gpio-mapping=regular -D1 -t 5
+
+# If still mirrored — try 1:8 multiplexed mode:
+sudo ./examples-api-use/demo \
+  --led-rows=32 --led-cols=32 --led-chain=4 \
+  --led-multiplexing=1 --led-gpio-mapping=regular -D1 -t 5
+```
+
+`-D1` = scrolling text demo, `-t 5` = run 5 seconds.
+
+### Step 2 — Match the working C-demo flags in Python
+
+Try these combinations in order until content is no longer mirrored:
+
+| Attempt | Command |
+|---|---|
+| **A** (default — standard panels) | `sudo python3 display_manager.py --test` |
+| **B** (1:8 scan panels) | `sudo python3 display_manager.py --test --cols 32 --chain 4 --multiplexing 1` |
+| **C** (interlaced scan) | `sudo python3 display_manager.py --test --scan-mode 1` |
+| **D** (128 as single logical panel) | `sudo python3 display_manager.py --test --cols 128 --chain 1` |
+
+Once you find the working combination, add the flags to the autostart command in `launch_both_cameras.sh`.
+
+### Why this happens
+
+Some P3/P4/P5 64×32 panels use **1:8 multiplexing** internally — the PCB routes data
+as if it were two separate 32×16 tiles stacked. The hzeller library needs
+`--led-cols=32 --led-chain=4 --led-multiplexing=1` to address these panels correctly.
+Standard "direct drive" panels work with the default `cols=64 chain=2`.
 
 ---
 

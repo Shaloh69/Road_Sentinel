@@ -514,21 +514,38 @@ def render_color_bar_test(phase: int) -> Image.Image:
 
 def build_matrix(gpio_slowdown: int, hardware_mapping: str,
                  no_hardware_pulse: bool = True,
-                 cols_per_panel: int = 64) -> "RGBMatrix":
+                 cols_per_panel: int = 64,
+                 chain_length: int = 0,
+                 multiplexing: int = 0,
+                 scan_mode: int = 0) -> "RGBMatrix":
     """
-    cols_per_panel:
-      64  → two 64×32 panels chained (chain_length=2)  ← try first
-      128 → one 128×32 logical panel  (chain_length=1)  ← try if content duplicates
+    Chaining / panel layout notes
+    ──────────────────────────────
+    Most common 64×32 P3/P4/P5 panels  →  cols=64, chain=2, multiplexing=0, scan_mode=0
+    1:8 multiplexed panels (shows same content on both halves)
+                                        →  cols=32, chain=4, multiplexing=1, scan_mode=0
+    If everything looks correct but one panel is upside-down or reversed:
+      try scan_mode=1 (interlaced row scan)
+
+    chain_length=0 (default) → auto-calculated as WIDTH // cols_per_panel
     """
     options = RGBMatrixOptions()
     options.rows                     = HEIGHT
     options.cols                     = cols_per_panel
-    options.chain_length             = WIDTH // cols_per_panel
+    options.chain_length             = chain_length if chain_length > 0 else (WIDTH // cols_per_panel)
     options.parallel                 = 1
     options.hardware_mapping         = hardware_mapping
     options.gpio_slowdown            = gpio_slowdown
+    options.multiplexing             = multiplexing
+    options.scan_mode                = scan_mode
     options.drop_privileges          = False
     options.disable_hardware_pulsing = no_hardware_pulse
+    log.info(
+        "Matrix options: rows=%d  cols=%d  chain=%d  multiplex=%d  scan=%d  slowdown=%d  mapping=%s",
+        options.rows, options.cols, options.chain_length,
+        options.multiplexing, options.scan_mode,
+        options.gpio_slowdown, options.hardware_mapping,
+    )
     return RGBMatrix(options=options)
 
 
@@ -613,9 +630,17 @@ Examples:
                         help="Node Service base URL (default: http://localhost:3001)")
     parser.add_argument("--slowdown",      type=int, default=4,
                         help="GPIO slowdown for Pi 4 (default: 4, try 3-5 if garbled)")
-    parser.add_argument("--cols",          type=int, default=64, choices=[64, 128],
-                        help="Columns per panel: 64=two chained 64x32 panels (default), "
-                             "128=single 128x32 logical panel. Use 128 if content duplicates.")
+    parser.add_argument("--cols",          type=int, default=64,
+                        help="Physical columns per panel (default: 64). "
+                             "Try 32 if both panels mirror each other.")
+    parser.add_argument("--chain",         type=int, default=0,
+                        help="Number of chained panels (default: auto = 128 / cols). "
+                             "Set to 4 when using --cols 32.")
+    parser.add_argument("--multiplexing",  type=int, default=0,
+                        help="Panel multiplexing type (default: 0=standard). "
+                             "Try 1 if both panels show identical content (1:8 scan panels).")
+    parser.add_argument("--scan-mode",     type=int, default=0, choices=[0, 1],
+                        help="Row scan mode: 0=progressive (default), 1=interlaced.")
     parser.add_argument("--mapping",       default="regular",
                         choices=["regular", "adafruit-hat", "adafruit-hat-pwm"],
                         help="GPIO mapping (default: regular = ₱149 Chinese adapter board)")
@@ -637,10 +662,13 @@ Examples:
     log.info("Mode: %s", "TEST" if args.test else "REAL")
 
     matrix = build_matrix(
-        gpio_slowdown      = args.slowdown,
-        hardware_mapping   = args.mapping,
-        no_hardware_pulse  = not args.hardware_pulse,
-        cols_per_panel     = args.cols,
+        gpio_slowdown    = args.slowdown,
+        hardware_mapping = args.mapping,
+        no_hardware_pulse= not args.hardware_pulse,
+        cols_per_panel   = args.cols,
+        chain_length     = args.chain,
+        multiplexing     = args.multiplexing,
+        scan_mode        = args.scan_mode,
     )
     state  = SystemState()
 
