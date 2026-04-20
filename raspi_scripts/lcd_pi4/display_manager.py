@@ -552,9 +552,16 @@ def build_matrix(gpio_slowdown: int, hardware_mapping: str,
 
 
 def show_frame(matrix: "RGBMatrix", canvas, img: Image.Image):
-    """Push PIL image to the chained matrix via SetImage (C-level, handles full chain width)."""
+    """Push PIL image to the chained matrix.
+    Uses SetPixel loop across the full 128px width — works even when
+    matrix.width reports only 64 (Python bindings chain_length bug).
+    """
     rgb = img.convert("RGB")
-    canvas.SetImage(rgb)
+    px  = rgb.load()
+    for y in range(HEIGHT):
+        for x in range(WIDTH):
+            r, g, b = px[x, y]
+            canvas.SetPixel(x, y, r, g, b)
     return matrix.SwapOnVSync(canvas)
 
 
