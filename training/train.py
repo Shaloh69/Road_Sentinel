@@ -45,7 +45,7 @@ except ImportError:
 
 # Dataset paths (relative to project root)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-DATASETS_DIR = PROJECT_ROOT / "datasets" / "processed"
+DATASETS_DIR = PROJECT_ROOT  / "Road_Sentinel" / "datasets" / "processed"
 
 DATASETS = {
     "vehicle": {
