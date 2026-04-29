@@ -29,8 +29,7 @@ This script is a **one-time installer** run on the Raspberry Pi to wire the two 
   launch_both_cameras.sh       ← GENERATED: starts both cameras + IR auto mode
   disable_camera_autostart.sh  ← GENERATED: removes the .desktop entry
   test_launch_both_now.sh      ← GENERATED: test without rebooting
-~/.config/autostart/
-  roadsentinel-cameras.desktop ← GENERATED: desktop autostart entry
+
 ```
 
 ### Step-by-Step Breakdown
