@@ -132,19 +132,26 @@ bash install.sh
 This will:
 1. Install build dependencies (`python3-dev`, `build-essential`)
 2. Clone `hzeller/rpi-rgb-led-matrix` from GitHub
-3. Build the Python bindings (takes ~2 minutes)
-4. Create a venv at `~/venvs/led_venv` and install rgbmatrix + Pillow + requests
+3. Build `ledcat` and other C binaries (`make examples-api-use`)
+4. Create a venv at `~/venvs/led_venv` and install Pillow + requests
+
+> **How frames travel:** Python generates 128×32 PIL images → raw RGB24 bytes → piped to
+> the `ledcat` C binary via stdin → hzeller C library → HUB75 matrix.
+> This bypasses the Python bindings `chain_length` bug that caused panel mirroring.
 
 ### Step 4 — Verify the install
 
 ```bash
+# Verify ledcat was built:
+ls ~/rpi-rgb-led-matrix/examples-api-use/ledcat
+
+# Verify Pillow:
 source ~/venvs/led_venv/bin/activate
-sudo $VIRTUAL_ENV/bin/python3 -c "from rgbmatrix import RGBMatrix; print('rgbmatrix OK')"
+python3 -c "from PIL import Image; print('Pillow OK')"
 ```
 
-> **Why sudo?** The hzeller library writes directly to `/dev/mem` for fast GPIO access.
-> This requires root. Always call `$VIRTUAL_ENV/bin/python3` (not just `python3`) so sudo
-> uses the venv's Python, not the system Python.
+> **Why sudo?** ledcat writes directly to `/dev/mem` for fast GPIO access.
+> This requires root. Run `display_manager.py` with `sudo`.
 
 ---
 

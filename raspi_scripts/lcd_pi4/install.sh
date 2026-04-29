@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Build and install hzeller/rpi-rgb-led-matrix Python bindings for Pi 4 Model B.
+# Road Sentinel — LED Matrix install for Raspberry Pi 4 Model B.
+#
+# Builds the hzeller C library and ledcat binary.
+# display_manager.py pipes raw RGB24 frames to ledcat stdin — no Python bindings needed.
+#
 # Run once: bash install.sh
-# After this, display_manager.py works with: sudo python3 display_manager.py
+# After this: sudo python3 display_manager.py --test
 
 set -euo pipefail
 
 VENV="${1:-$HOME/venvs/led_venv}"
 BUILD_DIR="$HOME/rpi-rgb-led-matrix"
+LEDCAT="$BUILD_DIR/examples-api-use/ledcat"
 
 echo "=== Road Sentinel — LED Matrix install for Raspberry Pi 4 ==="
 echo "Build dir: $BUILD_DIR"
@@ -28,24 +33,30 @@ else
   git clone https://github.com/hzeller/rpi-rgb-led-matrix.git "$BUILD_DIR"
 fi
 
-# ── Step 3: create venv ───────────────────────────────────────────────────────
-echo "[3/4] Creating venv at $VENV..."
+# ── Step 3: build C library and ledcat binary ────────────────────────────────
+echo "[3/4] Building C library and ledcat..."
+make -C "$BUILD_DIR/lib"
+make -C "$BUILD_DIR/examples-api-use"
+
+if [ ! -f "$LEDCAT" ]; then
+  echo "ERROR: ledcat not found at $LEDCAT after build"
+  exit 1
+fi
+echo "  ledcat OK: $LEDCAT"
+
+# ── Step 4: create Python venv with Pillow ────────────────────────────────────
+echo "[4/4] Creating Python venv at $VENV..."
 python3 -m venv "$VENV"
 source "$VENV/bin/activate"
 pip install --upgrade pip -q
 pip install Pillow requests
 
-# ── Step 4: build and install rgbmatrix Python bindings ──────────────────────
-echo "[4/4] Building Python bindings (this takes ~2 minutes)..."
-# Newer hzeller repo uses pyproject.toml at the repo root — install from there.
-pip install "$BUILD_DIR/"
-
 echo
 echo "=== Done! ==="
 echo
 echo "Verify install:"
-echo "  source $VENV/bin/activate"
-echo "  sudo python3 -c \"from rgbmatrix import RGBMatrix; print('rgbmatrix OK')\""
+echo "  ls $LEDCAT"
+echo "  source $VENV/bin/activate && python3 -c \"from PIL import Image; print('Pillow OK')\""
 echo
 echo "Run test mode:"
 echo "  source $VENV/bin/activate"
@@ -53,4 +64,4 @@ echo "  cd ~/raspi_scripts/lcd_pi4"
 echo "  sudo \$VIRTUAL_ENV/bin/python3 display_manager.py --test"
 echo
 echo "IMPORTANT: sudo is required for direct GPIO /dev/mem access."
-echo "  You must call the venv python via \$VIRTUAL_ENV/bin/python3 when using sudo."
+echo "  Use the full venv path: sudo \$VIRTUAL_ENV/bin/python3"

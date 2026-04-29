@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
 Road Sentinel — HUB75 128×32 RGB LED Matrix Display Manager
-Raspberry Pi 4 Model B version — uses hzeller/rpi-rgb-led-matrix
+Raspberry Pi 4 Model B version — drives hzeller/rpi-rgb-led-matrix via ledcat subprocess
+
+How it works:
+  Python generates 128×32 PIL images (all content/colors/layout).
+  Raw RGB24 bytes are piped to the hzeller `ledcat` C binary via stdin.
+  ledcat drives the matrix using the C library directly — bypasses broken
+  Python bindings chain_length bug that caused panel mirroring.
 
 Pi 4 retains Broadcom direct GPIO, so the hzeller library works here.
 (Pi 5 users: see ../lcd/display_manager.py which uses Adafruit PioMatter instead.)
 
 Hardware: HUB75 RGB LED matrix — 128×32 pixels (full color)
-  Default config: two 64×32 panels chained  → total 128×32
-  Single panel:   one 128×32 panel
+  Default config: two 64×32 panels chained → total 128×32
 
-Wiring: Plug the ₱149 Chinese HUB75 adapter board onto the 40-pin GPIO header.
-  Uses hzeller "regular" GPIO mapping — same physical pins as the adapter board.
-  See lcd_pi4/README.md for full wiring/install details.
-
-Install (build from source — no pip):
-  See lcd_pi4/README.md Step 3, or run install.sh
+Install:
+  See lcd_pi4/README.md or run install.sh (builds ledcat as part of examples-api-use)
 
 Run:
   sudo python3 display_manager.py           # real mode (live API)
@@ -25,7 +26,9 @@ Run:
 
 import argparse
 import logging
+import os
 import socket
+import subprocess
 import time
 import threading
 from abc import ABC, abstractmethod
@@ -34,14 +37,21 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
-# ── Try to import rgbmatrix (only on Raspberry Pi with hzeller library built) ──
-try:
-    from rgbmatrix import RGBMatrix, RGBMatrixOptions
-    HW_AVAILABLE = True
-except ImportError:
-    HW_AVAILABLE = False
-    print("WARNING: rgbmatrix not found.")
-    print("Build it from source — see lcd_pi4/README.md or run install.sh")
+# ── ledcat binary location ────────────────────────────────────────────────────
+LEDCAT_DEFAULT = os.path.expanduser(
+    "~/rpi-rgb-led-matrix/examples-api-use/ledcat"
+)
+
+def _find_ledcat(override: Optional[str] = None) -> str:
+    path = os.path.expanduser(override or LEDCAT_DEFAULT)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"ledcat not found at {path}\n"
+            "Build it with:\n"
+            "  cd ~/rpi-rgb-led-matrix/examples-api-use && make\n"
+            "Or run install.sh"
+        )
+    return path
 
 try:
     import requests as _requests
@@ -510,59 +520,70 @@ def render_color_bar_test(phase: int) -> Image.Image:
     return img
 
 
-# ── hzeller RGBMatrix setup (Pi 4 specific) ───────────────────────────────────
+# ── ledcat subprocess backend ─────────────────────────────────────────────────
+#
+# Instead of using the Python rgbmatrix bindings (which have a chain_length bug
+# that mirrors both panels), we pipe raw RGB24 frames to the hzeller `ledcat`
+# C binary via stdin.  The C library has no bug — the C demo already proved
+# chain=2 works correctly.
+#
+# Frame format ledcat expects: WIDTH × HEIGHT × 3 bytes, raw RGB24, no header.
+# For 128×32: 128 × 32 × 3 = 12,288 bytes per frame.
 
-def build_matrix(gpio_slowdown: int, hardware_mapping: str,
-                 no_hardware_pulse: bool = True,
-                 cols_per_panel: int = 64,
-                 chain_length: int = 0,
-                 multiplexing: int = 0,
-                 scan_mode: int = 0) -> "RGBMatrix":
+FRAME_BYTES = WIDTH * HEIGHT * 3   # 12,288 for 128×32
+_BLACK_FRAME = bytes(FRAME_BYTES)  # pre-built all-black frame for clearing
+
+
+def start_ledcat(
+    ledcat_path: str,
+    gpio_slowdown: int    = 4,
+    hardware_mapping: str = "regular",
+    no_hardware_pulse: bool = True,
+    cols_per_panel: int  = 64,
+    chain_length: int    = 0,
+    multiplexing: int    = 0,
+    scan_mode: int       = 0,
+) -> subprocess.Popen:
+    """Launch ledcat and return the subprocess handle.
+    ledcat reads raw RGB24 frames from stdin and drives the matrix via C library.
     """
-    Chaining / panel layout notes
-    ──────────────────────────────
-    Most common 64×32 P3/P4/P5 panels  →  cols=64, chain=2, multiplexing=0, scan_mode=0
-    1:8 multiplexed panels (shows same content on both halves)
-                                        →  cols=32, chain=4, multiplexing=1, scan_mode=0
-    If everything looks correct but one panel is upside-down or reversed:
-      try scan_mode=1 (interlaced row scan)
+    chain = chain_length if chain_length > 0 else (WIDTH // cols_per_panel)
 
-    chain_length=0 (default) → auto-calculated as WIDTH // cols_per_panel
-    """
-    options = RGBMatrixOptions()
-    options.rows                     = HEIGHT
-    options.cols                     = cols_per_panel
-    options.chain_length             = chain_length if chain_length > 0 else (WIDTH // cols_per_panel)
-    options.parallel                 = 1
-    options.hardware_mapping         = hardware_mapping
-    options.gpio_slowdown            = gpio_slowdown
-    options.multiplexing             = multiplexing
-    options.scan_mode                = scan_mode
-    options.drop_privileges          = False
-    options.disable_hardware_pulsing = no_hardware_pulse
-    log.info(
-        "Matrix options: rows=%d  cols=%d  chain=%d  multiplex=%d  scan=%d  slowdown=%d  mapping=%s",
-        options.rows, options.cols, options.chain_length,
-        options.multiplexing, options.scan_mode,
-        options.gpio_slowdown, options.hardware_mapping,
-    )
-    matrix = RGBMatrix(options=options)
-    log.info("Matrix created: width=%d  height=%d", matrix.width, matrix.height)
-    return matrix
+    cmd = [
+        ledcat_path,
+        f"--led-rows={HEIGHT}",
+        f"--led-cols={cols_per_panel}",
+        f"--led-chain={chain}",
+        f"--led-parallel=1",
+        f"--led-gpio-mapping={hardware_mapping}",
+        f"--led-slowdown-gpio={gpio_slowdown}",
+        "--led-no-drop-privs",
+    ]
+    if no_hardware_pulse:
+        cmd.append("--led-no-hardware-pulse")
+    if multiplexing > 0:
+        cmd.append(f"--led-multiplexing={multiplexing}")
+    if scan_mode != 0:
+        cmd.append(f"--led-scan-mode={scan_mode}")
+
+    log.info("Starting ledcat: %s", " ".join(cmd))
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    log.info("ledcat PID=%d  frame_size=%d bytes (%dx%d RGB24)",
+             proc.pid, FRAME_BYTES, WIDTH, HEIGHT)
+    return proc
 
 
-def show_frame(matrix: "RGBMatrix", canvas, img: Image.Image):
-    """Push PIL image to the chained matrix.
-    Uses SetPixel loop across the full 128px width — works even when
-    matrix.width reports only 64 (Python bindings chain_length bug).
-    """
-    rgb = img.convert("RGB")
-    px  = rgb.load()
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            r, g, b = px[x, y]
-            canvas.SetPixel(x, y, r, g, b)
-    return matrix.SwapOnVSync(canvas)
+def show_frame(proc: subprocess.Popen, img: Image.Image) -> None:
+    """Write one PIL image to ledcat stdin as raw RGB24."""
+    raw = img.convert("RGB").tobytes()   # exactly FRAME_BYTES
+    proc.stdin.write(raw)
+    proc.stdin.flush()
+
+
+def clear_display(proc: subprocess.Popen) -> None:
+    """Write a black frame to turn off all LEDs."""
+    proc.stdin.write(_BLACK_FRAME)
+    proc.stdin.flush()
 
 
 # ── Main display loop ─────────────────────────────────────────────────────────
@@ -572,17 +593,16 @@ SCREEN_ROTATE_SECS = 12     # slow rotation — enough time to read all 6 rows
 TICK               = 0.25   # 4 fps
 
 
-def run(matrix: "RGBMatrix", state: SystemState):
-    canvas     = matrix.CreateFrameCanvas()
-    screen_idx = 0
+def run(proc: subprocess.Popen, state: SystemState):
+    screen_idx  = 0
     last_rotate = time.monotonic()
     flash_tick  = 0
 
-    log.info("Display loop started (%d×%d)", WIDTH, HEIGHT)
+    log.info("Display loop started (%d×%d) via ledcat PID=%d", WIDTH, HEIGHT, proc.pid)
 
-    # Startup color-bar test (3 seconds)
+    # Startup color-bar test (3 seconds — confirms all RGB channels and both panels)
     for phase in range(6):
-        canvas = show_frame(matrix, canvas, render_color_bar_test(phase))
+        show_frame(proc, render_color_bar_test(phase))
         time.sleep(0.5)
 
     while True:
@@ -591,7 +611,6 @@ def run(matrix: "RGBMatrix", state: SystemState):
         alert = state.pop_alert()
 
         if state.is_test_mode:
-            # Test mode: static screen — no rotation, no sliding content.
             img = render_alert(state, alert, flash_phase=flash_tick % 2) if alert \
                   else render_test_static(state)
         elif alert:
@@ -604,7 +623,7 @@ def run(matrix: "RGBMatrix", state: SystemState):
                 last_rotate = now
             img = NORMAL_SCREENS[screen_idx](state)
 
-        canvas = show_frame(matrix, canvas, img)
+        show_frame(proc, img)
         time.sleep(TICK)
 
 
@@ -621,52 +640,57 @@ Modes:
   Test mode (--test)  — fake data, no API, cycles TEST alerts (amber)
     Static test screen — no sliding/rotating content
 
+How frames travel:
+  Python PIL → raw RGB24 bytes → ledcat stdin → hzeller C lib → HUB75 matrix
+  This bypasses the Python bindings chain_length bug that caused panel mirroring.
+
 Examples:
   sudo python3 display_manager.py                         # real mode
   sudo python3 display_manager.py --test                  # test mode
   sudo python3 display_manager.py --trigger-alert         # fire one test alert then go live
   sudo python3 display_manager.py --api http://192.168.8.50:3001
   sudo python3 display_manager.py --slowdown 3            # if display is garbled (try 3–5)
+  sudo python3 display_manager.py --ledcat ~/rpi-rgb-led-matrix/examples-api-use/ledcat
         """,
     )
-    parser.add_argument("--test",          action="store_true",
+    parser.add_argument("--test",           action="store_true",
                         help="Test mode: fake data, amber alerts, no API")
-    parser.add_argument("--api",           default="http://localhost:3001",
+    parser.add_argument("--api",            default="http://localhost:3001",
                         help="Node Service base URL (default: http://localhost:3001)")
-    parser.add_argument("--slowdown",      type=int, default=4,
+    parser.add_argument("--slowdown",       type=int, default=4,
                         help="GPIO slowdown for Pi 4 (default: 4, try 3-5 if garbled)")
-    parser.add_argument("--cols",          type=int, default=64,
-                        help="Physical columns per panel (default: 64). "
-                             "Try 32 if both panels mirror each other.")
-    parser.add_argument("--chain",         type=int, default=0,
-                        help="Number of chained panels (default: auto = 128 / cols). "
-                             "Set to 4 when using --cols 32.")
-    parser.add_argument("--multiplexing",  type=int, default=0,
-                        help="Panel multiplexing type (default: 0=standard). "
-                             "Try 1 if both panels show identical content (1:8 scan panels).")
-    parser.add_argument("--scan-mode",     type=int, default=0, choices=[0, 1],
-                        help="Row scan mode: 0=progressive (default), 1=interlaced.")
-    parser.add_argument("--mapping",       default="regular",
+    parser.add_argument("--cols",           type=int, default=64,
+                        help="Physical columns per panel (default: 64)")
+    parser.add_argument("--chain",          type=int, default=0,
+                        help="Number of chained panels (default: auto = 128 / cols)")
+    parser.add_argument("--multiplexing",   type=int, default=0,
+                        help="Panel multiplexing type (default: 0=standard)")
+    parser.add_argument("--scan-mode",      type=int, default=0, choices=[0, 1],
+                        help="Row scan mode: 0=progressive (default), 1=interlaced")
+    parser.add_argument("--mapping",        default="regular",
                         choices=["regular", "adafruit-hat", "adafruit-hat-pwm"],
                         help="GPIO mapping (default: regular = ₱149 Chinese adapter board)")
     parser.add_argument("--hardware-pulse", action="store_true", default=False,
-                        help="Enable hardware PWM pulse (only after disabling snd_bcm2835 in raspi-config)")
-    parser.add_argument("--trigger-alert", action="store_true",
+                        help="Enable hardware PWM pulse (only after disabling snd_bcm2835)")
+    parser.add_argument("--ledcat",         default=None,
+                        help=f"Path to ledcat binary (default: {LEDCAT_DEFAULT})")
+    parser.add_argument("--trigger-alert",  action="store_true",
                         help="Fire one test alert immediately, then continue normally")
 
     args = parser.parse_args()
 
-    if not HW_AVAILABLE:
-        parser.error(
-            "rgbmatrix not installed.\n"
-            "Build from source — see lcd_pi4/README.md or run install.sh\n"
-        )
+    try:
+        ledcat_path = _find_ledcat(args.ledcat)
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
 
-    log.info("Initialising matrix %d×%d  mapping=%s  slowdown=%d",
-             WIDTH, HEIGHT, args.mapping, args.slowdown)
-    log.info("Mode: %s", "TEST" if args.test else "REAL")
+    log.info("Road Sentinel LED Matrix — Pi 4 ledcat mode")
+    log.info("  ledcat  : %s", ledcat_path)
+    log.info("  mapping : %s  slowdown: %d", args.mapping, args.slowdown)
+    log.info("  mode    : %s", "TEST" if args.test else "REAL")
 
-    matrix = build_matrix(
+    proc = start_ledcat(
+        ledcat_path      = ledcat_path,
         gpio_slowdown    = args.slowdown,
         hardware_mapping = args.mapping,
         no_hardware_pulse= not args.hardware_pulse,
@@ -675,8 +699,8 @@ Examples:
         multiplexing     = args.multiplexing,
         scan_mode        = args.scan_mode,
     )
-    state  = SystemState()
 
+    state = SystemState()
     provider: DataProvider = (
         TestDataProvider(state) if args.test
         else ApiDataProvider(state, base_url=args.api)
@@ -688,11 +712,16 @@ Examples:
         provider.trigger_test_alert()
 
     try:
-        run(matrix, state)
+        run(proc, state)
     except KeyboardInterrupt:
         log.info("Stopped by user")
     finally:
-        matrix.Clear()
+        try:
+            clear_display(proc)
+            proc.stdin.close()
+            proc.wait(timeout=3)
+        except Exception:
+            proc.kill()
         log.info("Display cleared")
 
 
