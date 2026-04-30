@@ -424,4 +424,8 @@ training_runs/
 runs/
 
 # Allow .gitkeep files to track empty dirs
-!**/.gitkeeprender.env.txt
+!**/.gitkeep
+
+# Sensitive reference files — never commit these
+render.env.txt
+*.env.txt
