@@ -1,23 +1,34 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { VideoFeed } from "@/components/video-feed";
 import { Card, CardBody } from "@heroui/card";
 import { Switch } from "@heroui/switch";
 import { Select, SelectItem } from "@heroui/select";
+
+import { VideoFeed } from "@/components/video-feed";
 import { getSocket } from "@/lib/socket";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 interface Camera {
-  id: string; name: string; location: string;
-  status: "online" | "offline" | "error"; fps: number; resolution: string;
+  id: string;
+  name: string;
+  location: string;
+  status: "online" | "offline" | "error";
+  fps: number;
+  resolution: string;
 }
 
 interface Detection {
-  id?: number; camera_id: string; vehicle_type: string;
-  speed?: number; confidence: number;
-  bbox_x: number; bbox_y: number; bbox_width: number; bbox_height: number;
+  id?: number;
+  camera_id: string;
+  vehicle_type: string;
+  speed?: number;
+  confidence: number;
+  bbox_x: number;
+  bbox_y: number;
+  bbox_width: number;
+  bbox_height: number;
   timestamp?: string | Date;
 }
 
@@ -34,30 +45,38 @@ interface LogEntry {
 const streamUrl = (cameraId: string) => `${API}/api/cameras/${cameraId}/stream`;
 
 function nowLabel() {
-  return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 export default function MonitorPage() {
-  const [cameras,  setCameras]  = useState<Camera[]>([]);
-  const [log,      setLog]      = useState<LogEntry[]>([]);
-  const [speeds,   setSpeeds]   = useState<Record<string, number | undefined>>({});
-  const [counts,   setCounts]   = useState<Record<string, number>>({});
+  const [cameras, setCameras] = useState<Camera[]>([]);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [speeds, setSpeeds] = useState<Record<string, number | undefined>>({});
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [showBoxes, setShowBoxes] = useState(false);
-  const [viewMode,  setViewMode]  = useState("grid");
+  const [viewMode, setViewMode] = useState("grid");
   const logRef = useRef<HTMLDivElement>(null);
 
   // Fetch cameras list
   const fetchCameras = useCallback(async () => {
     try {
-      const res  = await fetch(`${API}/api/cameras`);
+      const res = await fetch(`${API}/api/cameras`);
       const json = await res.json();
+
       if (json.success) setCameras(json.data);
-    } catch { /* silent — WebSocket provides real-time camera status */ }
+    } catch {
+      /* silent — WebSocket provides real-time camera status */
+    }
   }, []);
 
   useEffect(() => {
     fetchCameras();
     const id = setInterval(fetchCameras, 15000);
+
     return () => clearInterval(id);
   }, [fetchCameras]);
 
@@ -66,47 +85,58 @@ export default function MonitorPage() {
     const socket = getSocket();
 
     const handleConnect = () => {
-      cameras.forEach(cam => socket.emit("subscribe_camera", cam.id));
+      cameras.forEach((cam) => socket.emit("subscribe_camera", cam.id));
     };
 
     socket.on("connect", handleConnect);
 
     // Subscribe immediately if already connected
     if (socket.connected) {
-      cameras.forEach(cam => socket.emit("subscribe_camera", cam.id));
+      cameras.forEach((cam) => socket.emit("subscribe_camera", cam.id));
     }
 
     socket.on("detection", (event: { type: string; data: Detection }) => {
       const det = event.data;
-      const cam = cameras.find(c => c.id === det.camera_id);
+      const cam = cameras.find((c) => c.id === det.camera_id);
 
       // Update per-camera counters and latest speed
-      setCounts(prev => ({ ...prev, [det.camera_id]: (prev[det.camera_id] ?? 0) + 1 }));
+      setCounts((prev) => ({
+        ...prev,
+        [det.camera_id]: (prev[det.camera_id] ?? 0) + 1,
+      }));
       if (det.speed != null) {
-        setSpeeds(prev => ({ ...prev, [det.camera_id]: det.speed }));
+        setSpeeds((prev) => ({ ...prev, [det.camera_id]: det.speed }));
       }
 
       // Prepend to detection log (max 50 entries)
       const entry: LogEntry = {
-        key:          `${det.camera_id}-${Date.now()}`,
-        camera_id:    det.camera_id,
-        camera_name:  cam ? `${cam.name} — ${cam.location}` : det.camera_id,
+        key: `${det.camera_id}-${Date.now()}`,
+        camera_id: det.camera_id,
+        camera_name: cam ? `${cam.name} — ${cam.location}` : det.camera_id,
         vehicle_type: det.vehicle_type,
-        speed:        det.speed ?? undefined,
-        confidence:   det.confidence,
-        time:         nowLabel(),
+        speed: det.speed ?? undefined,
+        confidence: det.confidence,
+        time: nowLabel(),
       };
-      setLog(prev => [entry, ...prev].slice(0, 50));
+
+      setLog((prev) => [entry, ...prev].slice(0, 50));
     });
 
-    socket.on("camera_status", (event: { data: { camera_id: string; status: Camera["status"] } }) => {
-      setCameras(prev => prev.map(c =>
-        c.id === event.data.camera_id ? { ...c, status: event.data.status } : c
-      ));
-    });
+    socket.on(
+      "camera_status",
+      (event: { data: { camera_id: string; status: Camera["status"] } }) => {
+        setCameras((prev) =>
+          prev.map((c) =>
+            c.id === event.data.camera_id
+              ? { ...c, status: event.data.status }
+              : c,
+          ),
+        );
+      },
+    );
 
     return () => {
-      cameras.forEach(cam => socket.emit("unsubscribe_camera", cam.id));
+      cameras.forEach((cam) => socket.emit("unsubscribe_camera", cam.id));
       socket.off("connect", handleConnect);
       socket.off("detection");
       socket.off("camera_status");
@@ -128,7 +158,9 @@ export default function MonitorPage() {
     <div className="min-h-screen p-6">
       <div className="mb-6">
         <h1 className="text-4xl font-bold text-white mb-2">Live Monitoring</h1>
-        <p className="text-white/70">Real-time MJPEG camera feeds with AI vehicle detection</p>
+        <p className="text-white/70">
+          Real-time MJPEG camera feeds with AI vehicle detection
+        </p>
       </div>
 
       {/* Controls */}
@@ -137,27 +169,40 @@ export default function MonitorPage() {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-6">
               <Switch
+                classNames={{
+                  wrapper: "group-data-[selected=true]:bg-white/30",
+                }}
                 isSelected={showBoxes}
                 onValueChange={setShowBoxes}
-                classNames={{ wrapper: "group-data-[selected=true]:bg-white/30" }}
               >
                 <span className="text-white/80">Bounding Boxes</span>
               </Switch>
               <Select
-                label="View"
-                defaultSelectedKeys={["grid"]}
                 className="max-w-xs"
-                onChange={e => setViewMode(e.target.value)}
-                classNames={{ label: "text-white/80", trigger: "bg-white/10 border-white/20 text-white" }}
+                classNames={{
+                  label: "text-white/80",
+                  trigger: "bg-white/10 border-white/20 text-white",
+                }}
+                defaultSelectedKeys={["grid"]}
+                label="View"
+                onChange={(e) => setViewMode(e.target.value)}
               >
                 <SelectItem key="grid">Grid (2-up)</SelectItem>
                 <SelectItem key="single">Single</SelectItem>
               </Select>
             </div>
             <div className="flex items-center gap-6 text-sm text-white/70">
-              <span>Session detections: <span className="text-white font-bold">{totalDetections}</span></span>
+              <span>
+                Session detections:{" "}
+                <span className="text-white font-bold">{totalDetections}</span>
+              </span>
               {avgSpeedVal !== null && (
-                <span>Avg speed: <span className="text-white font-bold">{avgSpeedVal} km/h</span></span>
+                <span>
+                  Avg speed:{" "}
+                  <span className="text-white font-bold">
+                    {avgSpeedVal} km/h
+                  </span>
+                </span>
               )}
             </div>
           </div>
@@ -168,18 +213,20 @@ export default function MonitorPage() {
       {cameras.length === 0 ? (
         <div className="text-white/50 text-center py-16">Loading cameras…</div>
       ) : (
-        <div className={`grid gap-6 mb-6 ${viewMode === "grid" ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1 max-w-3xl mx-auto"}`}>
-          {cameras.map(cam => (
+        <div
+          className={`grid gap-6 mb-6 ${viewMode === "grid" ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1 max-w-3xl mx-auto"}`}
+        >
+          {cameras.map((cam) => (
             <VideoFeed
               key={cam.id}
+              boundingBoxes={[]}
               cameraId={cam.id}
               cameraName={`${cam.name} — ${cam.location}`}
-              isLive={cam.status === "online"}
               fps={cam.fps ?? 30}
+              isLive={cam.status === "online"}
               latency={0}
-              videoUrl={cam.status === "online" ? streamUrl(cam.id) : undefined}
               showBoundingBoxes={false}
-              boundingBoxes={[]}
+              videoUrl={cam.status === "online" ? streamUrl(cam.id) : undefined}
             />
           ))}
         </div>
@@ -190,32 +237,46 @@ export default function MonitorPage() {
         <CardBody className="p-4">
           <h3 className="text-xl font-bold text-white mb-4">
             Live Detection Log
-            <span className="ml-3 text-sm font-normal text-white/50">(real-time via WebSocket)</span>
+            <span className="ml-3 text-sm font-normal text-white/50">
+              (real-time via WebSocket)
+            </span>
           </h3>
           <div ref={logRef} className="space-y-2 max-h-72 overflow-y-auto pr-1">
             {log.length === 0 ? (
               <p className="text-white/40 text-center py-8">
                 Waiting for detections — camera_sender must be running
               </p>
-            ) : log.map(entry => (
-              <div key={entry.key}
-                className="flex justify-between items-center p-3 bg-white/10 rounded-lg border border-white/10">
-                <div className="flex items-center gap-3">
-                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse flex-shrink-0" />
-                  <span className="text-white/60 text-sm truncate max-w-[140px]">{entry.camera_name}</span>
-                  <span className="text-white font-semibold capitalize">{entry.vehicle_type}</span>
-                </div>
-                <div className="flex items-center gap-4 text-sm flex-shrink-0">
-                  {entry.speed != null && (
-                    <span className={`font-bold ${entry.speed > 60 ? "text-red-400" : "text-white"}`}>
-                      {entry.speed} km/h
+            ) : (
+              log.map((entry) => (
+                <div
+                  key={entry.key}
+                  className="flex justify-between items-center p-3 bg-white/10 rounded-lg border border-white/10"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse flex-shrink-0" />
+                    <span className="text-white/60 text-sm truncate max-w-[140px]">
+                      {entry.camera_name}
                     </span>
-                  )}
-                  <span className="text-white/60">{(entry.confidence * 100).toFixed(0)}%</span>
-                  <span className="text-white/40 text-xs">{entry.time}</span>
+                    <span className="text-white font-semibold capitalize">
+                      {entry.vehicle_type}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm flex-shrink-0">
+                    {entry.speed != null && (
+                      <span
+                        className={`font-bold ${entry.speed > 60 ? "text-red-400" : "text-white"}`}
+                      >
+                        {entry.speed} km/h
+                      </span>
+                    )}
+                    <span className="text-white/60">
+                      {(entry.confidence * 100).toFixed(0)}%
+                    </span>
+                    <span className="text-white/40 text-xs">{entry.time}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </CardBody>
       </Card>

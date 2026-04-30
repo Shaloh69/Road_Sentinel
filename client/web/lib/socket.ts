@@ -12,10 +12,11 @@ export function getSocket(): Socket {
       reconnectionDelay: 2000,
     });
 
-    socket.on("connect",    () => console.log("[WS] Connected:", socket?.id));
+    socket.on("connect", () => console.log("[WS] Connected:", socket?.id));
     socket.on("disconnect", () => console.log("[WS] Disconnected"));
     socket.on("connect_error", (e) => console.warn("[WS] Error:", e.message));
   }
+
   return socket;
 }
 

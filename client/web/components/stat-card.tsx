@@ -12,7 +12,13 @@ interface StatCardProps {
   subtitle?: string;
 }
 
-export const StatCard = ({ title, value, icon, trend, subtitle }: StatCardProps) => {
+export const StatCard = ({
+  title,
+  value,
+  icon,
+  trend,
+  subtitle,
+}: StatCardProps) => {
   return (
     <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl hover:bg-white/15 transition-all">
       <CardBody className="p-6">

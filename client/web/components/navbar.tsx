@@ -7,7 +7,6 @@ import {
   NavbarItem,
   NavbarMenuItem,
 } from "@heroui/navbar";
-import { Button } from "@heroui/button";
 import { Kbd } from "@heroui/kbd";
 import { Link } from "@heroui/link";
 import { Input } from "@heroui/input";
@@ -17,11 +16,7 @@ import clsx from "clsx";
 
 import { siteConfig } from "@/config/site";
 import { ThemeSwitch } from "@/components/theme-switch";
-import {
-  GithubIcon,
-  SearchIcon,
-  Logo,
-} from "@/components/icons";
+import { GithubIcon, SearchIcon, Logo } from "@/components/icons";
 
 export const Navbar = () => {
   const searchInput = (
@@ -46,14 +41,20 @@ export const Navbar = () => {
   );
 
   return (
-    <HeroUINavbar maxWidth="2xl" position="sticky" className="bg-[#1B1931] dark:bg-[#1B1931]">
+    <HeroUINavbar
+      className="bg-[#1B1931] dark:bg-[#1B1931]"
+      maxWidth="2xl"
+      position="sticky"
+    >
       <NavbarContent className="basis-1/5 sm:basis-full" justify="start">
         <NavbarBrand as="li" className="gap-3 max-w-fit">
           <NextLink className="flex justify-start items-center gap-2" href="/">
             <Logo />
             <div className="flex flex-col">
               <p className="font-bold text-[#ED9E59] text-lg">Road Sentinel</p>
-              <p className="text-xs text-[#E8BCB8]">Traffic Monitoring System</p>
+              <p className="text-xs text-[#E8BCB8]">
+                Traffic Monitoring System
+              </p>
             </div>
           </NextLink>
         </NavbarBrand>
@@ -81,7 +82,7 @@ export const Navbar = () => {
         <NavbarItem className="hidden sm:flex gap-3 items-center">
           {/* System Status Indicator */}
           <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#44174E]">
-            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
             <span className="text-xs text-[#E8BCB8]">System Online</span>
           </div>
           <Link isExternal aria-label="Github" href={siteConfig.links.github}>

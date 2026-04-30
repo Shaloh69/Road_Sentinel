@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardBody, CardHeader } from "@heroui/card";
-import { StatCard } from "@/components/stat-card";
 import { Select, SelectItem } from "@heroui/select";
 import { Button } from "@heroui/button";
 import { Progress } from "@heroui/progress";
+
+import { StatCard } from "@/components/stat-card";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -33,15 +34,18 @@ interface SpeedBucket {
 }
 
 export default function AnalyticsPage() {
-  const [summary,  setSummary]  = useState<Summary | null>(null);
-  const [hourly,   setHourly]   = useState<HourlyRow[]>([]);
-  const [speeds,   setSpeeds]   = useState<SpeedBucket[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState<string | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [hourly, setHourly] = useState<HourlyRow[]>([]);
+  const [speeds, setSpeeds] = useState<SpeedBucket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState("today");
 
   const hoursForRange: Record<string, number> = {
-    today: 24, week: 168, month: 720, year: 8760,
+    today: 24,
+    week: 168,
+    month: 720,
+    year: 8760,
   };
 
   const fetchData = useCallback(async () => {
@@ -56,12 +60,14 @@ export default function AnalyticsPage() {
       ]);
 
       const [sumJson, hourlyJson, speedJson] = await Promise.all([
-        sumRes.json(), hourlyRes.json(), speedRes.json(),
+        sumRes.json(),
+        hourlyRes.json(),
+        speedRes.json(),
       ]);
 
-      if (sumJson.success)    setSummary(sumJson.data);
+      if (sumJson.success) setSummary(sumJson.data);
       if (hourlyJson.success) setHourly(hourlyJson.data);
-      if (speedJson.success)  setSpeeds(speedJson.data);
+      if (speedJson.success) setSpeeds(speedJson.data);
       setError(null);
     } catch {
       setError("Cannot reach server");
@@ -73,45 +79,68 @@ export default function AnalyticsPage() {
   useEffect(() => {
     fetchData();
     const id = setInterval(fetchData, 30000);
+
     return () => clearInterval(id);
   }, [fetchData]);
 
   // Build vehicle type breakdown from latest hourly data
   const totals = hourly.reduce(
     (acc, r) => ({
-      car:        acc.car        + (r.car_count        ?? 0),
-      truck:      acc.truck      + (r.truck_count      ?? 0),
-      bus:        acc.bus        + (r.bus_count        ?? 0),
+      car: acc.car + (r.car_count ?? 0),
+      truck: acc.truck + (r.truck_count ?? 0),
+      bus: acc.bus + (r.bus_count ?? 0),
       motorcycle: acc.motorcycle + (r.motorcycle_count ?? 0),
-      bicycle:    acc.bicycle    + (r.bicycle_count    ?? 0),
+      bicycle: acc.bicycle + (r.bicycle_count ?? 0),
     }),
-    { car: 0, truck: 0, bus: 0, motorcycle: 0, bicycle: 0 }
+    { car: 0, truck: 0, bus: 0, motorcycle: 0, bicycle: 0 },
   );
   const totalVehicles = Object.values(totals).reduce((a, b) => a + b, 0) || 1;
 
   const vehicleTypes = [
-    { type: "Car",        count: totals.car,        percentage: Math.round((totals.car        / totalVehicles) * 100) },
-    { type: "Motorcycle", count: totals.motorcycle,  percentage: Math.round((totals.motorcycle / totalVehicles) * 100) },
-    { type: "Bus",        count: totals.bus,         percentage: Math.round((totals.bus        / totalVehicles) * 100) },
-    { type: "Truck",      count: totals.truck,       percentage: Math.round((totals.truck      / totalVehicles) * 100) },
-    { type: "Bicycle",    count: totals.bicycle,     percentage: Math.round((totals.bicycle    / totalVehicles) * 100) },
+    {
+      type: "Car",
+      count: totals.car,
+      percentage: Math.round((totals.car / totalVehicles) * 100),
+    },
+    {
+      type: "Motorcycle",
+      count: totals.motorcycle,
+      percentage: Math.round((totals.motorcycle / totalVehicles) * 100),
+    },
+    {
+      type: "Bus",
+      count: totals.bus,
+      percentage: Math.round((totals.bus / totalVehicles) * 100),
+    },
+    {
+      type: "Truck",
+      count: totals.truck,
+      percentage: Math.round((totals.truck / totalVehicles) * 100),
+    },
+    {
+      type: "Bicycle",
+      count: totals.bicycle,
+      percentage: Math.round((totals.bicycle / totalVehicles) * 100),
+    },
   ];
 
   // Speed distribution labels from API buckets
-  const speedBucketLabel = (bucket: number) =>
-    `${bucket}–${bucket + 9} km/h`;
+  const speedBucketLabel = (bucket: number) => `${bucket}–${bucket + 9} km/h`;
   const speedTotal = speeds.reduce((a, b) => a + b.count, 0) || 1;
 
   // Find peak hour
   const peakHour = hourly.reduce(
     (best, r) => (r.total_vehicles > (best?.total_vehicles ?? 0) ? r : best),
-    null as HourlyRow | null
+    null as HourlyRow | null,
   );
   const peakLabel = peakHour
-    ? new Date(peakHour.hour_timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? new Date(peakHour.hour_timestamp).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
     : "N/A";
 
-  const maxHourly = Math.max(...hourly.map(r => r.total_vehicles), 1);
+  const maxHourly = Math.max(...hourly.map((r) => r.total_vehicles), 1);
 
   return (
     <div className="min-h-screen p-6">
@@ -130,14 +159,14 @@ export default function AnalyticsPage() {
         <CardBody className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <Select
-              label="Time Range"
-              defaultSelectedKeys={["today"]}
               className="max-w-xs"
-              onChange={e => setTimeRange(e.target.value)}
               classNames={{
                 label: "text-white/80",
                 trigger: "bg-white/10 border-white/20 text-white",
               }}
+              defaultSelectedKeys={["today"]}
+              label="Time Range"
+              onChange={(e) => setTimeRange(e.target.value)}
             >
               <SelectItem key="today">Today</SelectItem>
               <SelectItem key="week">This Week</SelectItem>
@@ -160,23 +189,31 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
         <StatCard
           title="Total Vehicles"
-          value={loading ? "—" : (summary?.vehicles_today ?? 0).toLocaleString()}
           trend={{ value: "live", isPositive: true }}
+          value={
+            loading ? "—" : (summary?.vehicles_today ?? 0).toLocaleString()
+          }
         />
         <StatCard
           title="Avg Speed"
-          value={loading ? "—" : (summary?.average_speed ? `${summary.average_speed} km/h` : "N/A")}
           trend={{ value: "live", isPositive: true }}
+          value={
+            loading
+              ? "—"
+              : summary?.average_speed
+                ? `${summary.average_speed} km/h`
+                : "N/A"
+          }
         />
         <StatCard
+          subtitle={peakHour ? `${peakHour.total_vehicles} vehicles` : ""}
           title="Peak Hour"
           value={loading ? "—" : peakLabel}
-          subtitle={peakHour ? `${peakHour.total_vehicles} vehicles` : ""}
         />
         <StatCard
+          subtitle="Today"
           title="Incidents"
           value={loading ? "—" : (summary?.incidents_today ?? 0)}
-          subtitle="Today"
         />
       </div>
 
@@ -185,7 +222,9 @@ export default function AnalyticsPage() {
         {/* Vehicle Types */}
         <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
           <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
-            <h3 className="text-xl font-bold text-white">Vehicle Types Distribution</h3>
+            <h3 className="text-xl font-bold text-white">
+              Vehicle Types Distribution
+            </h3>
           </CardHeader>
           <CardBody className="p-6">
             {loading ? (
@@ -195,15 +234,24 @@ export default function AnalyticsPage() {
                 {vehicleTypes.map((v, i) => (
                   <div key={i} className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-white/80 font-medium">{v.type}</span>
-                      <span className="text-white font-bold">{v.count.toLocaleString()}</span>
+                      <span className="text-white/80 font-medium">
+                        {v.type}
+                      </span>
+                      <span className="text-white font-bold">
+                        {v.count.toLocaleString()}
+                      </span>
                     </div>
                     <Progress
-                      value={v.percentage}
                       className="h-3"
-                      classNames={{ indicator: "bg-white/70", track: "bg-white/20" }}
+                      classNames={{
+                        indicator: "bg-white/70",
+                        track: "bg-white/20",
+                      }}
+                      value={v.percentage}
                     />
-                    <span className="text-xs text-white/70">{v.percentage}%</span>
+                    <span className="text-xs text-white/70">
+                      {v.percentage}%
+                    </span>
                   </div>
                 ))}
               </div>
@@ -220,22 +268,36 @@ export default function AnalyticsPage() {
             {loading ? (
               <div className="text-white/50 text-center py-8">Loading…</div>
             ) : speeds.length === 0 ? (
-              <div className="text-white/50 text-center py-8">No speed data yet</div>
+              <div className="text-white/50 text-center py-8">
+                No speed data yet
+              </div>
             ) : (
               <div className="space-y-4">
                 {speeds.map((s, i) => {
                   const pct = Math.round((s.count / speedTotal) * 100);
-                  const color = s.speed_bucket < 30 ? "bg-green-500"
-                              : s.speed_bucket < 50 ? "bg-blue-500"
-                              : s.speed_bucket < 70 ? "bg-yellow-500"
-                              : s.speed_bucket < 90 ? "bg-orange-500"
-                              : "bg-red-500";
+                  const color =
+                    s.speed_bucket < 30
+                      ? "bg-green-500"
+                      : s.speed_bucket < 50
+                        ? "bg-blue-500"
+                        : s.speed_bucket < 70
+                          ? "bg-yellow-500"
+                          : s.speed_bucket < 90
+                            ? "bg-orange-500"
+                            : "bg-red-500";
+
                   return (
                     <div key={i} className="flex items-center gap-3">
-                      <div className={`w-4 h-4 rounded-full flex-shrink-0 ${color}`} />
+                      <div
+                        className={`w-4 h-4 rounded-full flex-shrink-0 ${color}`}
+                      />
                       <div className="flex-1 flex justify-between items-center">
-                        <span className="text-white/80">{speedBucketLabel(s.speed_bucket)}</span>
-                        <span className="text-white font-bold">{s.count} ({pct}%)</span>
+                        <span className="text-white/80">
+                          {speedBucketLabel(s.speed_bucket)}
+                        </span>
+                        <span className="text-white font-bold">
+                          {s.count} ({pct}%)
+                        </span>
                       </div>
                     </div>
                   );
@@ -255,16 +317,27 @@ export default function AnalyticsPage() {
           {loading ? (
             <div className="text-white/50 text-center py-12">Loading…</div>
           ) : hourly.length === 0 ? (
-            <div className="text-white/50 text-center py-12">No hourly data yet</div>
+            <div className="text-white/50 text-center py-12">
+              No hourly data yet
+            </div>
           ) : (
             <div className="flex items-end justify-between h-64 gap-1">
               {hourly.map((row, i) => {
                 const heightPct = (row.total_vehicles / maxHourly) * 100;
-                const label = new Date(row.hour_timestamp)
-                  .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                const label = new Date(row.hour_timestamp).toLocaleTimeString(
+                  [],
+                  { hour: "2-digit", minute: "2-digit" },
+                );
+
                 return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-2">
-                    <div className="relative w-full flex items-end justify-center" style={{ height: "200px" }}>
+                  <div
+                    key={i}
+                    className="flex-1 flex flex-col items-center gap-2"
+                  >
+                    <div
+                      className="relative w-full flex items-end justify-center"
+                      style={{ height: "200px" }}
+                    >
                       <div
                         className="w-full bg-gradient-to-t from-white/70 to-white/40 rounded-t-lg hover:from-white/80 hover:to-white/50 transition-all cursor-pointer"
                         style={{ height: `${heightPct}%` }}

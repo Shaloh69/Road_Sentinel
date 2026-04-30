@@ -7,21 +7,29 @@ export default function SettingsPage() {
     <div className="min-h-screen p-6">
       <div className="mb-6">
         <h1 className="text-4xl font-bold text-white mb-2">Settings</h1>
-        <p className="text-white/70">Configure system preferences and detection parameters</p>
+        <p className="text-white/70">
+          Configure system preferences and detection parameters
+        </p>
       </div>
 
       <div className="space-y-6">
         {/* Alert Settings */}
         <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
           <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
-            <h3 className="text-xl font-bold text-white">Alert & Notification Settings</h3>
+            <h3 className="text-xl font-bold text-white">
+              Alert & Notification Settings
+            </h3>
           </CardHeader>
           <CardBody className="p-6">
             <div className="space-y-4">
               <div className="flex justify-between items-center p-4 bg-white/10 backdrop-blur-sm rounded-lg border border-white/10">
                 <div>
-                  <p className="text-white/90 font-medium">Email Notifications</p>
-                  <p className="text-white/70 text-sm">Receive alerts via email</p>
+                  <p className="text-white/90 font-medium">
+                    Email Notifications
+                  </p>
+                  <p className="text-white/70 text-sm">
+                    Receive alerts via email
+                  </p>
                 </div>
                 <Switch
                   defaultSelected
@@ -33,7 +41,9 @@ export default function SettingsPage() {
               <div className="flex justify-between items-center p-4 bg-white/10 backdrop-blur-sm rounded-lg border border-white/10">
                 <div>
                   <p className="text-white/90 font-medium">Sound Alerts</p>
-                  <p className="text-white/70 text-sm">Play sound for critical incidents</p>
+                  <p className="text-white/70 text-sm">
+                    Play sound for critical incidents
+                  </p>
                 </div>
                 <Switch
                   defaultSelected

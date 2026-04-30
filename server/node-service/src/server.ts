@@ -7,6 +7,8 @@ import { logger } from './config/logger';
 import { testConnection, closePool } from './config/database';
 import { initializeStorageBuckets } from './config/supabase';
 import { aiService } from './services/ai.service';
+import { runMigrations } from './database/migrate';
+import { seedCameras } from './database/seed';
 
 // Routes
 import cameraRoutes from './routes/cameras';
@@ -146,6 +148,9 @@ async function startServer() {
     const dbConnected = await testConnection();
     if (!dbConnected) {
       logger.warn('Database connection failed — server will start but some features may not work');
+    } else {
+      await runMigrations();
+      await seedCameras();
     }
 
     await initializeStorageBuckets();

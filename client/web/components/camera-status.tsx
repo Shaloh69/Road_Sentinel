@@ -32,7 +32,7 @@ export const CameraStatus = ({
             <p className="text-xs text-white/60">ID: {id}</p>
           </div>
           <Chip
-            className={`${isOnline ? 'bg-green-500' : 'bg-red-500'} text-white text-xs font-semibold shadow-lg`}
+            className={`${isOnline ? "bg-green-500" : "bg-red-500"} text-white text-xs font-semibold shadow-lg`}
             size="sm"
             variant="solid"
           >
@@ -51,7 +51,9 @@ export const CameraStatus = ({
           </div>
           <div className="flex justify-between items-center">
             <span className="text-xs text-white/70">Detection Rate</span>
-            <span className="text-sm font-bold text-white">{detectionRate}%</span>
+            <span className="text-sm font-bold text-white">
+              {detectionRate}%
+            </span>
           </div>
           {!isOnline && lastSeen && (
             <div className="flex justify-between items-center pt-2 border-t border-white/10">
@@ -62,9 +64,11 @@ export const CameraStatus = ({
         </div>
 
         <div className="mt-4 pt-3 border-t border-white/10">
-          <div className={`w-full h-2 bg-white/10 rounded-full overflow-hidden`}>
+          <div
+            className={`w-full h-2 bg-white/10 rounded-full overflow-hidden`}
+          >
             <div
-              className={`h-full ${isOnline ? 'bg-green-400 shadow-lg shadow-green-400/50' : 'bg-red-400'} transition-all`}
+              className={`h-full ${isOnline ? "bg-green-400 shadow-lg shadow-green-400/50" : "bg-red-400"} transition-all`}
               style={{ width: `${isOnline ? 100 : 0}%` }}
             />
           </div>

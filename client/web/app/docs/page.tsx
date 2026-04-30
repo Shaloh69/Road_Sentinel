@@ -5,9 +5,7 @@ export default function DocsPage() {
         <h1 className="text-4xl font-bold text-white mb-2">Documentation</h1>
         <p className="text-white/70">System documentation and guides</p>
       </div>
-      <div className="text-white/80">
-        Documentation content coming soon...
-      </div>
+      <div className="text-white/80">Documentation content coming soon...</div>
     </div>
   );
 }

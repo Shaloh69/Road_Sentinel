@@ -1,6 +1,5 @@
 import "@/styles/globals.css";
 import { Metadata, Viewport } from "next";
-import { Link } from "@heroui/link";
 import clsx from "clsx";
 
 import { Providers } from "./providers";
@@ -46,9 +45,7 @@ export default function RootLayout({
           <AnimatedBackground />
           <Sidebar />
           <div className="ml-64 min-h-screen relative">
-            <main className="w-full">
-              {children}
-            </main>
+            <main className="w-full">{children}</main>
           </div>
         </Providers>
       </body>
