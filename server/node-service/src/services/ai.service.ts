@@ -29,7 +29,8 @@ class AIService {
       const response = await this.client.get('/health');
       return response.status === 200;
     } catch (error) {
-      logger.error('AI service health check failed:', error);
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`AI service unreachable: ${msg}`);
       return false;
     }
   }
@@ -106,7 +107,7 @@ class AIService {
 
       return response.status === 200 ? response.data : null;
     } catch (error) {
-      logger.error('Traffic detection failed:', error);
+      logger.error(`Traffic detection failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
@@ -136,7 +137,7 @@ class AIService {
 
       return response.status === 200 ? response.data : null;
     } catch (error) {
-      logger.error('Incident detection failed:', error);
+      logger.error(`Incident detection failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
@@ -149,7 +150,7 @@ class AIService {
       const response = await this.client.get('/api/stats');
       return response.data;
     } catch (error) {
-      logger.error('Failed to get AI service stats:', error);
+      logger.error(`Failed to get AI service stats: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }

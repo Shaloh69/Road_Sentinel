@@ -22,8 +22,9 @@ const poolConfig: mysql.PoolOptions = {
 
 // Add SSL configuration for Aiven if enabled
 if (process.env.DB_SSL === 'true') {
+  // Aiven uses a self-signed CA — rejectUnauthorized must be false
   poolConfig.ssl = {
-    rejectUnauthorized: true,
+    rejectUnauthorized: false,
   };
 }
 
