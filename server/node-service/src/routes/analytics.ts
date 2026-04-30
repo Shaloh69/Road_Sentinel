@@ -48,7 +48,7 @@ router.get('/hourly', async (req: Request, res: Response) => {
     const { camera_id, date } = req.query as Record<string, string>;
 
     let sql = `
-      SELECT * FROM analytics_hourly
+      SELECT * FROM hourly_analytics
       WHERE DATE(hour_timestamp) = ?
     `;
     const params: string[] = [date || new Date().toISOString().slice(0, 10)];
