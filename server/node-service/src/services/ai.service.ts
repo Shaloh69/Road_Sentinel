@@ -1,7 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
 import { logger } from '../config/logger';
-import { AIDetectionRequest, AIDetectionResult } from '../types';
+import { AIDetectionResult } from '../types';
 
 class AIService {
   private client: AxiosInstance;
