@@ -424,4 +424,4 @@ training_runs/
 runs/
 
 # Allow .gitkeep files to track empty dirs
-!**/.gitkeep
+!**/.gitkeeprender.env.txt
