@@ -3,23 +3,17 @@
 Road Sentinel — HUB75 128×32 RGB LED Matrix Display Manager
 Raspberry Pi 4 Model B version — drives hzeller/rpi-rgb-led-matrix via ledcat subprocess
 
-How it works:
-  Python generates 128×32 PIL images (all content/colors/layout).
-  Raw RGB24 bytes are piped to the hzeller `ledcat` C binary via stdin.
-  ledcat drives the matrix using the C library directly — bypasses broken
-  Python bindings chain_length bug that caused panel mirroring.
+Three road-warning screens (full-panel, large text):
+  SLOW DOWN     — red,    default/idle (drivers are always prompted while AI processes)
+  VEHICLE INCOMING — orange, flashing when a vehicle detection arrives
+  INCIDENT AHEAD   — magenta, flashing when an active incident is detected
 
-Pi 4 retains Broadcom direct GPIO, so the hzeller library works here.
-(Pi 5 users: see ../lcd/display_manager.py which uses Adafruit PioMatter instead.)
-
-Hardware: HUB75 RGB LED matrix — 128×32 pixels (full color)
-  Default config: two 64×32 panels chained → total 128×32
-
-Install:
-  See lcd_pi4/README.md or run install.sh (builds ledcat as part of examples-api-use)
+How frames travel:
+  Python PIL → raw RGB24 bytes → ledcat stdin → hzeller C lib → HUB75 matrix
+  This bypasses the Python bindings chain_length bug that caused panel mirroring.
 
 Run:
-  sudo python3 display_manager.py           # real mode (live API)
+  sudo python3 display_manager.py           # real mode (polls Node API)
   sudo python3 display_manager.py --test    # test mode (fake data, no API)
   (sudo required for direct GPIO /dev/mem access)
 """
@@ -37,17 +31,15 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
-# ── ledcat binary location ────────────────────────────────────────────────────
-LEDCAT_DEFAULT = os.path.expanduser(
-    "~/rpi-rgb-led-matrix/examples-api-use/ledcat"
-)
+# ── ledcat binary ─────────────────────────────────────────────────────────────
+LEDCAT_DEFAULT = os.path.expanduser("~/rpi-rgb-led-matrix/examples-api-use/ledcat")
 
 def _find_ledcat(override: Optional[str] = None) -> str:
     path = os.path.expanduser(override or LEDCAT_DEFAULT)
     if not os.path.isfile(path):
         raise FileNotFoundError(
             f"ledcat not found at {path}\n"
-            "Build it with:\n"
+            "Build with:\n"
             "  cd ~/rpi-rgb-led-matrix/examples-api-use && make\n"
             "Or run install.sh"
         )
@@ -59,7 +51,6 @@ try:
 except ImportError:
     _REQUESTS_OK = False
 
-# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [LED] %(levelname)s %(message)s",
@@ -71,42 +62,23 @@ log = logging.getLogger(__name__)
 WIDTH  = 128
 HEIGHT = 32
 
-# ── Color palette (RGB tuples) ────────────────────────────────────────────────
+# ── Color palette ─────────────────────────────────────────────────────────────
 WHITE   = (255, 255, 255)
 BLACK   = (0,   0,   0  )
 RED     = (220, 0,   0  )
 GREEN   = (0,   200, 0  )
-BLUE    = (30,  80,  255)
 YELLOW  = (220, 200, 0  )
 ORANGE  = (255, 110, 0  )
+MAGENTA = (200, 0,   180)
 CYAN    = (0,   200, 200)
 GRAY    = (90,  90,  90 )
 AMBER   = (255, 160, 0  )
-DARK_GREEN = (0, 80,  0 )
 
-SEVERITY_COLORS = {
-    "critical": RED,
-    "high":     ORANGE,
-    "medium":   YELLOW,
-    "low":      CYAN,
-}
-
-# ── Font & layout ─────────────────────────────────────────────────────────────
-ROW_H = 5
-ROWS  = [0, 5, 10, 15, 20, 25]
-
-FONT_SM = ImageFont.load_default(size=4)
-
-def _trunc(text: str, max_chars: int = 42) -> str:
-    return text if len(text) <= max_chars else text[:max_chars - 1] + "."
-
-def _get_local_ip() -> str:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except Exception:
-        return "?.?.?.?"
+# ── Fonts (Pillow 10+ bitmap fonts) ──────────────────────────────────────────
+FONT_SM    = ImageFont.load_default(size=4)   # status rows
+FONT_XS6   = ImageFont.load_default(size=6)   # subtitle strip
+FONT_MED   = ImageFont.load_default(size=10)  # secondary line
+FONT_LARGE = ImageFont.load_default(size=16)  # main message
 
 # ── Frame helpers ─────────────────────────────────────────────────────────────
 
@@ -115,55 +87,143 @@ def _new_frame() -> tuple[Image.Image, ImageDraw.ImageDraw]:
     draw = ImageDraw.Draw(img)
     return img, draw
 
-def _draw_row(draw: ImageDraw.ImageDraw, row: int, text: str,
-              color=WHITE, x: int = 1):
-    draw.text((x, ROWS[row]), text, font=FONT_SM, fill=color)
+def _fill_row_px(draw: ImageDraw.ImageDraw, y0: int, y1: int, color):
+    draw.rectangle([0, y0, WIDTH - 1, y1], fill=color)
 
-def _fill_row(draw: ImageDraw.ImageDraw, row: int, color):
-    draw.rectangle([0, ROWS[row], WIDTH - 1, ROWS[row] + ROW_H - 1], fill=color)
+def _draw_centered_in(draw: ImageDraw.ImageDraw,
+                      x0: int, y0: int, x1: int, y1: int,
+                      text: str, font, color):
+    """Draw text centered horizontally and vertically within the given rectangle."""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w    = bbox[2] - bbox[0]
+    h    = bbox[3] - bbox[1]
+    x    = x0 + max(0, ((x1 - x0 + 1) - w) // 2) - bbox[0]
+    y    = y0 + max(0, ((y1 - y0 + 1) - h) // 2) - bbox[1]
+    draw.text((x, y), text, font=font, fill=color)
+
+def _draw_two_lines_centered(draw: ImageDraw.ImageDraw,
+                              y0: int, y1: int,
+                              line1: str, font1,
+                              line2: str, font2,
+                              color):
+    """Draw two lines of text centered as a group vertically within y0–y1."""
+    bb1 = draw.textbbox((0, 0), line1, font=font1)
+    bb2 = draw.textbbox((0, 0), line2, font=font2)
+    h1, h2 = bb1[3] - bb1[1], bb2[3] - bb2[1]
+    gap   = 2
+    total = h1 + gap + h2
+    sy    = y0 + max(0, ((y1 - y0 + 1) - total) // 2)
+    x1p   = max(0, (WIDTH - (bb1[2] - bb1[0])) // 2) - bb1[0]
+    x2p   = max(0, (WIDTH - (bb2[2] - bb2[0])) // 2) - bb2[0]
+    draw.text((x1p, sy - bb1[1]),           line1, font=font1, fill=color)
+    draw.text((x2p, sy + h1 + gap - bb2[1]), line2, font=font2, fill=color)
+
+
+# ── Road warning renderers ─────────────────────────────────────────────────────
+
+def render_slow_down(_state, flash_phase: int = 0) -> Image.Image:
+    """Default screen — red background, 'SLOW DOWN' centered."""
+    img, draw = _new_frame()
+    bg = RED if flash_phase == 0 else (140, 0, 0)
+    _fill_row_px(draw, 0, HEIGHT - 1, bg)
+    _draw_centered_in(draw, 0, 0, WIDTH - 1, HEIGHT - 1, "SLOW DOWN", FONT_LARGE, WHITE)
+    return img
+
+
+def render_vehicle_incoming(_state, flash_phase: int = 0) -> Image.Image:
+    """Vehicle detected — orange flashing, two-line 'VEHICLE / INCOMING'."""
+    img, draw = _new_frame()
+    bg = ORANGE if flash_phase == 0 else (160, 65, 0)
+    _fill_row_px(draw, 0, HEIGHT - 1, bg)
+    # Main two-line message above the subtitle strip
+    _draw_two_lines_centered(draw, 0, HEIGHT - 8,
+                             "VEHICLE",  FONT_LARGE,
+                             "INCOMING", FONT_MED,
+                             WHITE)
+    # Subtitle strip at the bottom
+    _draw_centered_in(draw, 0, HEIGHT - 7, WIDTH - 1, HEIGHT - 1,
+                      "SLOW DOWN", FONT_XS6, YELLOW)
+    return img
+
+
+def render_incident_ahead(_state, flash_phase: int = 0) -> Image.Image:
+    """Incident detected — magenta flashing, two-line 'INCIDENT / AHEAD'."""
+    img, draw = _new_frame()
+    bg = MAGENTA if flash_phase == 0 else (120, 0, 110)
+    _fill_row_px(draw, 0, HEIGHT - 1, bg)
+    _draw_two_lines_centered(draw, 0, HEIGHT - 8,
+                             "INCIDENT", FONT_LARGE,
+                             "AHEAD",    FONT_MED,
+                             WHITE)
+    _draw_centered_in(draw, 0, HEIGHT - 7, WIDTH - 1, HEIGHT - 1,
+                      "SLOW DOWN", FONT_XS6, YELLOW)
+    return img
+
+
+def render_color_bar_test(phase: int) -> Image.Image:
+    """Startup color-bar test — cycles through brightness levels."""
+    img, draw = _new_frame()
+    bars  = [RED, ORANGE, YELLOW, GREEN, CYAN, (30, 80, 255), WHITE]
+    bar_w = WIDTH // len(bars)
+    intensity = [255, 180, 80][min(phase // 2, 2)]
+    for i, color in enumerate(bars):
+        x0 = i * bar_w
+        x1 = x0 + bar_w - 1
+        scaled = tuple(int(c * intensity // 255) for c in color)
+        draw.rectangle([x0, 0, x1, HEIGHT - 1], fill=scaled)
+    return img
 
 
 # ── System state ──────────────────────────────────────────────────────────────
 
 class SystemState:
     def __init__(self):
-        self._lock              = threading.Lock()
-        self.vehicles_today: int       = 0
-        self.avg_speed: Optional[int]  = None
-        self.incidents_today: int      = 0
-        self.cameras_online: int       = 0
-        self.cameras_total: int        = 2
-        self.cameras: list             = []
-        self._alert: Optional[dict]    = None
-        self._alert_expires: float     = 0.0
-        self.local_ip: str             = _get_local_ip()
-        self.start_time: datetime      = datetime.now()
-        self.last_poll_ok: bool        = False
-        self.is_test_mode: bool        = False
+        self._lock                    = threading.Lock()
+        self.vehicles_today: int      = 0
+        self.avg_speed: Optional[int] = None
+        self.incidents_today: int     = 0
+        self.cameras_online: int      = 0
+        self.cameras_total: int       = 2
+        self.cameras: list            = []
+        self.last_poll_ok: bool       = False
+        self.is_test_mode: bool       = False
+        self.start_time: datetime     = datetime.now()
+        # Alert expiry times
+        self._vehicle_alert_exp: float  = 0.0
+        self._incident_alert_exp: float = 0.0
+        self._incident: Optional[dict]  = None
 
     def update_summary(self, data: dict):
         with self._lock:
-            self.vehicles_today  = data.get("vehicles_today", 0)
-            self.avg_speed       = data.get("average_speed")
-            self.incidents_today = data.get("incidents_today", 0)
-            self.cameras_online  = data.get("cameras_online", 0)
-            self.cameras_total   = data.get("cameras_total", 2)
+            self.vehicles_today  = data.get("vehicles_today",  self.vehicles_today)
+            self.avg_speed       = data.get("average_speed",   self.avg_speed)
+            self.incidents_today = data.get("incidents_today", self.incidents_today)
+            self.cameras_online  = data.get("cameras_online",  self.cameras_online)
+            self.cameras_total   = data.get("cameras_total",   self.cameras_total)
             self.last_poll_ok    = True
 
     def update_cameras(self, cameras: list):
         with self._lock:
             self.cameras = cameras
 
-    def push_alert(self, incident: dict, hold_secs: float = 12.0):
+    def push_vehicle_alert(self, hold_secs: float = 8.0):
         with self._lock:
-            self._alert         = incident
-            self._alert_expires = time.monotonic() + hold_secs
+            self._vehicle_alert_exp = time.monotonic() + hold_secs
 
-    def pop_alert(self) -> Optional[dict]:
+    def has_vehicle_alert(self) -> bool:
         with self._lock:
-            if self._alert and time.monotonic() < self._alert_expires:
-                return self._alert
-            self._alert = None
+            return time.monotonic() < self._vehicle_alert_exp
+
+    def push_incident_alert(self, incident: dict, hold_secs: float = 12.0):
+        with self._lock:
+            self._incident          = incident
+            self._incident_alert_exp = time.monotonic() + hold_secs
+
+    def pop_incident_alert(self) -> Optional[dict]:
+        with self._lock:
+            if self._incident and time.monotonic() < self._incident_alert_exp:
+                return self._incident
+            self._incident = None
             return None
 
     def uptime(self) -> str:
@@ -171,21 +231,6 @@ class SystemState:
         h, rem = divmod(int(delta.total_seconds()), 3600)
         m = rem // 60
         return f"{h}h{m:02d}m"
-
-    def snapshot(self) -> dict:
-        with self._lock:
-            return {
-                "vehicles_today":  self.vehicles_today,
-                "avg_speed":       self.avg_speed,
-                "incidents_today": self.incidents_today,
-                "cameras_online":  self.cameras_online,
-                "cameras_total":   self.cameras_total,
-                "cameras":         list(self.cameras),
-                "last_poll_ok":    self.last_poll_ok,
-                "is_test_mode":    self.is_test_mode,
-                "local_ip":        self.local_ip,
-                "uptime":          self.uptime(),
-            }
 
 
 # ── Data providers ────────────────────────────────────────────────────────────
@@ -197,364 +242,164 @@ class DataProvider(ABC):
     @abstractmethod
     def start(self): ...
 
-    def trigger_test_alert(self):
+    def trigger_test_incident(self):
+        pass
+
+    def trigger_test_vehicle(self):
         pass
 
 
 class ApiDataProvider(DataProvider):
-    """Polls Node Service REST API every 10 seconds."""
+    """
+    Two polling threads:
+      - Summary thread (every 30s): vehicles, speed, camera status.
+        Triggers a vehicle alert if vehicles_today increased.
+      - Incident thread (every 2s): latest active incident.
+        Triggers an incident alert immediately on new incident.
+    """
 
-    POLL_INTERVAL = 10
+    POLL_INTERVAL          = 30   # summary + cameras
+    INCIDENT_POLL_INTERVAL = 2    # incidents
 
     def __init__(self, state: SystemState, base_url: str):
         super().__init__(state)
-        self._base = base_url.rstrip("/")
+        self._base              = base_url.rstrip("/")
         self._last_incident_id: Optional[int] = None
+        self._first_poll        = True
 
     def start(self):
-        threading.Thread(target=self._poll_loop, daemon=True).start()
-        log.info("API data provider started — polling %s", self._base)
+        threading.Thread(target=self._summary_loop,  daemon=True, name="led-summary").start()
+        threading.Thread(target=self._incident_loop, daemon=True, name="led-incidents").start()
+        log.info("API data provider started — %s", self._base)
 
-    def _poll_loop(self):
+    def _summary_loop(self):
         while True:
             try:
-                self._poll()
+                self._poll_summary()
             except Exception as exc:
-                log.warning("Poll error: %s", exc)
+                log.warning("Summary poll error: %s", exc)
                 self.state.last_poll_ok = False
             time.sleep(self.POLL_INTERVAL)
 
-    def _poll(self):
+    def _incident_loop(self):
+        while True:
+            try:
+                self._poll_incidents()
+            except Exception as exc:
+                log.debug("Incident poll error: %s", exc)
+            time.sleep(self.INCIDENT_POLL_INTERVAL)
+
+    def _poll_summary(self):
         if not _REQUESTS_OK:
             raise RuntimeError("requests library not installed")
 
         r = _requests.get(f"{self._base}/api/analytics/summary", timeout=5)
         r.raise_for_status()
-        self.state.update_summary(r.json())
+        data = r.json().get("data", {})
+        prev = self.state.vehicles_today
+        self.state.update_summary(data)
+
+        # Trigger vehicle alert when new vehicles detected (skip first poll to avoid false burst)
+        if not self._first_poll and data.get("vehicles_today", 0) > prev:
+            self.state.push_vehicle_alert(hold_secs=8.0)
+        self._first_poll = False
 
         r = _requests.get(f"{self._base}/api/cameras", timeout=5)
         r.raise_for_status()
-        self.state.update_cameras(r.json())
+        self.state.update_cameras(r.json().get("data", []))
 
+    def _poll_incidents(self):
+        if not _REQUESTS_OK:
+            return
         r = _requests.get(
             f"{self._base}/api/incidents",
             params={"status": "active", "limit": 1},
-            timeout=5,
+            timeout=3,
         )
-        r.raise_for_status()
-        items = r.json()
+        items = r.json().get("data", [])
         if items:
-            inc = items[0]
+            inc    = items[0]
             inc_id = inc.get("id")
             if inc_id != self._last_incident_id:
                 self._last_incident_id = inc_id
-                inc["is_test"] = False
-                self.state.push_alert(inc, hold_secs=12.0)
-                log.info("REAL alert: %s (%s)", inc.get("incident_type"), inc.get("severity"))
+                self.state.push_incident_alert(inc, hold_secs=12.0)
+                log.warning("INCIDENT: %s (%s)", inc.get("incident_type"), inc.get("severity"))
 
 
 class TestDataProvider(DataProvider):
-    """Fake data — no network. Cycles simulated TEST alerts (amber)."""
+    """Fake data — no network. Cycles simulated alerts for local testing."""
 
     _FAKE_INCIDENTS = [
-        {"is_test": True, "incident_type": "speeding",   "severity": "high",
-         "title": "Test Speeding",    "description": "85 km/h on Camera A",
-         "camera_name": "Camera A",   "timestamp": ""},
-        {"is_test": True, "incident_type": "crash",      "severity": "critical",
-         "title": "Test Crash",       "description": "Simulated collision",
-         "camera_name": "Camera B",   "timestamp": ""},
-        {"is_test": True, "incident_type": "congestion", "severity": "low",
-         "title": "Test Congestion",  "description": "Slow traffic detected",
-         "camera_name": "Camera A",   "timestamp": ""},
+        {"incident_type": "speeding",   "severity": "high",
+         "title": "Test Speeding",    "camera_name": "Camera A"},
+        {"incident_type": "crash",      "severity": "critical",
+         "title": "Test Crash",       "camera_name": "Camera B"},
+        {"incident_type": "congestion", "severity": "medium",
+         "title": "Test Congestion",  "camera_name": "Camera A"},
     ]
 
     def __init__(self, state: SystemState):
         super().__init__(state)
-        self._alert_idx = 0
+        self._idx = 0
 
     def start(self):
-        self.state.update_summary({"vehicles_today": 999, "average_speed": 45,
-                                   "incidents_today": 3,  "cameras_online": 2,
-                                   "cameras_total":   2})
+        self.state.update_summary({
+            "vehicles_today": 0, "average_speed": None,
+            "incidents_today": 0, "cameras_online": 2, "cameras_total": 2,
+        })
         self.state.update_cameras([
-            {"id": "CAM-A-001", "name": "Camera A", "status": "online",
-             "rtsp_url": "rtsp://192.168.8.104:554/cam/realmonitor",
-             "fps": 30, "resolution": "1920x1080"},
-            {"id": "CAM-B-002", "name": "Camera B", "status": "online",
-             "rtsp_url": "rtsp://192.168.8.108:554/cam/realmonitor",
-             "fps": 30, "resolution": "1920x1080"},
+            {"id": "CAM-A-001", "name": "Camera A", "status": "online", "fps": 30, "resolution": "1920x1080"},
+            {"id": "CAM-B-002", "name": "Camera B", "status": "online", "fps": 30, "resolution": "1920x1080"},
         ])
         self.state.last_poll_ok = True
         self.state.is_test_mode = True
-        threading.Thread(target=self._cycle_alerts, daemon=True).start()
-        log.info("Test data provider started — no API calls")
+        threading.Thread(target=self._cycle, daemon=True).start()
+        log.info("Test data provider started (no API calls)")
 
-    def trigger_test_alert(self):
-        inc = dict(self._FAKE_INCIDENTS[self._alert_idx % len(self._FAKE_INCIDENTS)])
-        inc["timestamp"] = datetime.now().isoformat()
-        self.state.push_alert(inc, hold_secs=10.0)
-        self._alert_idx += 1
-        log.info("Manual test alert triggered")
+    def trigger_test_incident(self):
+        inc = dict(self._FAKE_INCIDENTS[self._idx % len(self._FAKE_INCIDENTS)])
+        self.state.push_incident_alert(inc, hold_secs=10.0)
+        self._idx += 1
+        log.info("Test incident triggered: %s", inc["incident_type"])
 
-    def _cycle_alerts(self):
-        time.sleep(10)
+    def trigger_test_vehicle(self):
+        self.state.push_vehicle_alert(hold_secs=8.0)
+        log.info("Test vehicle alert triggered")
+
+    def _cycle(self):
+        """Auto-cycle: vehicle alert every 15s, incident alert every 30s."""
+        count = 0
         while True:
-            inc = dict(self._FAKE_INCIDENTS[self._alert_idx % len(self._FAKE_INCIDENTS)])
-            inc["timestamp"] = datetime.now().isoformat()
-            self.state.push_alert(inc, hold_secs=8.0)
-            self._alert_idx += 1
-            time.sleep(20)
-
-
-# ── Screen renderers — all return a PIL Image ─────────────────────────────────
-
-def _safe_or_danger(snap: dict) -> tuple:
-    """Return (text, color) SAFE/DANGER based on active incidents."""
-    if snap["incidents_today"] > 0:
-        return "!! DANGER !!", RED
-    return "-- SAFE --", GREEN
-
-
-def render_main_status(state: SystemState) -> Image.Image:
-    img, draw = _new_frame()
-    snap = state.snapshot()
-    now  = datetime.now().strftime("%H:%M")
-
-    # Row 0: header + time
-    _draw_row(draw, 0, f"ROAD SENTINEL  {now}", WHITE)
-
-    # Row 1: SAFE (green) / DANGER (red)
-    status_text, status_col = _safe_or_danger(snap)
-    _fill_row(draw, 1, (0, 40, 0) if status_col == GREEN else (60, 0, 0))
-    _draw_row(draw, 1, status_text, status_col)
-
-    # Row 2: Camera A / B status — explicit GREEN online, RED offline
-    cams = snap["cameras"]
-    if cams:
-        cam_a = next((c for c in cams if "A" in c.get("name", "") or "001" in c.get("id", "")), None)
-        cam_b = next((c for c in cams if "B" in c.get("name", "") or "002" in c.get("id", "")), None)
-        a_on  = cam_a and cam_a.get("status") == "online"
-        b_on  = cam_b and cam_b.get("status") == "online"
-        draw.text((1,  ROWS[2]), "A:", font=FONT_SM, fill=GRAY)
-        draw.text((9,  ROWS[2]), "ON" if a_on else "OFF", font=FONT_SM, fill=GREEN if a_on else RED)
-        draw.text((33, ROWS[2]), "B:", font=FONT_SM, fill=GRAY)
-        draw.text((41, ROWS[2]), "ON" if b_on else "OFF", font=FONT_SM, fill=GREEN if b_on else RED)
-    else:
-        online = snap["cameras_online"]
-        col = GREEN if online == snap["cameras_total"] else RED
-        _draw_row(draw, 2, f"Cams: {online}/{snap['cameras_total']}", col)
-
-    # Row 3: Vehicle count + incidents
-    draw.text((1,  ROWS[3]), f"Veh: {snap['vehicles_today']:,}", font=FONT_SM, fill=CYAN)
-    draw.text((70, ROWS[3]), f"Inc: {snap['incidents_today']}", font=FONT_SM,
-              fill=RED if snap["incidents_today"] > 0 else GRAY)
-
-    # Row 4: Avg speed
-    speed_str = f"Avg: {snap['avg_speed']} km/h" if snap["avg_speed"] else "Avg speed: N/A"
-    _draw_row(draw, 4, speed_str, YELLOW)
-
-    # Row 5: IP + uptime
-    _draw_row(draw, 5, _trunc(f"{snap['local_ip']}  {state.uptime()}"), GRAY)
-    return img
-
-
-def render_camera_detail(state: SystemState) -> Image.Image:
-    img, draw = _new_frame()
-    snap = state.snapshot()
-    cams = snap["cameras"]
-
-    _draw_row(draw, 0, "CAMERA STATUS", WHITE)
-
-    if not cams:
-        _draw_row(draw, 1, "No camera data", GRAY)
-        return img
-
-    for i, cam in enumerate(cams[:2]):
-        base  = i * 2 + 1          # rows 1-2 for cam A, 3-4 for cam B
-        name  = cam.get("name", f"Cam {i+1}")
-        st    = cam.get("status", "unknown")
-        fps   = cam.get("fps")
-        res   = cam.get("resolution", "")
-        col   = GREEN if st == "online" else (ORANGE if st == "error" else RED)
-        _draw_row(draw, base,     f"{name}: {st.upper()}", col)
-        detail = f"  {fps}fps  {res}" if fps else f"  {res}"
-        _draw_row(draw, base + 1, _trunc(detail), GRAY)
-
-    _draw_row(draw, 5, _trunc(f"Inc: {snap['incidents_today']}  Up: {state.uptime()}"), GRAY)
-    return img
-
-
-def render_daily_stats(state: SystemState) -> Image.Image:
-    img, draw = _new_frame()
-    snap = state.snapshot()
-    speed_str = f"{snap['avg_speed']} km/h" if snap["avg_speed"] else "N/A"
-
-    _draw_row(draw, 0, "TODAY'S STATS", WHITE)
-    _draw_row(draw, 1, f"Vehicles:  {snap['vehicles_today']:,}", CYAN)
-    _draw_row(draw, 2, f"Avg speed: {speed_str}", YELLOW)
-    _draw_row(draw, 3, f"Incidents: {snap['incidents_today']}",
-              RED if snap["incidents_today"] > 0 else GREEN)
-    online = snap["cameras_online"]
-    cam_col = GREEN if online == snap["cameras_total"] else RED
-    _draw_row(draw, 4, f"Cameras:   {online}/{snap['cameras_total']} online", cam_col)
-    _draw_row(draw, 5, f"Uptime:    {state.uptime()}", GRAY)
-    return img
-
-
-def render_alert(state: SystemState, incident: dict, flash_phase: int = 0) -> Image.Image:
-    img, draw = _new_frame()
-
-    is_test  = incident.get("is_test", False)
-    inc_type = str(incident.get("incident_type", "ALERT")).upper()
-    severity = str(incident.get("severity", "high")).lower()
-    cam_name = str(incident.get("camera_name", "Camera ?"))
-    desc     = str(incident.get("description", ""))
-    ts_raw   = incident.get("timestamp", "")
-    try:
-        ts = datetime.fromisoformat(str(ts_raw).replace("Z", "")).strftime("%H:%M:%S")
-    except Exception:
-        ts = datetime.now().strftime("%H:%M:%S")
-
-    if is_test:
-        bg        = AMBER if flash_phase == 0 else (160, 100, 0)
-        fg        = BLACK
-        sev_label = "SIMULATED"
-        sev_col   = AMBER
-    else:
-        sev_color = SEVERITY_COLORS.get(severity, ORANGE)
-        bg        = sev_color if flash_phase == 0 else tuple(max(0, c - 70) for c in sev_color)
-        fg        = WHITE if severity in ("critical", "high") else BLACK
-        sev_label = severity.upper()
-        sev_col   = sev_color
-
-    # Row 0: type + camera (colored header bar)
-    _fill_row(draw, 0, bg)
-    prefix = "[TEST]" if is_test else "!!"
-    draw.text((1, ROWS[0]), _trunc(f"{prefix} {inc_type}"), font=FONT_SM, fill=fg)
-
-    # Row 1: severity label — explicit RED for critical, keep severity color otherwise
-    label_bg = (50, 0, 0) if severity == "critical" and not is_test else BLACK
-    _fill_row(draw, 1, label_bg)
-    _draw_row(draw, 1, sev_label, RED if (severity == "critical" and not is_test) else sev_col)
-
-    # Row 2: camera name
-    _draw_row(draw, 2, cam_name, WHITE)
-
-    # Row 3: description
-    _draw_row(draw, 3, _trunc(desc or "See dashboard"), GRAY)
-
-    # Row 4: timestamp
-    _draw_row(draw, 4, ts, GRAY)
-
-    # Row 5: DANGER explicit red label
-    _fill_row(draw, 5, (60, 0, 0) if not is_test else (80, 50, 0))
-    _draw_row(draw, 5, "!! DANGER !!" if not is_test else "-- TEST MODE --",
-              RED if not is_test else AMBER)
-    return img
-
-
-def render_offline(state: SystemState) -> Image.Image:
-    img, draw = _new_frame()
-    _draw_row(draw, 0, "ROAD SENTINEL", WHITE)
-    _fill_row(draw, 1, (60, 0, 0))
-    _draw_row(draw, 1, "!! OFFLINE !!", RED)
-    _draw_row(draw, 2, "API not reachable", GRAY)
-    _draw_row(draw, 3, "", GRAY)
-    _draw_row(draw, 4, _trunc(state.local_ip), GRAY)
-    _draw_row(draw, 5, f"Up: {state.uptime()}", GRAY)
-    return img
-
-
-def render_test_static(state: SystemState) -> Image.Image:
-    """Fixed test-mode status screen — no rotation, no sliding content."""
-    img, draw = _new_frame()
-    snap = state.snapshot()
-
-    # Row 0: header
-    _draw_row(draw, 0, "ROAD SENTINEL", WHITE)
-    draw.text((90, ROWS[0]), "[TEST]", font=FONT_SM, fill=AMBER)
-
-    # Row 1: SAFE indicator (green — no real incidents in test mode)
-    _fill_row(draw, 1, (0, 40, 0))
-    _draw_row(draw, 1, "-- SAFE -- (simulated)", GREEN)
-
-    # Row 2: Camera status — explicit green
-    cams = snap["cameras"]
-    if cams:
-        cam_a = next((c for c in cams if "A" in c.get("name", "")), cams[0] if cams else None)
-        cam_b = next((c for c in cams if "B" in c.get("name", "")), cams[1] if len(cams) > 1 else None)
-        a_on = cam_a and cam_a.get("status") == "online"
-        b_on = cam_b and cam_b.get("status") == "online"
-        draw.text((1,  ROWS[2]), "A:", font=FONT_SM, fill=GRAY)
-        draw.text((9,  ROWS[2]), "ON" if a_on else "OFF", font=FONT_SM, fill=GREEN if a_on else RED)
-        draw.text((33, ROWS[2]), "B:", font=FONT_SM, fill=GRAY)
-        draw.text((41, ROWS[2]), "ON" if b_on else "OFF", font=FONT_SM, fill=GREEN if b_on else RED)
-        draw.text((65, ROWS[2]), "SIMULATED", font=FONT_SM, fill=AMBER)
-    else:
-        _draw_row(draw, 2, "SIMULATED", AMBER)
-
-    # Row 3: vehicle count (static — no animation)
-    draw.text((1,  ROWS[3]), f"Veh: {snap['vehicles_today']:,}", font=FONT_SM, fill=CYAN)
-    speed_str = f"{snap['avg_speed']} km/h" if snap["avg_speed"] else "N/A"
-    draw.text((70, ROWS[3]), speed_str, font=FONT_SM, fill=YELLOW)
-
-    # Row 4: IP
-    _draw_row(draw, 4, snap["local_ip"], GRAY)
-
-    # Row 5: uptime
-    _draw_row(draw, 5, f"Up: {state.uptime()}", GRAY)
-    return img
-
-
-def render_color_bar_test(phase: int) -> Image.Image:
-    """Startup color-bar test — cycles through brightness levels."""
-    img, draw = _new_frame()
-    bars  = [RED, ORANGE, YELLOW, GREEN, CYAN, BLUE, WHITE]
-    bar_w = WIDTH // len(bars)
-    intensity = [255, 180, 80][min(phase // 2, 2)]
-    for i, color in enumerate(bars):
-        x0 = i * bar_w
-        x1 = x0 + bar_w - 1
-        scaled = tuple(int(c * intensity // 255) for c in color)
-        draw.rectangle([x0, 0, x1, HEIGHT - 1], fill=scaled)
-    return img
+            time.sleep(15)
+            count += 1
+            if count % 2 == 0:
+                self.trigger_test_incident()
+            else:
+                self.trigger_test_vehicle()
 
 
 # ── ledcat subprocess backend ─────────────────────────────────────────────────
-#
-# Instead of using the Python rgbmatrix bindings (which have a chain_length bug
-# that mirrors both panels), we pipe raw RGB24 frames to the hzeller `ledcat`
-# C binary via stdin.  The C library has no bug — the C demo already proved
-# chain=2 works correctly.
-#
-# Frame format ledcat expects: WIDTH × HEIGHT × 3 bytes, raw RGB24, no header.
-# For 128×32: 128 × 32 × 3 = 12,288 bytes per frame.
-
-FRAME_BYTES = WIDTH * HEIGHT * 3   # 12,288 for 128×32
-_BLACK_FRAME = bytes(FRAME_BYTES)  # pre-built all-black frame for clearing
+FRAME_BYTES  = WIDTH * HEIGHT * 3   # 12,288 for 128×32
+_BLACK_FRAME = bytes(FRAME_BYTES)
 
 
 def start_ledcat(
     ledcat_path: str,
-    gpio_slowdown: int    = 4,
-    hardware_mapping: str = "regular",
+    gpio_slowdown: int     = 4,
+    hardware_mapping: str  = "regular",
     no_hardware_pulse: bool = True,
-    cols_per_panel: int  = 64,
-    chain_length: int    = 0,
-    multiplexing: int    = 0,
-    scan_mode: int       = 0,
+    cols_per_panel: int    = 64,
+    chain_length: int      = 0,
+    multiplexing: int      = 0,
+    scan_mode: int         = 0,
 ) -> subprocess.Popen:
-    """Launch ledcat and return the subprocess handle.
-    ledcat reads raw RGB24 frames from stdin and drives the matrix via C library.
-    """
     chain = chain_length if chain_length > 0 else (WIDTH // cols_per_panel)
-
     cmd = [
         ledcat_path,
         f"--led-rows={HEIGHT}",
         f"--led-cols={cols_per_panel}",
         f"--led-chain={chain}",
-        f"--led-parallel=1",
+        "--led-parallel=1",
         f"--led-gpio-mapping={hardware_mapping}",
         f"--led-slowdown-gpio={gpio_slowdown}",
         "--led-no-drop-privs",
@@ -568,60 +413,46 @@ def start_ledcat(
 
     log.info("Starting ledcat: %s", " ".join(cmd))
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    log.info("ledcat PID=%d  frame_size=%d bytes (%dx%d RGB24)",
-             proc.pid, FRAME_BYTES, WIDTH, HEIGHT)
+    log.info("ledcat PID=%d  frame=%d bytes (%dx%d RGB24)", proc.pid, FRAME_BYTES, WIDTH, HEIGHT)
     return proc
 
 
 def show_frame(proc: subprocess.Popen, img: Image.Image) -> None:
-    """Write one PIL image to ledcat stdin as raw RGB24."""
-    raw = img.convert("RGB").tobytes()   # exactly FRAME_BYTES
+    raw = img.convert("RGB").tobytes()
     proc.stdin.write(raw)
     proc.stdin.flush()
 
 
 def clear_display(proc: subprocess.Popen) -> None:
-    """Write a black frame to turn off all LEDs."""
     proc.stdin.write(_BLACK_FRAME)
     proc.stdin.flush()
 
 
 # ── Main display loop ─────────────────────────────────────────────────────────
 
-NORMAL_SCREENS     = [render_main_status, render_camera_detail, render_daily_stats]
-SCREEN_ROTATE_SECS = 12     # slow rotation — enough time to read all 6 rows
-TICK               = 0.25   # 4 fps
+TICK = 0.25   # 4 fps — enough for smooth flashing
 
 
 def run(proc: subprocess.Popen, state: SystemState):
-    screen_idx  = 0
-    last_rotate = time.monotonic()
-    flash_tick  = 0
+    flash_tick = 0
+    log.info("Display loop started (%dx%d) via ledcat PID=%d", WIDTH, HEIGHT, proc.pid)
 
-    log.info("Display loop started (%d×%d) via ledcat PID=%d", WIDTH, HEIGHT, proc.pid)
-
-    # Startup color-bar test (3 seconds — confirms all RGB channels and both panels)
+    # Startup color-bar test (3s — confirms all RGB channels and both panels)
     for phase in range(6):
         show_frame(proc, render_color_bar_test(phase))
         time.sleep(0.5)
 
     while True:
-        now = time.monotonic()
         flash_tick = (flash_tick + 1) % 4
-        alert = state.pop_alert()
+        fp = flash_tick % 2   # 0 or 1, alternates at 2 fps
 
-        if state.is_test_mode:
-            img = render_alert(state, alert, flash_phase=flash_tick % 2) if alert \
-                  else render_test_static(state)
-        elif alert:
-            img = render_alert(state, alert, flash_phase=flash_tick % 2)
-        elif not state.last_poll_ok:
-            img = render_offline(state)
+        incident = state.pop_incident_alert()
+        if incident:
+            img = render_incident_ahead(state, flash_phase=fp)
+        elif state.has_vehicle_alert():
+            img = render_vehicle_incoming(state, flash_phase=fp)
         else:
-            if now - last_rotate >= SCREEN_ROTATE_SECS:
-                screen_idx  = (screen_idx + 1) % len(NORMAL_SCREENS)
-                last_rotate = now
-            img = NORMAL_SCREENS[screen_idx](state)
+            img = render_slow_down(state, flash_phase=fp)
 
         show_frame(proc, img)
         time.sleep(TICK)
@@ -631,51 +462,46 @@ def run(proc: subprocess.Popen, state: SystemState):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Road Sentinel HUB75 128×32 RGB LED Matrix — Raspberry Pi 4 Model B",
+        description="Road Sentinel HUB75 128×32 LED Matrix — Raspberry Pi 4",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Modes:
-  Real mode (default) — polls Node Service API
-    REAL alerts: severity-colored (red=crash, orange=high, yellow=medium, cyan=low)
-  Test mode (--test)  — fake data, no API, cycles TEST alerts (amber)
-    Static test screen — no sliding/rotating content
-
-How frames travel:
-  Python PIL → raw RGB24 bytes → ledcat stdin → hzeller C lib → HUB75 matrix
-  This bypasses the Python bindings chain_length bug that caused panel mirroring.
+Display states:
+  SLOW DOWN      (red)     — default, always shown while AI processes frames
+  VEHICLE INCOMING (orange) — shown for 8s when a new vehicle detection arrives
+  INCIDENT AHEAD  (magenta) — shown for 12s when an active incident is detected
 
 Examples:
-  sudo python3 display_manager.py                         # real mode
-  sudo python3 display_manager.py --test                  # test mode
-  sudo python3 display_manager.py --trigger-alert         # fire one test alert then go live
+  sudo python3 display_manager.py                          # real mode
+  sudo python3 display_manager.py --test                   # test mode (cycles alerts)
   sudo python3 display_manager.py --api http://192.168.8.50:3001
-  sudo python3 display_manager.py --slowdown 3            # if display is garbled (try 3–5)
-  sudo python3 display_manager.py --ledcat ~/rpi-rgb-led-matrix/examples-api-use/ledcat
+  sudo python3 display_manager.py --slowdown 3             # if display is garbled
         """,
     )
     parser.add_argument("--test",           action="store_true",
-                        help="Test mode: fake data, amber alerts, no API")
+                        help="Test mode: cycles fake alerts, no API calls")
     parser.add_argument("--api",            default="http://localhost:3001",
                         help="Node Service base URL (default: http://localhost:3001)")
     parser.add_argument("--slowdown",       type=int, default=4,
-                        help="GPIO slowdown for Pi 4 (default: 4, try 3-5 if garbled)")
+                        help="GPIO slowdown for Pi 4 (default: 4, try 3–5 if garbled)")
     parser.add_argument("--cols",           type=int, default=64,
                         help="Physical columns per panel (default: 64)")
     parser.add_argument("--chain",          type=int, default=0,
                         help="Number of chained panels (default: auto = 128 / cols)")
     parser.add_argument("--multiplexing",   type=int, default=0,
-                        help="Panel multiplexing type (default: 0=standard)")
+                        help="Panel multiplexing type (default: 0 = standard)")
     parser.add_argument("--scan-mode",      type=int, default=0, choices=[0, 1],
                         help="Row scan mode: 0=progressive (default), 1=interlaced")
     parser.add_argument("--mapping",        default="regular",
                         choices=["regular", "adafruit-hat", "adafruit-hat-pwm"],
-                        help="GPIO mapping (default: regular = ₱149 Chinese adapter board)")
+                        help="GPIO mapping (default: regular)")
     parser.add_argument("--hardware-pulse", action="store_true", default=False,
                         help="Enable hardware PWM pulse (only after disabling snd_bcm2835)")
     parser.add_argument("--ledcat",         default=None,
                         help=f"Path to ledcat binary (default: {LEDCAT_DEFAULT})")
-    parser.add_argument("--trigger-alert",  action="store_true",
-                        help="Fire one test alert immediately, then continue normally")
+    parser.add_argument("--trigger-incident", action="store_true",
+                        help="Fire one incident alert immediately, then continue")
+    parser.add_argument("--trigger-vehicle",  action="store_true",
+                        help="Fire one vehicle alert immediately, then continue")
 
     args = parser.parse_args()
 
@@ -690,26 +516,29 @@ Examples:
     log.info("  mode    : %s", "TEST" if args.test else "REAL")
 
     proc = start_ledcat(
-        ledcat_path      = ledcat_path,
-        gpio_slowdown    = args.slowdown,
-        hardware_mapping = args.mapping,
-        no_hardware_pulse= not args.hardware_pulse,
-        cols_per_panel   = args.cols,
-        chain_length     = args.chain,
-        multiplexing     = args.multiplexing,
-        scan_mode        = args.scan_mode,
+        ledcat_path       = ledcat_path,
+        gpio_slowdown     = args.slowdown,
+        hardware_mapping  = args.mapping,
+        no_hardware_pulse = not args.hardware_pulse,
+        cols_per_panel    = args.cols,
+        chain_length      = args.chain,
+        multiplexing      = args.multiplexing,
+        scan_mode         = args.scan_mode,
     )
 
-    state = SystemState()
+    state    = SystemState()
     provider: DataProvider = (
         TestDataProvider(state) if args.test
         else ApiDataProvider(state, base_url=args.api)
     )
     provider.start()
 
-    if args.trigger_alert:
-        time.sleep(1)
-        provider.trigger_test_alert()
+    if args.trigger_incident:
+        time.sleep(0.5)
+        provider.trigger_test_incident()
+    if args.trigger_vehicle:
+        time.sleep(0.5)
+        provider.trigger_test_vehicle()
 
     try:
         run(proc, state)

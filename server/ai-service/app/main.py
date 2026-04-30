@@ -91,31 +91,55 @@ async def health_check():
 async def detect_all(
     image: UploadFile = File(...),
     camera_id: str = Form(...),
-    confidence_threshold: Optional[float] = Form(None)
+    confidence_threshold: Optional[float] = Form(None),
+    pixels_per_meter: float = Form(0.0),
+    speed_limit: float = Form(0.0),
 ):
     """
-    Detect both traffic and incidents in an image
+    Detect both traffic and incidents in an image.
+    When pixels_per_meter > 0, per-camera IoU tracking is used to estimate speed.
+    When speed_limit > 0, speeding incidents are generated automatically.
     """
     try:
         start_time = time.time()
 
-        # Read image
         image_bytes = await image.read()
 
-        # Get detectors
-        traffic_det = get_traffic_detector()
+        traffic_det  = get_traffic_detector()
         incident_det = get_incident_detector()
 
-        # Override confidence if provided
         conf = confidence_threshold if confidence_threshold else float(os.getenv('CONFIDENCE_THRESHOLD', '0.75'))
 
-        # Run detections
-        traffic_results = traffic_det.detect(image_bytes, conf)
+        # Traffic detections — with optional speed estimation
+        traffic_results = traffic_det.detect(
+            image_bytes, conf,
+            camera_id=camera_id,
+            pixels_per_meter=pixels_per_meter,
+        )
+
+        # Incident detections from incident model
         incident_results = incident_det.detect(image_bytes, conf)
 
-        processing_time = (time.time() - start_time) * 1000  # Convert to ms
+        # Auto-generate speeding incidents from speed estimates
+        if speed_limit > 0:
+            for det in traffic_results:
+                spd = det.get("speed")
+                if spd and spd > speed_limit:
+                    over  = spd - speed_limit
+                    sev   = "critical" if over > 30 else ("high" if over > 15 else "medium")
+                    cls   = det.get("class", "Vehicle").capitalize()
+                    incident_results.append({
+                        "type":        "speeding",
+                        "severity":    sev,
+                        "confidence":  det.get("confidence", 0.8),
+                        "description": f"{cls} at {spd:.0f} km/h (limit {speed_limit:.0f} km/h)",
+                        "speed":       spd,
+                    })
 
-        logger.info(f"Detection completed for {camera_id} in {processing_time:.2f}ms")
+        processing_time = (time.time() - start_time) * 1000
+
+        logger.info(f"Detection for {camera_id} in {processing_time:.2f}ms — "
+                    f"{len(traffic_results)} vehicles, {len(incident_results)} incidents")
 
         return JSONResponse({
             "success": True,

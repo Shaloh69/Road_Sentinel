@@ -67,6 +67,7 @@ CYAN      = (0,   200, 200)
 GRAY      = (90,  90,  90 )
 AMBER     = (255, 160, 0  )
 DARK_GREEN= (0,   80,  0  )
+MAGENTA   = (200, 0,   180)
 
 SEVERITY_COLORS = {
     "critical": RED,
@@ -79,6 +80,7 @@ SEVERITY_COLORS = {
 ROW_H      = 5
 ROWS       = [0, 5, 10, 15, 20, 25]
 FONT_SM    = ImageFont.load_default(size=4)
+FONT_XS6   = ImageFont.load_default(size=6)
 FONT_MED   = ImageFont.load_default(size=10)
 FONT_LARGE = ImageFont.load_default(size=16)
 
@@ -359,43 +361,53 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
 
 class SystemState:
     def __init__(self):
-        self._lock              = threading.Lock()
-        self.vehicles_today     = 0
-        self.avg_speed          = None
-        self.incidents_today    = 0
-        self.cameras_online     = 0
-        self.cameras_total      = 2
-        self.cameras            = []
-        self._alert             = None
-        self._alert_expires     = 0.0
-        self.local_ip           = _get_local_ip()
-        self.start_time         = datetime.now()
-        self.last_poll_ok       = False
-        self.is_test_mode       = False
+        self._lock               = threading.Lock()
+        self.vehicles_today      = 0
+        self.avg_speed           = None
+        self.incidents_today     = 0
+        self.cameras_online      = 0
+        self.cameras_total       = 2
+        self.cameras             = []
+        self.local_ip            = _get_local_ip()
+        self.start_time          = datetime.now()
+        self.last_poll_ok        = False
+        self.is_test_mode        = False
+        # Two separate alert tracks
+        self._vehicle_alert_exp  = 0.0          # expires after 8s
+        self._incident           = None          # latest incident dict
+        self._incident_exp       = 0.0           # expires after 12s
 
     def update_summary(self, data: dict):
         with self._lock:
-            self.vehicles_today  = data.get("vehicles_today", 0)
-            self.avg_speed       = data.get("average_speed")
-            self.incidents_today = data.get("incidents_today", 0)
-            self.cameras_online  = data.get("cameras_online", 0)
-            self.cameras_total   = data.get("cameras_total", 2)
+            self.vehicles_today  = data.get("vehicles_today",  self.vehicles_today)
+            self.avg_speed       = data.get("average_speed",   self.avg_speed)
+            self.incidents_today = data.get("incidents_today", self.incidents_today)
+            self.cameras_online  = data.get("cameras_online",  self.cameras_online)
+            self.cameras_total   = data.get("cameras_total",   self.cameras_total)
             self.last_poll_ok    = True
 
     def update_cameras(self, cameras: list):
         with self._lock:
             self.cameras = cameras
 
-    def push_alert(self, incident: dict, hold_secs: float = 12.0):
+    def push_vehicle_alert(self, hold_secs: float = 8.0):
         with self._lock:
-            self._alert         = incident
-            self._alert_expires = time.monotonic() + hold_secs
+            self._vehicle_alert_exp = time.monotonic() + hold_secs
 
-    def pop_alert(self) -> Optional[dict]:
+    def has_vehicle_alert(self) -> bool:
         with self._lock:
-            if self._alert and time.monotonic() < self._alert_expires:
-                return self._alert
-            self._alert = None
+            return time.monotonic() < self._vehicle_alert_exp
+
+    def push_incident_alert(self, incident: dict, hold_secs: float = 12.0):
+        with self._lock:
+            self._incident    = incident
+            self._incident_exp = time.monotonic() + hold_secs
+
+    def pop_incident_alert(self) -> Optional[dict]:
+        with self._lock:
+            if self._incident and time.monotonic() < self._incident_exp:
+                return self._incident
+            self._incident = None
             return None
 
     def uptime(self) -> str:
@@ -443,59 +455,83 @@ class DataProvider(ABC):
 
 
 class ApiDataProvider(DataProvider):
-    POLL_INTERVAL = 10
+    POLL_INTERVAL          = 30   # summary + cameras
+    INCIDENT_POLL_INTERVAL = 2    # incidents — drives LED reaction time
 
     def __init__(self, state: SystemState, base_url: str):
         super().__init__(state)
-        self._base = base_url.rstrip("/")
+        self._base             = base_url.rstrip("/")
         self._last_incident_id = None
+        self._first_poll       = True
 
     def start(self):
-        threading.Thread(target=self._poll_loop, daemon=True).start()
+        threading.Thread(target=self._summary_loop,  daemon=True, name="led-summary").start()
+        threading.Thread(target=self._incident_loop, daemon=True, name="led-incidents").start()
         log.info("API provider started — %s", self._base)
 
-    def _poll_loop(self):
+    def trigger_test_incident(self):
+        pass  # no-op for live provider
+
+    def trigger_test_vehicle(self):
+        pass
+
+    def _summary_loop(self):
         while True:
             try:
-                self._poll()
+                self._poll_summary()
             except Exception as exc:
-                log.warning("Poll error: %s", exc)
+                log.warning("Summary poll error: %s", exc)
                 self.state.last_poll_ok = False
             time.sleep(self.POLL_INTERVAL)
 
-    def _poll(self):
+    def _incident_loop(self):
+        while True:
+            try:
+                self._poll_incidents()
+            except Exception as exc:
+                log.debug("Incident poll error: %s", exc)
+            time.sleep(self.INCIDENT_POLL_INTERVAL)
+
+    def _poll_summary(self):
         if not _REQUESTS_OK:
             raise RuntimeError("requests not installed")
         r = _requests.get(f"{self._base}/api/analytics/summary", timeout=5)
         r.raise_for_status()
-        self.state.update_summary(r.json())
+        data     = r.json().get("data", {})
+        prev_veh = self.state.vehicles_today
+        self.state.update_summary(data)
+        # Trigger vehicle alert when new vehicles arrive (skip first poll)
+        if not self._first_poll and data.get("vehicles_today", 0) > prev_veh:
+            self.state.push_vehicle_alert(hold_secs=8.0)
+        self._first_poll = False
         r = _requests.get(f"{self._base}/api/cameras", timeout=5)
         r.raise_for_status()
-        self.state.update_cameras(r.json())
+        self.state.update_cameras(r.json().get("data", []))
+
+    def _poll_incidents(self):
+        if not _REQUESTS_OK:
+            return
         r = _requests.get(f"{self._base}/api/incidents",
-                          params={"status": "active", "limit": 1}, timeout=5)
+                          params={"status": "active", "limit": 1}, timeout=3)
         r.raise_for_status()
-        items = r.json()
+        items = r.json().get("data", [])
         if items:
-            inc = items[0]
+            inc    = items[0]
             inc_id = inc.get("id")
             if inc_id != self._last_incident_id:
                 self._last_incident_id = inc_id
-                inc["is_test"] = False
-                self.state.push_alert(inc, hold_secs=12.0)
+                self.state.push_incident_alert(inc, hold_secs=12.0)
+                log.warning("INCIDENT: %s (%s)", inc.get("incident_type"), inc.get("severity"))
 
 
 class TestDataProvider(DataProvider):
     _FAKE_INCIDENTS = [
-        {"is_test": True, "incident_type": "speeding",   "severity": "high",
-         "title": "Test Speeding",   "description": "85 km/h on Camera A",
-         "camera_name": "Camera A",  "timestamp": ""},
-        {"is_test": True, "incident_type": "crash",      "severity": "critical",
-         "title": "Test Crash",      "description": "Simulated collision",
-         "camera_name": "Camera B",  "timestamp": ""},
-        {"is_test": True, "incident_type": "congestion", "severity": "low",
-         "title": "Test Congestion", "description": "Slow traffic detected",
-         "camera_name": "Camera A",  "timestamp": ""},
+        {"incident_type": "speeding",   "severity": "high",
+         "title": "Test Speeding",   "camera_name": "Camera A"},
+        {"incident_type": "crash",      "severity": "critical",
+         "title": "Test Crash",      "camera_name": "Camera B"},
+        {"incident_type": "congestion", "severity": "medium",
+         "title": "Test Congestion", "camera_name": "Camera A"},
     ]
 
     def __init__(self, state: SystemState):
@@ -503,8 +539,8 @@ class TestDataProvider(DataProvider):
         self._idx = 0
 
     def start(self):
-        self.state.update_summary({"vehicles_today": 999, "average_speed": 45,
-                                   "incidents_today": 3,  "cameras_online": 2,
+        self.state.update_summary({"vehicles_today": 0, "average_speed": None,
+                                   "incidents_today": 0, "cameras_online": 2,
                                    "cameras_total":   2})
         self.state.update_cameras([
             {"id": "CAM-A-001", "name": "Camera A", "status": "online",
@@ -514,22 +550,33 @@ class TestDataProvider(DataProvider):
         ])
         self.state.last_poll_ok = True
         self.state.is_test_mode = True
-        threading.Thread(target=self._cycle_alerts, daemon=True).start()
+        threading.Thread(target=self._cycle, daemon=True).start()
+        log.info("Test data provider started — no API calls")
 
-    def trigger_test_alert(self):
+    def trigger_test_incident(self):
         inc = dict(self._FAKE_INCIDENTS[self._idx % len(self._FAKE_INCIDENTS)])
-        inc["timestamp"] = datetime.now().isoformat()
-        self.state.push_alert(inc, hold_secs=10.0)
+        self.state.push_incident_alert(inc, hold_secs=10.0)
         self._idx += 1
+        log.info("Test incident triggered")
 
-    def _cycle_alerts(self):
-        time.sleep(10)
+    def trigger_test_vehicle(self):
+        self.state.push_vehicle_alert(hold_secs=8.0)
+        log.info("Test vehicle alert triggered")
+
+    # Keep legacy name so --trigger-alert still works
+    def trigger_test_alert(self):
+        self.trigger_test_incident()
+
+    def _cycle(self):
+        """Auto-cycle: vehicle every 15s, incident every 30s."""
+        count = 0
         while True:
-            inc = dict(self._FAKE_INCIDENTS[self._idx % len(self._FAKE_INCIDENTS)])
-            inc["timestamp"] = datetime.now().isoformat()
-            self.state.push_alert(inc, hold_secs=8.0)
-            self._idx += 1
-            time.sleep(20)
+            time.sleep(15)
+            count += 1
+            if count % 2 == 0:
+                self.trigger_test_incident()
+            else:
+                self.trigger_test_vehicle()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -713,9 +760,12 @@ def render_vehicle_incoming(state: SystemState, flash_phase: int = 0) -> Image.I
     img, draw = _new_frame()
     bg = ORANGE if flash_phase == 0 else (150, 65, 0)
     _fill_row_px(draw, 0, HEIGHT - 1, bg)
-    _draw_two_lines_centered(draw, 0, HEIGHT - 1,
+    # VEHICLE / INCOMING fills upper portion; bottom 7px reserved for instruction
+    _draw_two_lines_centered(draw, 0, HEIGHT - 8,
                              "VEHICLE", FONT_LARGE,
                              "INCOMING", FONT_MED, WHITE)
+    _draw_centered_in(draw, 0, HEIGHT - 7, WIDTH - 1, HEIGHT - 1,
+                      "SLOW DOWN", FONT_XS6, YELLOW)
     return img
 
 
@@ -728,19 +778,29 @@ def render_slow_down(state: SystemState, flash_phase: int = 0) -> Image.Image:
     return img
 
 
+def render_incident_ahead(state: SystemState, flash_phase: int = 0) -> Image.Image:
+    """Incident confirmed — magenta flashing, 'INCIDENT / AHEAD'."""
+    img, draw = _new_frame()
+    bg = MAGENTA if flash_phase == 0 else (120, 0, 110)
+    _fill_row_px(draw, 0, HEIGHT - 1, bg)
+    _draw_two_lines_centered(draw, 0, HEIGHT - 8,
+                             "INCIDENT", FONT_LARGE,
+                             "AHEAD",    FONT_MED,
+                             WHITE)
+    _draw_centered_in(draw, 0, HEIGHT - 7, WIDTH - 1, HEIGHT - 1,
+                      "SLOW DOWN", FONT_XS6, YELLOW)
+    return img
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN LOOP
 # ══════════════════════════════════════════════════════════════════════════════
 
-TICK             = 0.25   # 4 fps
-TEST_STATE_SECS  = 5      # seconds each test state is shown
-_TEST_STATES     = ["vacant", "incoming", "slow_down"]
+TICK = 0.25   # 4 fps — smooth flashing at 2 fps
 
 
 def run(backend: DisplayBackend, state: SystemState):
-    flash_tick       = 0
-    test_state_start = time.monotonic()
-
+    flash_tick = 0
     log.info("Display loop started")
 
     # Startup color-bar sequence (3 s) — confirms all RGB channels and both panels
@@ -749,31 +809,17 @@ def run(backend: DisplayBackend, state: SystemState):
         time.sleep(0.5)
 
     while True:
-        now        = time.monotonic()
         flash_tick = (flash_tick + 1) % 4
-        fp         = flash_tick % 2  # flash phase: 0 or 1
+        fp         = flash_tick % 2  # 0 or 1, alternates at 2 fps
 
-        if state.is_test_mode:
-            state_idx  = int((now - test_state_start) / TEST_STATE_SECS) % len(_TEST_STATES)
-            test_state = _TEST_STATES[state_idx]
-            if test_state == "vacant":
-                img = render_vacant_road(state)
-            elif test_state == "incoming":
-                img = render_vehicle_incoming(state, flash_phase=fp)
-            else:
-                img = render_slow_down(state, flash_phase=fp)
+        # Priority: INCIDENT AHEAD > VEHICLE INCOMING > SLOW DOWN (default)
+        incident = state.pop_incident_alert()
+        if incident:
+            img = render_incident_ahead(state, flash_phase=fp)
+        elif state.has_vehicle_alert():
+            img = render_vehicle_incoming(state, flash_phase=fp)
         else:
-            alert = state.pop_alert()
-            if alert:
-                severity = str(alert.get("severity", "high")).lower()
-                if severity in ("critical", "high"):
-                    img = render_slow_down(state, flash_phase=fp)
-                else:
-                    img = render_vehicle_incoming(state, flash_phase=fp)
-            elif not state.last_poll_ok:
-                img = render_offline(state)
-            else:
-                img = render_vacant_road(state)
+            img = render_slow_down(state, flash_phase=fp)
 
         backend.show(img)
         time.sleep(TICK)
@@ -805,8 +851,12 @@ Examples:
                         help="Test mode: fake data, no API")
     parser.add_argument("--api",            default="http://localhost:3001",
                         help="Node Service URL (default: http://localhost:3001)")
-    parser.add_argument("--trigger-alert",  action="store_true",
-                        help="Fire one test alert immediately")
+    parser.add_argument("--trigger-alert",    action="store_true",
+                        help="Fire one test incident alert immediately (alias for --trigger-incident)")
+    parser.add_argument("--trigger-incident", action="store_true",
+                        help="Fire one test INCIDENT AHEAD alert immediately")
+    parser.add_argument("--trigger-vehicle",  action="store_true",
+                        help="Fire one test VEHICLE INCOMING alert immediately")
     parser.add_argument("--pi",             choices=["4", "5"], default=None,
                         help="Force Pi model (default: auto-detect)")
     parser.add_argument("--emulator",       action="store_true",
@@ -857,9 +907,12 @@ Examples:
     provider = TestDataProvider(state) if args.test else ApiDataProvider(state, args.api)
     provider.start()
 
-    if args.trigger_alert:
-        time.sleep(1)
-        provider.trigger_test_alert()
+    if args.trigger_alert or args.trigger_incident:
+        time.sleep(0.5)
+        provider.trigger_test_incident()
+    if args.trigger_vehicle:
+        time.sleep(0.5)
+        provider.trigger_test_vehicle()
 
     try:
         run(backend, state)

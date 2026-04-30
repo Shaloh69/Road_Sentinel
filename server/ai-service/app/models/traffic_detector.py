@@ -1,7 +1,9 @@
 from ultralytics import YOLO
 import cv2
+import math
+import time
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,18 +23,17 @@ class TrafficDetector:
         1: 'bicycle'
     }
 
-    def __init__(self, model_path: str, device: str = 'cuda', confidence: float = 0.75):
-        """
-        Initialize traffic detector
+    # Per-camera IoU tracker: {camera_id: {track_id: {bbox, time, class}}}
+    # Tracks are pruned after TRACK_TTL seconds without a match.
+    TRACK_TTL  = 2.0    # seconds before a track is dropped
+    IOU_THRESH = 0.25   # minimum IoU to count as the same vehicle
 
-        Args:
-            model_path: Path to YOLOv8 model weights
-            device: Device to run inference on ('cuda', 'cpu', 'mps')
-            confidence: Default confidence threshold
-        """
+    def __init__(self, model_path: str, device: str = 'cuda', confidence: float = 0.75):
         self.device = device
         self.confidence = confidence
         self.is_custom_model = False
+        self._trackers: Dict[str, Dict[str, dict]] = {}  # per-camera tracking state
+        self._next_id: Dict[str, int] = {}
 
         try:
             # Load YOLOv8 model
@@ -57,16 +58,74 @@ class TrafficDetector:
             self.model.to(device)
             self.is_custom_model = False
 
-    def detect(self, image_bytes: bytes, confidence: float = None) -> List[Dict[str, Any]]:
+    # ── IoU tracker helpers ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _iou(a: dict, b: dict) -> float:
+        ax1, ay1 = a['x'], a['y']
+        ax2, ay2 = ax1 + a['width'], ay1 + a['height']
+        bx1, by1 = b['x'], b['y']
+        bx2, by2 = bx1 + b['width'], by1 + b['height']
+        ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+        if ix2 <= ix1 or iy2 <= iy1:
+            return 0.0
+        inter = (ix2 - ix1) * (iy2 - iy1)
+        union = a['width'] * a['height'] + b['width'] * b['height'] - inter
+        return inter / union if union > 0 else 0.0
+
+    @staticmethod
+    def _center_speed(prev_bbox: dict, curr_bbox: dict,
+                      dt: float, ppm: float) -> Optional[float]:
+        if dt <= 0 or ppm <= 0:
+            return None
+        pcx = prev_bbox['x'] + prev_bbox['width']  / 2
+        pcy = prev_bbox['y'] + prev_bbox['height'] / 2
+        ccx = curr_bbox['x'] + curr_bbox['width']  / 2
+        ccy = curr_bbox['y'] + curr_bbox['height'] / 2
+        px_dist = math.sqrt((ccx - pcx) ** 2 + (ccy - pcy) ** 2)
+        return round((px_dist / ppm / dt) * 3.6, 1)  # km/h
+
+    def _update_tracks(self, camera_id: str, detections: list, ppm: float) -> None:
+        """Match detections to existing tracks via IoU; attach speed; prune stale tracks."""
+        now    = time.time()
+        tracks = self._trackers.setdefault(camera_id, {})
+
+        # Prune tracks older than TTL
+        stale = [tid for tid, t in tracks.items() if now - t['time'] > self.TRACK_TTL]
+        for tid in stale:
+            del tracks[tid]
+
+        matched: set[str] = set()
+        for det in detections:
+            best_id, best_iou = None, self.IOU_THRESH
+            for tid, track in tracks.items():
+                if tid in matched:
+                    continue
+                iou = self._iou(det['bbox'], track['bbox'])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_id  = tid
+
+            if best_id:
+                track = tracks[best_id]
+                dt    = now - track['time']
+                spd   = self._center_speed(track['bbox'], det['bbox'], dt, ppm)
+                if spd is not None:
+                    det['speed'] = spd
+                track['bbox'] = det['bbox']
+                track['time'] = now
+                matched.add(best_id)
+            else:
+                new_id = str(self._next_id.get(camera_id, 0))
+                self._next_id[camera_id] = int(new_id) + 1
+                tracks[new_id] = {'bbox': det['bbox'], 'time': now, 'class': det['class']}
+
+    def detect(self, image_bytes: bytes, confidence: float = None,
+               camera_id: str = "default", pixels_per_meter: float = 0.0) -> List[Dict[str, Any]]:
         """
-        Detect vehicles in image
-
-        Args:
-            image_bytes: Image as bytes
-            confidence: Confidence threshold (uses default if None)
-
-        Returns:
-            List of detection dictionaries
+        Detect vehicles in image. When pixels_per_meter > 0, speed is estimated
+        via per-camera IoU tracking and attached to each detection as 'speed' (km/h).
         """
         try:
             # Use provided confidence or default
@@ -136,6 +195,11 @@ class TrafficDetector:
                     detections.append(detection)
 
             logger.debug(f"Detected {len(detections)} vehicles")
+
+            # Speed estimation via per-camera IoU tracker
+            if pixels_per_meter > 0 and detections:
+                self._update_tracks(camera_id, detections, pixels_per_meter)
+
             return detections
 
         except Exception as e:

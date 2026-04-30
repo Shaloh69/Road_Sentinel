@@ -27,6 +27,7 @@ set -euo pipefail
 # ── Arguments / defaults ──────────────────────────────────────────────────────
 AI_SERVER_IP="${1:-192.168.8.50}"
 AI_URL="http://${AI_SERVER_IP}:8000"
+NODE_URL="http://${AI_SERVER_IP}:3001"
 CAM_A_RTSP="${2:-rtsp://192.168.8.104:554/cam/realmonitor}"
 CAM_B_RTSP="${3:-rtsp://192.168.8.108:554/cam/realmonitor}"
 TARGET_FPS="${4:-30}"
@@ -128,8 +129,9 @@ WorkingDirectory=${SCRIPTS_DIR}
 ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/camera_sender.py \\
     --camera-id ${CAM_ID} \\
     --rtsp ${RTSP_URL} \\
-    --ai ${AI_URL} \\
-    --fps ${TARGET_FPS}
+    --ai   ${AI_URL} \\
+    --node ${NODE_URL} \\
+    --fps  ${TARGET_FPS}
 Restart=always
 RestartSec=5
 StandardOutput=append:${LOG_DIR}/camera_${CAM_ID}.log
