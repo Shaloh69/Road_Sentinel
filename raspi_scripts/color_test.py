@@ -44,7 +44,7 @@ def main():
     )
     fb = np.zeros((H, W, 3), dtype=np.uint8)
     matrix = piomatter.PioMatter(
-        colorspace=piomatter.Colorspace.BGR888Packed,
+        colorspace=piomatter.Colorspace.RGB888Packed,
         pinout=piomatter.Pinout.Active3,
         framebuffer=fb,
         geometry=geo,

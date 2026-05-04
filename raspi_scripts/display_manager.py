@@ -277,7 +277,7 @@ class PioMatterBackend(DisplayBackend):
         self._canvas  = Image.new("RGB", (WIDTH, HEIGHT), BLACK)
         self._fb      = np.asarray(self._canvas).copy()
         self._matrix  = piomatter.PioMatter(
-            colorspace=piomatter.Colorspace.BGR888Packed,
+            colorspace=piomatter.Colorspace.RGB888Packed,
             pinout=pinout,
             framebuffer=self._fb,
             geometry=geometry,
