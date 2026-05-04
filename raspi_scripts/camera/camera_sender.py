@@ -45,7 +45,7 @@ AI_TIMEOUT               = 4.0
 NODE_TIMEOUT             = 5.0
 DETECTION_WRITE_INTERVAL = 1.0   # write at most 1 detection per second to Node
 INCIDENT_DEDUP_WINDOW    = 30.0  # suppress repeat incident type within this window (s)
-FRAME_PUSH_INTERVAL      = 0.1   # push MJPEG frame to Node at most 10/second (smooth web feed)
+FRAME_PUSH_INTERVAL      = 1.0 / 30  # push MJPEG frame to Node at up to 30 FPS
 
 # Auto-discovery
 DISCOVERY_AFTER_FAILURES = 3     # consecutive open failures before triggering discovery
@@ -181,12 +181,19 @@ class NodeForwarder:
                 self._inc_last[inc_type] = now
                 await self._post_incident(inc)
 
-    async def push_frame(self, jpeg_bytes: bytes) -> None:
-        """Push latest JPEG to Node so it can serve the MJPEG web stream."""
+    def try_push_frame(self, jpeg_bytes: bytes) -> None:
+        """
+        Schedule a frame push only if the throttle interval has elapsed.
+        Avoids creating throw-away coroutines on every camera frame.
+        """
         now = time.monotonic()
         if now - self._last_frame < FRAME_PUSH_INTERVAL:
             return
         self._last_frame = now
+        asyncio.create_task(self._push_raw(jpeg_bytes))
+
+    async def _push_raw(self, jpeg_bytes: bytes) -> None:
+        """HTTP PUT to Node — fire-and-forget, best-effort."""
         try:
             async with self._session.put(
                 f"{self._base}/api/cameras/{self._camera_id}/frame",
@@ -196,7 +203,7 @@ class NodeForwarder:
             ) as resp:
                 pass  # 204 No Content expected
         except Exception:
-            pass  # best-effort — don't spam logs
+            pass
 
     async def _post_detection(self, det: dict) -> None:
         bbox = det.get("bbox", {})
@@ -485,8 +492,8 @@ async def run(
     loop.add_signal_handler(signal.SIGTERM, _handle_signal)
     loop.add_signal_handler(signal.SIGINT,  _handle_signal)
 
-    ai_connector   = aiohttp.TCPConnector(limit=2, keepalive_timeout=30)
-    node_connector = aiohttp.TCPConnector(limit=4, keepalive_timeout=30)
+    ai_connector   = aiohttp.TCPConnector(limit=2,  keepalive_timeout=30)
+    node_connector = aiohttp.TCPConnector(limit=10, keepalive_timeout=30)
 
     async with aiohttp.ClientSession(connector=ai_connector) as ai_session:
         async with aiohttp.ClientSession(connector=node_connector) as node_session:
@@ -589,9 +596,9 @@ async def run(
                             stats.record_drop()
                             continue
 
-                        # Push MJPEG frame to Node at up to 10 FPS (smooth web feed)
+                        # Push MJPEG frame to Node at up to 30 FPS
                         if forwarder:
-                            asyncio.create_task(forwarder.push_frame(jpeg))
+                            forwarder.try_push_frame(jpeg)
 
                         # Send to AI only if previous request finished
                         if not ai_busy:
