@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-NODE_URL="${1:-http://192.168.8.50:3001}"
+NODE_URL="${1:-https://road-sentinel-api.onrender.com}"
 CAM_A_RTSP="${2:-rtsp://192.168.8.104:554/cam/realmonitor?channel=1&subtype=1}"
 AI_URL="${3:-http://192.168.8.50:8000}"
 CAMERA_ID="CAM-A-001"
