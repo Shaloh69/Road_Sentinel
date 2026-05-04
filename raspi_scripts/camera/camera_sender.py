@@ -608,6 +608,8 @@ async def run(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main():
+    global TARGET_FPS, FRAME_INTERVAL, JPEG_QUALITY
+
     parser = argparse.ArgumentParser(
         description="Road Sentinel camera frame sender — Pi 4 & Pi 5",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -656,7 +658,6 @@ scan to locate the camera's new DHCP IP, then switches the RTSP URL silently.
                         help="Min incident confidence to forward (default: 0.6, overridden by DB)")
     args = parser.parse_args()
 
-    global TARGET_FPS, FRAME_INTERVAL, JPEG_QUALITY
     TARGET_FPS     = args.fps
     FRAME_INTERVAL = 1.0 / TARGET_FPS
     JPEG_QUALITY   = args.quality
