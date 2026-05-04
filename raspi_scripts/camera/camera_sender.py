@@ -181,19 +181,8 @@ class NodeForwarder:
                 self._inc_last[inc_type] = now
                 await self._post_incident(inc)
 
-    def try_push_frame(self, jpeg_bytes: bytes) -> None:
-        """
-        Schedule a frame push only if the throttle interval has elapsed.
-        Avoids creating throw-away coroutines on every camera frame.
-        """
-        now = time.monotonic()
-        if now - self._last_frame < FRAME_PUSH_INTERVAL:
-            return
-        self._last_frame = now
-        asyncio.create_task(self._push_raw(jpeg_bytes))
-
     async def _push_raw(self, jpeg_bytes: bytes) -> None:
-        """HTTP PUT to Node — fire-and-forget, best-effort."""
+        """HTTP PUT to Node — called only by the sequential frame_push_loop."""
         try:
             async with self._session.put(
                 f"{self._base}/api/cameras/{self._camera_id}/frame",
@@ -514,6 +503,24 @@ async def run(
             else:
                 log.warning("[%s] --node not set — detections NOT saved to DB", camera_id)
 
+            # Sequential frame push loop — one PUT at a time so frames always
+            # arrive at Node in the order they were captured (no revert glitch).
+            frame_q: asyncio.Queue = asyncio.Queue(maxsize=1)
+            last_frame_push = 0.0
+
+            async def frame_push_loop():
+                while not shutdown.is_set():
+                    try:
+                        jpeg = await asyncio.wait_for(frame_q.get(), timeout=1.0)
+                        if forwarder:
+                            await forwarder._push_raw(jpeg)
+                    except asyncio.TimeoutError:
+                        continue
+                    except Exception as exc:
+                        log.debug("[%s] Frame push error: %s", camera_id, exc)
+
+            asyncio.create_task(frame_push_loop())
+
             consecutive_failures = 0
 
             while not shutdown.is_set():
@@ -596,9 +603,20 @@ async def run(
                             stats.record_drop()
                             continue
 
-                        # Push MJPEG frame to Node at up to 30 FPS
+                        # Enqueue latest frame for sequential push (drops stale if busy)
                         if forwarder:
-                            forwarder.try_push_frame(jpeg)
+                            _now = time.monotonic()
+                            if _now - last_frame_push >= FRAME_PUSH_INTERVAL:
+                                last_frame_push = _now
+                                if frame_q.full():
+                                    try:
+                                        frame_q.get_nowait()
+                                    except asyncio.QueueEmpty:
+                                        pass
+                                try:
+                                    frame_q.put_nowait(jpeg)
+                                except asyncio.QueueFull:
+                                    pass
 
                         # Send to AI only if previous request finished
                         if not ai_busy:
