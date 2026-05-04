@@ -79,10 +79,18 @@ SEVERITY_COLORS = {
 # ── Font & layout ─────────────────────────────────────────────────────────────
 ROW_H      = 5
 ROWS       = [0, 5, 10, 15, 20, 25]
-FONT_SM    = ImageFont.load_default(size=4)
-FONT_XS6   = ImageFont.load_default(size=6)
-FONT_MED   = ImageFont.load_default(size=10)
-FONT_LARGE = ImageFont.load_default(size=16)
+
+def _load_font(size: int):
+    """Load default font — supports both Pillow 10+ (size kwarg) and older versions."""
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+FONT_SM    = _load_font(4)
+FONT_XS6   = _load_font(6)
+FONT_MED   = _load_font(10)
+FONT_LARGE = _load_font(16)
 
 def _trunc(text: str, max_chars: int = 42) -> str:
     return text if len(text) <= max_chars else text[:max_chars - 1] + "."
