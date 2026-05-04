@@ -2,7 +2,8 @@ export type SiteConfig = typeof siteConfig;
 
 export const siteConfig = {
   name: "Road Sentinel",
-  description: "AI-Powered Traffic Monitoring System for Blind Curve Warning - Barangay Busay, Cebu",
+  description:
+    "AI-Powered Traffic Monitoring System for Blind Curve Warning - Barangay Busay, Cebu",
   navItems: [
     {
       label: "Dashboard",

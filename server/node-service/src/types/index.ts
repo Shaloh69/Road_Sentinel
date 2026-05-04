@@ -4,7 +4,7 @@ export interface Camera {
   name: string;
   location: string;
   rtsp_url: string;
-  status: 'online' | 'offline' | 'error';
+  status: "online" | "offline" | "error";
   fps: number;
   resolution: string;
   pixels_per_meter: number;
@@ -19,7 +19,7 @@ export interface Detection {
   id?: number;
   camera_id: string;
   timestamp: Date;
-  vehicle_type: 'car' | 'truck' | 'bus' | 'motorcycle' | 'bicycle' | 'unknown';
+  vehicle_type: "car" | "truck" | "bus" | "motorcycle" | "bicycle" | "unknown";
   speed?: number;
   confidence: number;
   bbox_x: number;
@@ -43,14 +43,21 @@ export interface Incident {
   id?: number;
   camera_id: string;
   timestamp: Date;
-  incident_type: 'crash' | 'speeding' | 'wrong_way' | 'stopped_vehicle' | 'congestion' | 'illegal_parking' | 'other';
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  incident_type:
+    | "crash"
+    | "speeding"
+    | "wrong_way"
+    | "stopped_vehicle"
+    | "congestion"
+    | "illegal_parking"
+    | "other";
+  severity: "low" | "medium" | "high" | "critical";
   title: string;
   description?: string;
   image_url?: string;
   video_url?: string;
   confidence?: number;
-  status: 'active' | 'resolved' | 'false_alarm' | 'investigating';
+  status: "active" | "resolved" | "false_alarm" | "investigating";
   resolved_at?: Date;
   resolved_by?: string;
   notes?: string;
@@ -89,7 +96,7 @@ export interface Recording {
   format: string;
   resolution?: string;
   fps?: number;
-  status: 'recording' | 'completed' | 'failed' | 'deleted';
+  status: "recording" | "completed" | "failed" | "deleted";
   error_message?: string;
   vehicle_count: number;
   incident_count: number;
@@ -121,25 +128,28 @@ export interface AIDetectionResult {
 
 // WebSocket event types
 export interface WSDetectionEvent {
-  type: 'detection';
+  type: "detection";
   data: Detection;
 }
 
 export interface WSIncidentEvent {
-  type: 'incident';
+  type: "incident";
   data: Incident;
 }
 
 export interface WSCameraStatusEvent {
-  type: 'camera_status';
+  type: "camera_status";
   data: {
     camera_id: string;
-    status: 'online' | 'offline' | 'error';
+    status: "online" | "offline" | "error";
     message?: string;
   };
 }
 
-export type WebSocketEvent = WSDetectionEvent | WSIncidentEvent | WSCameraStatusEvent;
+export type WebSocketEvent =
+  | WSDetectionEvent
+  | WSIncidentEvent
+  | WSCameraStatusEvent;
 
 // API Response types
 export interface ApiResponse<T> {

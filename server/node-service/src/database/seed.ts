@@ -1,5 +1,5 @@
-import { query } from '../config/database';
-import { logger } from '../config/logger';
+import { query } from "../config/database";
+import { logger } from "../config/logger";
 
 interface CameraRow {
   id: string;
@@ -15,23 +15,25 @@ interface CameraRow {
 
 const DEFAULT_CAMERAS: CameraRow[] = [
   {
-    id: 'cam_a',
-    name: 'Camera A',
-    location: 'Busay Blind Curve — Approach',
-    rtsp_url: process.env.CAM_A_RTSP ?? 'rtsp://192.168.8.104:554/cam/realmonitor',
+    id: "cam_a",
+    name: "Camera A",
+    location: "Busay Blind Curve — Approach",
+    rtsp_url:
+      process.env.CAM_A_RTSP ?? "rtsp://192.168.8.104:554/cam/realmonitor",
     fps: 30,
-    resolution: '1920x1080',
+    resolution: "1920x1080",
     pixels_per_meter: 8.0,
     speed_limit: 40.0,
     detection_confidence: 0.5,
   },
   {
-    id: 'cam_b',
-    name: 'Camera B',
-    location: 'Busay Blind Curve — Exit',
-    rtsp_url: process.env.CAM_B_RTSP ?? 'rtsp://192.168.8.108:554/cam/realmonitor',
+    id: "cam_b",
+    name: "Camera B",
+    location: "Busay Blind Curve — Exit",
+    rtsp_url:
+      process.env.CAM_B_RTSP ?? "rtsp://192.168.8.108:554/cam/realmonitor",
     fps: 30,
-    resolution: '1920x1080',
+    resolution: "1920x1080",
     pixels_per_meter: 8.0,
     speed_limit: 40.0,
     detection_confidence: 0.5,
@@ -58,5 +60,5 @@ export async function seedCameras(): Promise<void> {
       ],
     );
   }
-  logger.info('Camera seed complete (cam_a, cam_b)');
+  logger.info("Camera seed complete (cam_a, cam_b)");
 }

@@ -1,7 +1,7 @@
-import axios, { AxiosInstance } from 'axios';
-import FormData from 'form-data';
-import { logger } from '../config/logger';
-import { AIDetectionResult } from '../types';
+import axios, { AxiosInstance } from "axios";
+import FormData from "form-data";
+import { logger } from "../config/logger";
+import { AIDetectionResult } from "../types";
 
 class AIService {
   private client: AxiosInstance;
@@ -9,14 +9,14 @@ class AIService {
   private timeout: number;
 
   constructor() {
-    this.baseURL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-    this.timeout = parseInt(process.env.AI_SERVICE_TIMEOUT || '30000');
+    this.baseURL = process.env.AI_SERVICE_URL || "http://localhost:8000";
+    this.timeout = parseInt(process.env.AI_SERVICE_TIMEOUT || "30000");
 
     this.client = axios.create({
       baseURL: this.baseURL,
       timeout: this.timeout,
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
     });
   }
@@ -26,7 +26,7 @@ class AIService {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.client.get('/health');
+      const response = await this.client.get("/health");
       return response.status === 200;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -45,18 +45,18 @@ class AIService {
   async detectObjects(
     imageBuffer: Buffer,
     cameraId: string,
-    confidenceThreshold: number = 0.75
+    confidenceThreshold: number = 0.75,
   ): Promise<AIDetectionResult | null> {
     try {
       const formData = new FormData();
-      formData.append('image', imageBuffer, {
+      formData.append("image", imageBuffer, {
         filename: `${cameraId}_${Date.now()}.jpg`,
-        contentType: 'image/jpeg',
+        contentType: "image/jpeg",
       });
-      formData.append('camera_id', cameraId);
-      formData.append('confidence_threshold', confidenceThreshold.toString());
+      formData.append("camera_id", cameraId);
+      formData.append("confidence_threshold", confidenceThreshold.toString());
 
-      const response = await this.client.post('/api/detect', formData, {
+      const response = await this.client.post("/api/detect", formData, {
         headers: {
           ...formData.getHeaders(),
         },
@@ -73,10 +73,10 @@ class AIService {
       if (axios.isAxiosError(error)) {
         logger.error(
           `AI service error: ${error.message}`,
-          error.response?.data
+          error.response?.data,
         );
       } else {
-        logger.error('AI service request failed:', error);
+        logger.error("AI service request failed:", error);
       }
       return null;
     }
@@ -88,18 +88,18 @@ class AIService {
   async detectTraffic(
     imageBuffer: Buffer,
     cameraId: string,
-    confidenceThreshold: number = 0.75
+    confidenceThreshold: number = 0.75,
   ): Promise<AIDetectionResult | null> {
     try {
       const formData = new FormData();
-      formData.append('image', imageBuffer, {
+      formData.append("image", imageBuffer, {
         filename: `${cameraId}_${Date.now()}.jpg`,
-        contentType: 'image/jpeg',
+        contentType: "image/jpeg",
       });
-      formData.append('camera_id', cameraId);
-      formData.append('confidence_threshold', confidenceThreshold.toString());
+      formData.append("camera_id", cameraId);
+      formData.append("confidence_threshold", confidenceThreshold.toString());
 
-      const response = await this.client.post('/api/detect/traffic', formData, {
+      const response = await this.client.post("/api/detect/traffic", formData, {
         headers: {
           ...formData.getHeaders(),
         },
@@ -107,7 +107,9 @@ class AIService {
 
       return response.status === 200 ? response.data : null;
     } catch (error) {
-      logger.error(`Traffic detection failed: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(
+        `Traffic detection failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -118,26 +120,32 @@ class AIService {
   async detectIncidents(
     imageBuffer: Buffer,
     cameraId: string,
-    confidenceThreshold: number = 0.75
+    confidenceThreshold: number = 0.75,
   ): Promise<AIDetectionResult | null> {
     try {
       const formData = new FormData();
-      formData.append('image', imageBuffer, {
+      formData.append("image", imageBuffer, {
         filename: `${cameraId}_${Date.now()}.jpg`,
-        contentType: 'image/jpeg',
+        contentType: "image/jpeg",
       });
-      formData.append('camera_id', cameraId);
-      formData.append('confidence_threshold', confidenceThreshold.toString());
+      formData.append("camera_id", cameraId);
+      formData.append("confidence_threshold", confidenceThreshold.toString());
 
-      const response = await this.client.post('/api/detect/incidents', formData, {
-        headers: {
-          ...formData.getHeaders(),
+      const response = await this.client.post(
+        "/api/detect/incidents",
+        formData,
+        {
+          headers: {
+            ...formData.getHeaders(),
+          },
         },
-      });
+      );
 
       return response.status === 200 ? response.data : null;
     } catch (error) {
-      logger.error(`Incident detection failed: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(
+        `Incident detection failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -147,10 +155,12 @@ class AIService {
    */
   async getStats(): Promise<any> {
     try {
-      const response = await this.client.get('/api/stats');
+      const response = await this.client.get("/api/stats");
       return response.data;
     } catch (error) {
-      logger.error(`Failed to get AI service stats: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(
+        `Failed to get AI service stats: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }

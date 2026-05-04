@@ -7,72 +7,72 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-    --font-sans: "font", sans-serif;
-    --font-mono: "monospace", monospace;
+  --font-sans: "font", sans-serif;
+  --font-mono: "monospace", monospace;
 
-    /* Road Sentinel Custom Colors */
-    --color-navy-dark: #1B1931;
-    --color-purple-deep: #44174E;
-    --color-purple-burgundy: #862249;
-    --color-mauve-rose: #A34054;
-    --color-peach-orange: #ED9E59;
-    --color-peach-light: #E8BCB8;
+  /* Road Sentinel Custom Colors */
+  --color-navy-dark: #1b1931;
+  --color-purple-deep: #44174e;
+  --color-purple-burgundy: #862249;
+  --color-mauve-rose: #a34054;
+  --color-peach-orange: #ed9e59;
+  --color-peach-light: #e8bcb8;
 
-    /* Semantic color mappings */
-    --color-primary: var(--color-purple-burgundy);
-    --color-secondary: var(--color-purple-deep);
-    --color-accent: var(--color-peach-orange);
-    --color-background-dark: var(--color-navy-dark);
-    --color-background-light: var(--color-peach-light);
-    --color-text-light: var(--color-peach-light);
-    --color-text-dark: var(--color-navy-dark);
+  /* Semantic color mappings */
+  --color-primary: var(--color-purple-burgundy);
+  --color-secondary: var(--color-purple-deep);
+  --color-accent: var(--color-peach-orange);
+  --color-background-dark: var(--color-navy-dark);
+  --color-background-light: var(--color-peach-light);
+  --color-text-light: var(--color-peach-light);
+  --color-text-dark: var(--color-navy-dark);
 
-    /* Animations */
-    --animate-blob: blob 7s infinite;
+  /* Animations */
+  --animate-blob: blob 7s infinite;
 }
 
 /* Blob animation */
 @keyframes blob {
-    0% {
-        transform: translate(0px, 0px) scale(1);
-    }
-    33% {
-        transform: translate(30px, -50px) scale(1.1);
-    }
-    66% {
-        transform: translate(-20px, 20px) scale(0.9);
-    }
-    100% {
-        transform: translate(0px, 0px) scale(1);
-    }
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
 }
 
 /* Animation utilities */
 .animate-blob {
-    animation: blob 7s infinite;
+  animation: blob 7s infinite;
 }
 
 .animation-delay-2000 {
-    animation-delay: 2s;
+  animation-delay: 2s;
 }
 
 .animation-delay-3000 {
-    animation-delay: 3s;
+  animation-delay: 3s;
 }
 
 .animation-delay-4000 {
-    animation-delay: 4s;
+  animation-delay: 4s;
 }
 
 /* Grid pattern */
 .bg-grid-pattern {
-    background-image:
-        linear-gradient(to right, rgba(237, 158, 89, 0.1) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(237, 158, 89, 0.1) 1px, transparent 1px);
-    background-size: 40px 40px;
+  background-image:
+    linear-gradient(to right, rgba(237, 158, 89, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(237, 158, 89, 0.1) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
 /* Noise texture */
 .bg-noise {
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }

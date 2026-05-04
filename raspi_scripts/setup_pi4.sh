@@ -20,7 +20,9 @@ CAMERA_ID="CAM-A-001"
 VENV="$HOME/venvs/cam_venv"
 SCRIPTS_DIR="$HOME/roadsentinel"
 LOG_DIR="$HOME/roadsentinel/logs"
+REPO_DIR="$HOME/roadsentinel-repo"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_URL="https://github.com/vandrepaul01/RoadSentinel.git"
 
 echo "================================================"
 echo " Road Sentinel — Pi 4 Setup (Camera A + LED)"
@@ -33,18 +35,30 @@ echo "================================================"
 echo
 
 # ── [1] System packages ────────────────────────────────────────────────────────
-echo "[1/6] Installing system packages..."
+echo "[1/7] Installing system packages..."
 sudo apt update -q
 sudo apt install -y \
     python3-dev python3-pip python3-venv \
     ffmpeg libopencv-dev python3-opencv \
     python3-pil python3-pillow \
-    git build-essential
+    git build-essential curl
 echo "      OK"
 echo
 
+# ── [1b] Clone / update repo ────────────────────────────────────────────────
+echo "[1b/7] Syncing RoadSentinel repo..."
+if [ -d "$REPO_DIR/.git" ]; then
+    git -C "$REPO_DIR" pull origin main
+else
+    git clone "$REPO_URL" "$REPO_DIR"
+fi
+# Point SRC_DIR at the cloned raspi_scripts so installs always use latest
+SRC_DIR="$REPO_DIR/raspi_scripts"
+echo "      Repo at $REPO_DIR"
+echo
+
 # ── [2] Build ledcat (hzeller rpi-rgb-led-matrix) ────────────────────────────
-echo "[2/6] Building ledcat (hzeller rpi-rgb-led-matrix)..."
+echo "[2/7] Building ledcat (hzeller rpi-rgb-led-matrix)..."
 if [ ! -d "$HOME/rpi-rgb-led-matrix" ]; then
     git clone https://github.com/hzeller/rpi-rgb-led-matrix.git "$HOME/rpi-rgb-led-matrix"
 fi
@@ -53,7 +67,7 @@ echo "      ledcat built at $HOME/rpi-rgb-led-matrix/examples-api-use/ledcat"
 echo
 
 # ── [3] Python venv ────────────────────────────────────────────────────────────
-echo "[3/6] Creating Python venv..."
+echo "[3/7] Creating Python venv..."
 mkdir -p "$(dirname "$VENV")"
 python3 -m venv "$VENV" --system-site-packages
 source "$VENV/bin/activate"
@@ -65,7 +79,7 @@ echo "      Venv OK: $VENV"
 echo
 
 # ── [4] Copy scripts ───────────────────────────────────────────────────────────
-echo "[4/6] Installing scripts..."
+echo "[4/7] Installing scripts..."
 mkdir -p "$SCRIPTS_DIR" "$LOG_DIR"
 cp "$SRC_DIR/camera/camera_sender.py"       "$SCRIPTS_DIR/camera_sender.py"
 cp "$SRC_DIR/lcd_pi4/display_manager.py"    "$SCRIPTS_DIR/display_manager.py"
@@ -75,7 +89,7 @@ echo "      Scripts installed to $SCRIPTS_DIR/"
 echo
 
 # ── [5] Systemd services ───────────────────────────────────────────────────────
-echo "[5/6] Installing systemd services..."
+echo "[5/7] Installing systemd services..."
 
 # Camera sender service
 sudo tee /etc/systemd/system/roadsentinel-camera.service > /dev/null <<EOF
@@ -135,7 +149,7 @@ echo "      Services installed"
 echo
 
 # ── [6] Helper scripts ─────────────────────────────────────────────────────────
-echo "[6/6] Creating helper scripts..."
+echo "[6/7] Creating helper scripts..."
 
 cat > "$SCRIPTS_DIR/start.sh" <<'HELPER'
 #!/usr/bin/env bash
@@ -166,8 +180,29 @@ cat > "$SCRIPTS_DIR/test_display.sh" <<HELPER
 sudo ${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py --test
 HELPER
 
+cat > "$SCRIPTS_DIR/update.sh" <<HELPER
+#!/usr/bin/env bash
+# Pull latest raspi_scripts from GitHub and restart services
+set -euo pipefail
+echo "Pulling latest from GitHub..."
+git -C ${REPO_DIR} pull origin main
+echo "Copying updated scripts..."
+cp "${REPO_DIR}/raspi_scripts/camera/camera_sender.py" "${SCRIPTS_DIR}/camera_sender.py"
+cp "${REPO_DIR}/raspi_scripts/lcd_pi4/display_manager.py" "${SCRIPTS_DIR}/display_manager.py"
+chmod +x "${SCRIPTS_DIR}/camera_sender.py" "${SCRIPTS_DIR}/display_manager.py"
+echo "Restarting services..."
+sudo systemctl restart roadsentinel-camera roadsentinel-display
+echo "Done! Services restarted with latest code."
+HELPER
+
 chmod +x "$SCRIPTS_DIR/start.sh" "$SCRIPTS_DIR/stop.sh" \
-         "$SCRIPTS_DIR/status.sh" "$SCRIPTS_DIR/test_display.sh"
+         "$SCRIPTS_DIR/status.sh" "$SCRIPTS_DIR/test_display.sh" \
+         "$SCRIPTS_DIR/update.sh"
+
+# ── [7] Git remote config ──────────────────────────────────────────────────────
+echo "[7/7] Verifying git remote..."
+git -C "$REPO_DIR" remote -v
+echo "      Run '$SCRIPTS_DIR/update.sh' anytime to pull latest and restart."
 
 echo
 echo "================================================"
@@ -182,6 +217,7 @@ echo " Quick commands:"
 echo "   $SCRIPTS_DIR/start.sh        — start both"
 echo "   $SCRIPTS_DIR/stop.sh         — stop both"
 echo "   $SCRIPTS_DIR/status.sh       — check status"
+echo "   $SCRIPTS_DIR/update.sh       — git pull + restart (or use Admin Terminal)"
 echo "   $SCRIPTS_DIR/test_display.sh — test LED with fake alerts"
 echo
 echo " Live logs:"

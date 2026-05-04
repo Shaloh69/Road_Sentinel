@@ -1,5 +1,5 @@
-import { pool } from '../config/database';
-import { logger } from '../config/logger';
+import { pool } from "../config/database";
+import { logger } from "../config/logger";
 
 // All DDL statements run in order. Each is idempotent (IF NOT EXISTS / MODIFY COLUMN).
 const MIGRATIONS: string[] = [
@@ -96,9 +96,9 @@ export async function runMigrations(): Promise<void> {
     for (const sql of MIGRATIONS) {
       await conn.execute(sql);
     }
-    logger.info('Database migrations applied successfully');
+    logger.info("Database migrations applied successfully");
   } catch (err) {
-    logger.error('Migration failed:', err);
+    logger.error("Migration failed:", err);
     throw err;
   } finally {
     conn.release();

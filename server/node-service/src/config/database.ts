@@ -1,13 +1,13 @@
-import mysql from 'mysql2/promise';
-import dotenv from 'dotenv';
-import { logger } from './logger';
+import mysql from "mysql2/promise";
+import dotenv from "dotenv";
+import { logger } from "./logger";
 
 dotenv.config();
 
 // MySQL connection pool configuration
 const poolConfig: mysql.PoolOptions = {
   host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT || '3306'),
+  port: parseInt(process.env.DB_PORT || "3306"),
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
@@ -21,7 +21,7 @@ const poolConfig: mysql.PoolOptions = {
 };
 
 // Add SSL configuration for Aiven if enabled
-if (process.env.DB_SSL === 'true') {
+if (process.env.DB_SSL === "true") {
   // Aiven uses a self-signed CA — rejectUnauthorized must be false
   poolConfig.ssl = {
     rejectUnauthorized: false,
@@ -35,11 +35,11 @@ export const pool = mysql.createPool(poolConfig);
 export async function testConnection(): Promise<boolean> {
   try {
     const connection = await pool.getConnection();
-    logger.info('MySQL database connected successfully');
+    logger.info("MySQL database connected successfully");
     connection.release();
     return true;
   } catch (error) {
-    logger.error('Failed to connect to MySQL database:', error);
+    logger.error("Failed to connect to MySQL database:", error);
     return false;
   }
 }
@@ -50,14 +50,14 @@ export async function query<T>(sql: string, params?: any[]): Promise<T> {
     const [rows] = await pool.execute(sql, params);
     return rows as T;
   } catch (error) {
-    logger.error('Database query error:', error);
+    logger.error("Database query error:", error);
     throw error;
   }
 }
 
 // Transaction helper
 export async function transaction<T>(
-  callback: (connection: mysql.PoolConnection) => Promise<T>
+  callback: (connection: mysql.PoolConnection) => Promise<T>,
 ): Promise<T> {
   const connection = await pool.getConnection();
   try {
@@ -77,8 +77,8 @@ export async function transaction<T>(
 export async function closePool(): Promise<void> {
   try {
     await pool.end();
-    logger.info('MySQL connection pool closed');
+    logger.info("MySQL connection pool closed");
   } catch (error) {
-    logger.error('Error closing MySQL connection pool:', error);
+    logger.error("Error closing MySQL connection pool:", error);
   }
 }
