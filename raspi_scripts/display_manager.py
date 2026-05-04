@@ -263,7 +263,8 @@ class PioMatterBackend(DisplayBackend):
         PINOUT_MAP = {
             "active3":      piomatter.Pinout.Active3,
             "bonnet":       piomatter.Pinout.AdafruitMatrixBonnet,
-            "bonnet-pwm":   piomatter.Pinout.AdafruitMatrixBonnetPWM,
+            "bonnet-pwm":   getattr(piomatter.Pinout, "AdafruitMatrixBonnetPWM",
+                                    piomatter.Pinout.AdafruitMatrixBonnet),
         }
         pinout = PINOUT_MAP.get(pinout_name, piomatter.Pinout.Active3)
 
