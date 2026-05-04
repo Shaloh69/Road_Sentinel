@@ -63,7 +63,7 @@ def main():
                 except TypeError:
                     font = ImageFont.load_default()
                 ImageDraw.Draw(img).text((2, 10), name, fill=label_color, font=font)
-                fb[:] = np.asarray(img.convert("RGB"))
+                fb[:] = np.asarray(img.convert("RGB"))[:, :, ::-1]  # RGB→BGR for PioMatter
                 matrix.show()
                 time.sleep(args.delay)
     except KeyboardInterrupt:

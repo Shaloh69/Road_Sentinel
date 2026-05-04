@@ -285,7 +285,8 @@ class PioMatterBackend(DisplayBackend):
         log.info("Pi 5 backend — PioMatter  pinout=%s  %dx%d", pinout_name, WIDTH, HEIGHT)
 
     def show(self, img: Image.Image) -> None:
-        self._fb[:] = self._np.asarray(img.convert("RGB"))
+        # PIL gives [R,G,B]; BGR888Packed reads pos-0 as B → reverse channel order
+        self._fb[:] = self._np.asarray(img.convert("RGB"))[:, :, ::-1]
         self._matrix.show()
 
     def clear(self) -> None:
