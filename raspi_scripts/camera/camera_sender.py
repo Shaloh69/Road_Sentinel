@@ -19,9 +19,12 @@ import argparse
 import asyncio
 import logging
 import signal
+import socket
+import threading
 import time
 from collections import deque
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 import cv2
@@ -44,6 +47,14 @@ DETECTION_WRITE_INTERVAL = 1.0   # write at most 1 detection per second to Node
 INCIDENT_DEDUP_WINDOW    = 30.0  # suppress repeat incident type within this window (s)
 FRAME_PUSH_INTERVAL      = 1.0   # push MJPEG frame to Node at most 1/second
 
+# Auto-discovery
+DISCOVERY_AFTER_FAILURES = 3     # consecutive open failures before triggering discovery
+ONVIF_MULTICAST          = "239.255.255.250"
+ONVIF_PROBE_PORT         = 3702
+ONVIF_TIMEOUT            = 3.0   # seconds to wait for WS-Discovery responses
+RTSP_PORT_SCAN_TIMEOUT   = 0.5   # seconds per port-554 probe
+RTSP_CAP_TEST_TIMEOUT    = 6.0   # seconds to test an RTSP URL with cv2
+
 INCIDENT_TITLES = {
     "speeding":        "Speeding Detected",
     "crash":           "Crash / Collision Detected",
@@ -52,6 +63,27 @@ INCIDENT_TITLES = {
     "congestion":      "Traffic Congestion",
     "illegal_parking": "Illegal Parking",
 }
+
+# WS-Discovery Probe XML
+_ONVIF_PROBE = (
+    b'<?xml version="1.0" encoding="utf-8"?>'
+    b'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"'
+    b' xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing"'
+    b' xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"'
+    b' xmlns:dn="http://www.onvif.org/ver10/network/wsdl">'
+    b"<s:Header>"
+    b"<a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</a:Action>"
+    b"<a:MessageID>uuid:roadsentinel-probe-0001</a:MessageID>"
+    b"<a:ReplyTo><a:Address>"
+    b"http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous"
+    b"</a:Address></a:ReplyTo>"
+    b"<a:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</a:To>"
+    b"</s:Header>"
+    b"<s:Body>"
+    b"<d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types></d:Probe>"
+    b"</s:Body>"
+    b"</s:Envelope>"
+)
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -216,6 +248,167 @@ class NodeForwarder:
             log.debug("[%s] Incident forward error: %s", self._camera_id, exc)
 
 
+# ── Camera IP Auto-Discovery ──────────────────────────────────────────────────
+
+def _get_local_subnet() -> str:
+    """Best-guess local /24 subnet, e.g. '192.168.8'."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ".".join(ip.split(".")[:3])
+    except Exception:
+        return "192.168.1"
+
+
+def _onvif_discover(timeout: float = ONVIF_TIMEOUT) -> list:
+    """
+    Send ONVIF WS-Discovery Probe via UDP multicast.
+    Returns list of IP addresses that responded.
+    """
+    discovered: list = []
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 4)
+        sock.settimeout(timeout)
+        sock.sendto(_ONVIF_PROBE, (ONVIF_MULTICAST, ONVIF_PROBE_PORT))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                _, addr = sock.recvfrom(65536)
+                ip = addr[0]
+                if ip not in discovered:
+                    discovered.append(ip)
+                    log.debug("ONVIF: discovered device at %s", ip)
+            except socket.timeout:
+                break
+            except OSError:
+                break
+    except Exception as exc:
+        log.debug("ONVIF probe error: %s", exc)
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+    return discovered
+
+
+def _port_open(host: str, port: int, timeout: float = RTSP_PORT_SCAN_TIMEOUT) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _scan_subnet_for_rtsp(subnet: str, exclude_ip: str) -> list:
+    """Threaded scan of subnet/24 for hosts with port 554 open."""
+    found: list = []
+    lock = threading.Lock()
+
+    def probe(i: int):
+        ip = f"{subnet}.{i}"
+        if ip == exclude_ip:
+            return
+        if _port_open(ip, 554):
+            with lock:
+                found.append(ip)
+                log.debug("Port scan: port 554 open at %s", ip)
+
+    threads = [threading.Thread(target=probe, args=(i,), daemon=True) for i in range(1, 255)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=RTSP_PORT_SCAN_TIMEOUT + 0.5)
+    return found
+
+
+def _test_rtsp_url(rtsp_url: str, timeout: float = RTSP_CAP_TEST_TIMEOUT) -> bool:
+    """Return True if cv2 can open and read a frame from rtsp_url within timeout."""
+    result = [False]
+
+    def _try():
+        try:
+            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            ret, _ = cap.read()
+            cap.release()
+            result[0] = bool(ret)
+        except Exception:
+            result[0] = False
+
+    t = threading.Thread(target=_try, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    return result[0]
+
+
+def _replace_rtsp_host(rtsp_url: str, new_host: str) -> str:
+    """Swap the hostname in an RTSP URL, preserving port, path, and query."""
+    parsed   = urlparse(rtsp_url)
+    port_str = f":{parsed.port}" if parsed.port and parsed.port != 554 else (
+        ":554" if parsed.port == 554 else ""
+    )
+    userinfo = f"{parsed.username}:{parsed.password}@" if parsed.username else ""
+    netloc   = f"{userinfo}{new_host}{port_str}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def discover_camera_ip(original_rtsp: str, camera_id: str) -> Optional[str]:
+    """
+    Attempt to find the camera at a new IP when original_rtsp fails.
+    Strategy:
+      1. ONVIF WS-Discovery multicast
+      2. Port-554 subnet scan fallback
+      3. Test each candidate with the same RTSP path
+    Returns new full RTSP URL on success, None otherwise.
+    """
+    parsed = urlparse(original_rtsp)
+    old_ip = parsed.hostname or ""
+    subnet = _get_local_subnet()
+
+    log.info("[%s] 🔍 Auto-discovering camera (last known IP: %s) …", camera_id, old_ip)
+
+    # Step 1: ONVIF
+    candidates = _onvif_discover()
+    log.info("[%s] ONVIF: %d device(s) responded%s",
+             camera_id, len(candidates),
+             f": {candidates}" if candidates else " (none or multicast blocked)")
+
+    # Step 2: Port scan — merge new hits
+    log.info("[%s] Scanning %s.0/24 for port 554 …", camera_id, subnet)
+    scan_hits = _scan_subnet_for_rtsp(subnet, old_ip)
+    log.info("[%s] Port scan: %d host(s) with port 554 open%s",
+             camera_id, len(scan_hits),
+             f": {scan_hits}" if scan_hits else "")
+    for ip in scan_hits:
+        if ip not in candidates:
+            candidates.append(ip)
+
+    # Drop the old (dead) IP — we know it doesn't work
+    candidates = [ip for ip in candidates if ip != old_ip]
+
+    if not candidates:
+        log.warning("[%s] ❌ Auto-discovery: no candidates found on %s.0/24", camera_id, subnet)
+        return None
+
+    # Step 3: Test each candidate
+    for ip in candidates:
+        new_url = _replace_rtsp_host(original_rtsp, ip)
+        log.info("[%s] Testing %s …", camera_id, new_url)
+        if _test_rtsp_url(new_url):
+            log.info("[%s] ✅ Camera found at new IP: %s → %s", camera_id, ip, new_url)
+            return new_url
+        log.debug("[%s] %s: no RTSP response", camera_id, ip)
+
+    log.warning("[%s] ❌ Auto-discovery: none of the %d candidate(s) responded to RTSP",
+                camera_id, len(candidates))
+    return None
+
+
 # ── Frame capture (synchronous — runs in thread) ─────────────────────────────
 def open_capture(rtsp_url: str) -> cv2.VideoCapture:
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
@@ -299,7 +492,6 @@ async def run(
         async with aiohttp.ClientSession(connector=node_connector) as node_session:
             forwarder: Optional[NodeForwarder] = None
             if node_url:
-                # Fetch per-camera config from Node DB (overrides CLI defaults)
                 cam_cfg = await fetch_camera_config(node_session, node_url, camera_id)
                 if cam_cfg.get("pixels_per_meter"):
                     pixels_per_meter = float(cam_cfg["pixels_per_meter"])
@@ -315,15 +507,39 @@ async def run(
             else:
                 log.warning("[%s] --node not set — detections NOT saved to DB", camera_id)
 
+            consecutive_failures = 0
+
             while not shutdown.is_set():
                 # ── Open / re-open camera ────────────────────────────────────
                 try:
                     cap = await asyncio.get_event_loop().run_in_executor(
                         None, open_capture, rtsp_url
                     )
+                    consecutive_failures = 0  # reset on success
                 except Exception as exc:
-                    log.error("[%s] Camera open failed: %s — retrying in %.0fs",
-                              camera_id, exc, RECONNECT_WAIT)
+                    consecutive_failures += 1
+                    log.error("[%s] Camera open failed (%d): %s",
+                              camera_id, consecutive_failures, exc)
+
+                    # Trigger auto-discovery after N consecutive failures
+                    if consecutive_failures >= DISCOVERY_AFTER_FAILURES:
+                        log.info("[%s] %d consecutive failures — starting auto-discovery …",
+                                 camera_id, consecutive_failures)
+                        new_url = await asyncio.get_event_loop().run_in_executor(
+                            None, discover_camera_ip, rtsp_url, camera_id
+                        )
+                        if new_url and new_url != rtsp_url:
+                            log.info("[%s] Switching RTSP URL: %s → %s",
+                                     camera_id, rtsp_url, new_url)
+                            rtsp_url = new_url
+                            consecutive_failures = 0
+                        else:
+                            log.warning("[%s] Discovery found nothing — retrying original URL",
+                                        camera_id)
+                            # Back off a bit longer after failed discovery
+                            await asyncio.sleep(RECONNECT_WAIT * 3)
+                            continue
+
                     await asyncio.sleep(RECONNECT_WAIT)
                     continue
 
@@ -414,6 +630,10 @@ Examples:
 IMPORTANT: --camera-id must match cameras.id in the MySQL table.
 Camera config (pixels_per_meter, speed_limit, detection_confidence) is fetched
 from Node at startup and overrides the CLI defaults.
+
+Auto-discovery: if the camera is unreachable for 3 consecutive attempts, the
+script automatically runs ONVIF WS-Discovery (multicast) and a port-554 subnet
+scan to locate the camera's new DHCP IP, then switches the RTSP URL silently.
         """
     )
     parser.add_argument("--camera-id", required=True,
@@ -451,6 +671,7 @@ from Node at startup and overrides the CLI defaults.
     log.info("  ppm       : %.1f (may be overridden by Node DB)", args.ppm)
     log.info("  speed_lim : %.0f km/h (may be overridden by Node DB)", args.speed_limit)
     log.info("  confidence: %.2f (may be overridden by Node DB)", args.confidence)
+    log.info("  discovery : after %d consecutive failures", DISCOVERY_AFTER_FAILURES)
 
     asyncio.run(run(
         camera_id        = args.camera_id,
