@@ -27,8 +27,8 @@ router.get("/", async (req: Request, res: Response) => {
       params.push(since);
     }
 
-    sql += " ORDER BY timestamp DESC LIMIT ?";
-    params.push(Math.min(parseInt(limit, 10) || 100, 1000));
+    const limitNum = Math.min(parseInt(limit, 10) || 100, 1000);
+    sql += ` ORDER BY timestamp DESC LIMIT ${limitNum}`;
 
     const rows = await query<Detection[]>(sql, params);
     res.json({ success: true, data: rows } as ApiResponse<Detection[]>);

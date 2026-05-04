@@ -37,8 +37,8 @@ router.get("/", async (req: Request, res: Response) => {
       params.push(severity);
     }
 
-    sql += " ORDER BY i.timestamp DESC LIMIT ?";
-    params.push(Math.min(parseInt(limit, 10) || 50, 500));
+    const limitNum = Math.min(parseInt(limit, 10) || 50, 500);
+    sql += ` ORDER BY i.timestamp DESC LIMIT ${limitNum}`;
 
     const rows = await query<Incident[]>(sql, params);
     res.json({ success: true, data: rows } as ApiResponse<Incident[]>);
