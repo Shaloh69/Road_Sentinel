@@ -260,13 +260,16 @@ class PioMatterBackend(DisplayBackend):
 
         self._np = np
 
+        # Active3BGR = Active3 GPIO pins but with R and B swapped at hardware level.
+        # Use this for cheap ₱149 HUB75 adapter boards where R and B are crossed.
         PINOUT_MAP = {
-            "active3":      piomatter.Pinout.Active3,
-            "bonnet":       piomatter.Pinout.AdafruitMatrixBonnet,
-            "bonnet-pwm":   getattr(piomatter.Pinout, "AdafruitMatrixBonnetPWM",
-                                    piomatter.Pinout.AdafruitMatrixBonnet),
+            "active3":    getattr(piomatter.Pinout, "Active3BGR", piomatter.Pinout.Active3),
+            "bonnet":     piomatter.Pinout.AdafruitMatrixBonnet,
+            "bonnet-pwm": getattr(piomatter.Pinout, "AdafruitMatrixBonnetPWM",
+                                  piomatter.Pinout.AdafruitMatrixBonnet),
         }
-        pinout = PINOUT_MAP.get(pinout_name, piomatter.Pinout.Active3)
+        pinout = PINOUT_MAP.get(pinout_name, getattr(piomatter.Pinout, "Active3BGR",
+                                                      piomatter.Pinout.Active3))
 
         geometry = piomatter.Geometry(
             width=WIDTH,
@@ -285,8 +288,7 @@ class PioMatterBackend(DisplayBackend):
         log.info("Pi 5 backend — PioMatter  pinout=%s  %dx%d", pinout_name, WIDTH, HEIGHT)
 
     def show(self, img: Image.Image) -> None:
-        # PIL gives [R,G,B]; BGR888Packed reads pos-0 as B → reverse channel order
-        self._fb[:] = self._np.asarray(img.convert("RGB"))[:, :, ::-1]
+        self._fb[:] = self._np.asarray(img.convert("RGB"))
         self._matrix.show()
 
     def clear(self) -> None:

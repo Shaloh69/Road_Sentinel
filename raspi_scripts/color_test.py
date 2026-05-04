@@ -43,9 +43,12 @@ def main():
         rotation=piomatter.Orientation.Normal,
     )
     fb = np.zeros((H, W, 3), dtype=np.uint8)
+    # Active3BGR = same GPIO pins as Active3 but R/B swapped at hardware level
+    # Use for cheap ₱149 adapter boards where R and B wires are physically crossed
+    pinout = getattr(piomatter.Pinout, "Active3BGR", piomatter.Pinout.Active3)
     matrix = piomatter.PioMatter(
         colorspace=piomatter.Colorspace.RGB888Packed,
-        pinout=piomatter.Pinout.Active3,
+        pinout=pinout,
         framebuffer=fb,
         geometry=geo,
     )
@@ -63,7 +66,7 @@ def main():
                 except TypeError:
                     font = ImageFont.load_default()
                 ImageDraw.Draw(img).text((2, 10), name, fill=label_color, font=font)
-                fb[:] = np.asarray(img.convert("RGB"))[:, :, ::-1]  # RGB→BGR for PioMatter
+                fb[:] = np.asarray(img.convert("RGB"))  # Active3BGR handles the swap
                 matrix.show()
                 time.sleep(args.delay)
     except KeyboardInterrupt:
