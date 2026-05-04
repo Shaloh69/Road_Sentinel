@@ -45,7 +45,7 @@ AI_TIMEOUT               = 4.0
 NODE_TIMEOUT             = 5.0
 DETECTION_WRITE_INTERVAL = 1.0   # write at most 1 detection per second to Node
 INCIDENT_DEDUP_WINDOW    = 30.0  # suppress repeat incident type within this window (s)
-FRAME_PUSH_INTERVAL      = 1.0   # push MJPEG frame to Node at most 1/second
+FRAME_PUSH_INTERVAL      = 0.1   # push MJPEG frame to Node at most 10/second (smooth web feed)
 
 # Auto-discovery
 DISCOVERY_AFTER_FAILURES = 3     # consecutive open failures before triggering discovery
@@ -545,6 +545,30 @@ async def run(
 
                 log.info("[%s] Streaming → AI:%s", camera_id, ai_url)
 
+                # AI runs as a fire-and-forget background task so it never
+                # blocks the frame-read loop. Only one AI request at a time.
+                ai_busy = False
+
+                async def ai_task(jpeg_bytes: bytes):
+                    nonlocal ai_busy
+                    try:
+                        result = await post_frame(
+                            ai_session, ai_url, camera_id, jpeg_bytes,
+                            pixels_per_meter=pixels_per_meter,
+                            speed_limit=speed_limit,
+                            confidence_threshold=confidence,
+                        )
+                        stats.record_send(True)
+                        if forwarder:
+                            await forwarder.handle(result)
+                        else:
+                            _log_detections(camera_id, result)
+                    except Exception as exc:
+                        log.debug("[%s] AI POST error: %s", camera_id, exc)
+                        stats.record_send(False)
+                    finally:
+                        ai_busy = False
+
                 try:
                     while not shutdown.is_set():
                         frame_start = time.monotonic()
@@ -565,25 +589,16 @@ async def run(
                             stats.record_drop()
                             continue
 
-                        # Push MJPEG frame to Node (best-effort, throttled to 1/s)
+                        # Push MJPEG frame to Node at up to 10 FPS (smooth web feed)
                         if forwarder:
                             asyncio.create_task(forwarder.push_frame(jpeg))
 
-                        try:
-                            result = await post_frame(
-                                ai_session, ai_url, camera_id, jpeg,
-                                pixels_per_meter=pixels_per_meter,
-                                speed_limit=speed_limit,
-                                confidence_threshold=confidence,
-                            )
-                            stats.record_send(True)
-                            if forwarder:
-                                await forwarder.handle(result)
-                            else:
-                                _log_detections(camera_id, result)
-                        except Exception as exc:
-                            log.debug("[%s] AI POST error: %s", camera_id, exc)
-                            stats.record_send(False)
+                        # Send to AI only if previous request finished
+                        if not ai_busy:
+                            ai_busy = True
+                            asyncio.create_task(ai_task(jpeg))
+                        else:
+                            stats.record_drop()
 
                         stats.log_if_due()
 
