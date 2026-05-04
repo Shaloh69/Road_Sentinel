@@ -16,7 +16,18 @@ interface Camera {
   location: string;
   status: "online" | "offline" | "error";
   fps: number;
-  resolution: string;
+  resolution?: string;
+}
+
+interface BoundingBox {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+  confidence: number;
+  speed?: number;
 }
 
 interface Detection {
@@ -59,7 +70,9 @@ export default function MonitorPage() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [showBoxes, setShowBoxes] = useState(false);
   const [viewMode, setViewMode] = useState("grid");
+  const [boxes, setBoxes] = useState<Record<string, BoundingBox[]>>({});
   const logRef = useRef<HTMLDivElement>(null);
+  const boxTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // Fetch cameras list
   const fetchCameras = useCallback(async () => {
@@ -108,6 +121,29 @@ export default function MonitorPage() {
         setSpeeds((prev) => ({ ...prev, [det.camera_id]: det.speed }));
       }
 
+      // Convert pixel bbox → percentage for overlay (camera frames are 640×480)
+      if (det.bbox_width > 0 && det.bbox_height > 0) {
+        const [resW, resH] = (cam?.resolution ?? "640x480")
+          .split("x")
+          .map(Number);
+        const box: BoundingBox = {
+          id: `${det.camera_id}-${Date.now()}`,
+          x: (det.bbox_x / resW) * 100,
+          y: (det.bbox_y / resH) * 100,
+          width: (det.bbox_width / resW) * 100,
+          height: (det.bbox_height / resH) * 100,
+          label: det.vehicle_type,
+          confidence: det.confidence,
+          speed: det.speed ?? undefined,
+        };
+        setBoxes((prev) => ({ ...prev, [det.camera_id]: [box] }));
+        // Auto-clear box after 3 s so stale boxes don't linger
+        clearTimeout(boxTimers.current[det.camera_id]);
+        boxTimers.current[det.camera_id] = setTimeout(() => {
+          setBoxes((prev) => ({ ...prev, [det.camera_id]: [] }));
+        }, 3000);
+      }
+
       // Prepend to detection log (max 50 entries)
       const entry: LogEntry = {
         key: `${det.camera_id}-${Date.now()}`,
@@ -140,6 +176,7 @@ export default function MonitorPage() {
       socket.off("connect", handleConnect);
       socket.off("detection");
       socket.off("camera_status");
+      Object.values(boxTimers.current).forEach(clearTimeout);
     };
   }, [cameras]);
 
@@ -219,13 +256,13 @@ export default function MonitorPage() {
           {cameras.map((cam) => (
             <VideoFeed
               key={cam.id}
-              boundingBoxes={[]}
+              boundingBoxes={boxes[cam.id] ?? []}
               cameraId={cam.id}
               cameraName={`${cam.name} — ${cam.location}`}
               fps={cam.fps ?? 30}
               isLive={cam.status === "online"}
               latency={0}
-              showBoundingBoxes={false}
+              showBoundingBoxes={showBoxes}
               videoUrl={cam.status === "online" ? streamUrl(cam.id) : undefined}
             />
           ))}
