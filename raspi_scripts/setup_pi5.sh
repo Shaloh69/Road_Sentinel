@@ -149,11 +149,10 @@ StandardError=append:${LOG_DIR}/camera.log
 WantedBy=multi-user.target
 EOF
 
-# LED display service — Pi 5 uses --led-rp1-rio flag
-# Note: slowdown inverts when rp1-rio=1; start at 3 and tune if flickering
+# LED display service — Pi 5 uses --pi 5 flag
 sudo tee /etc/systemd/system/roadsentinel-display.service > /dev/null <<EOF
 [Unit]
-Description=Road Sentinel LED Matrix Display (Pi 5 rp1-rio)
+Description=Road Sentinel LED Matrix Display (Pi 5)
 After=network-online.target roadsentinel-camera.service
 Wants=network-online.target
 StartLimitIntervalSec=60
@@ -166,7 +165,7 @@ WorkingDirectory=${SCRIPTS_DIR}
 ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py \\
     --api ${NODE_URL} \\
     --slowdown ${LED_SLOWDOWN} \\
-    --rp1-rio ${LED_RPI_RIO}
+    --pi 5
 Restart=always
 RestartSec=5
 StandardOutput=append:${LOG_DIR}/display.log
@@ -239,9 +238,8 @@ HELPER
 cat > "$SCRIPTS_DIR/test_display.sh" <<HELPER
 #!/usr/bin/env bash
 # Run display in TEST mode (cycles fake alerts, no network needed)
-# Pi 5: pass --rp1-rio flag to display_manager
 sudo ${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py --test \\
-    --slowdown ${LED_SLOWDOWN} --rp1-rio ${LED_RPI_RIO}
+    --slowdown ${LED_SLOWDOWN} --pi 5
 HELPER
 
 cat > "$SCRIPTS_DIR/update.sh" <<HELPER
