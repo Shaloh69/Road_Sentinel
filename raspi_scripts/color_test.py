@@ -66,9 +66,12 @@ def main():
                 except TypeError:
                     font = ImageFont.load_default()
                 ImageDraw.Draw(img).text((2, 10), name, fill=label_color, font=font)
-                fb[:] = np.asarray(img.convert("RGB"))  # Active3BGR handles the swap
-                matrix.show()
-                time.sleep(args.delay)
+                arr = np.asarray(img.convert("RGB"))
+                deadline = time.monotonic() + args.delay
+                while time.monotonic() < deadline:
+                    fb[:] = arr
+                    matrix.show()
+                    time.sleep(0.016)  # ~60 Hz refresh — HUB75 needs continuous show()
     except KeyboardInterrupt:
         # Blank the panel — send black a few times so PIO flushes fully
         fb[:] = 0
