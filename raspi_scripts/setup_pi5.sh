@@ -27,7 +27,7 @@ VENV="$HOME/venvs/cam_venv"
 SCRIPTS_DIR="$HOME/roadsentinel"
 LOG_DIR="$HOME/roadsentinel/logs"
 REPO_DIR="$HOME/roadsentinel-repo"
-REPO_URL="https://github.com/vandrepaul01/RoadSentinel.git"
+REPO_URL="https://github.com/Shaloh69/Road_Sentinel.git"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Pi 5 LED matrix flags (RP1 GPIO chip)

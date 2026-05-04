@@ -25,7 +25,7 @@ SCRIPTS_DIR="$HOME/roadsentinel"
 LOG_DIR="$HOME/roadsentinel/logs"
 REPO_DIR="$HOME/roadsentinel-repo"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_URL="https://github.com/vandrepaul01/RoadSentinel.git"
+REPO_URL="https://github.com/Shaloh69/Road_Sentinel.git"
 
 echo "================================================"
 echo " Road Sentinel — Pi 4 Setup (Camera A + LED)"
