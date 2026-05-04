@@ -15,25 +15,25 @@ interface CameraRow {
 
 const DEFAULT_CAMERAS: CameraRow[] = [
   {
-    id: "cam_a",
+    id: "CAM-A-001",
     name: "Camera A",
     location: "Busay Blind Curve — Approach",
     rtsp_url:
       process.env.CAM_A_RTSP ?? "rtsp://192.168.8.104:554/cam/realmonitor",
-    fps: 30,
-    resolution: "1920x1080",
+    fps: 15,
+    resolution: "640x480",
     pixels_per_meter: 8.0,
     speed_limit: 40.0,
     detection_confidence: 0.5,
   },
   {
-    id: "cam_b",
+    id: "CAM-B-002",
     name: "Camera B",
     location: "Busay Blind Curve — Exit",
     rtsp_url:
-      process.env.CAM_B_RTSP ?? "rtsp://192.168.8.108:554/cam/realmonitor",
-    fps: 30,
-    resolution: "1920x1080",
+      process.env.CAM_B_RTSP ?? "rtsp://192.168.8.102:554/cam/realmonitor",
+    fps: 15,
+    resolution: "640x480",
     pixels_per_meter: 8.0,
     speed_limit: 40.0,
     detection_confidence: 0.5,
@@ -41,6 +41,15 @@ const DEFAULT_CAMERAS: CameraRow[] = [
 ];
 
 export async function seedCameras(): Promise<void> {
+  // Remove legacy IDs if they exist with no data
+  for (const oldId of ["cam_a", "cam_b"]) {
+    try {
+      await query("DELETE FROM cameras WHERE id = ?", [oldId]);
+    } catch {
+      // ignore — may have FK constraints if data exists
+    }
+  }
+
   for (const cam of DEFAULT_CAMERAS) {
     await query(
       `INSERT INTO cameras
@@ -60,5 +69,5 @@ export async function seedCameras(): Promise<void> {
       ],
     );
   }
-  logger.info("Camera seed complete (cam_a, cam_b)");
+  logger.info("Camera seed complete (CAM-A-001, CAM-B-002)");
 }

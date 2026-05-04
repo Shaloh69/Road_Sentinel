@@ -8,8 +8,11 @@ import { io } from "../server";
 const router = Router();
 
 // ── In-memory MJPEG frame buffer ──────────────────────────────────────────────
-const frameBuffer = new Map<string, Buffer>();
+const frameBuffer  = new Map<string, Buffer>();
 const frameEmitters = new Map<string, EventEmitter>();
+const frameTimers  = new Map<string, ReturnType<typeof setTimeout>>();
+
+const FRAME_TIMEOUT_MS = 15_000; // mark offline if no frame for 15s
 
 function getEmitter(cameraId: string): EventEmitter {
   if (!frameEmitters.has(cameraId)) {
@@ -18,6 +21,29 @@ function getEmitter(cameraId: string): EventEmitter {
     frameEmitters.set(cameraId, emitter);
   }
   return frameEmitters.get(cameraId)!;
+}
+
+async function setCameraOnline(cameraId: string, isFirst: boolean) {
+  await query("UPDATE cameras SET status = 'online', updated_at = NOW() WHERE id = ?", [cameraId]);
+  if (isFirst) {
+    io.emit("camera_status", { type: "camera_status", data: { camera_id: cameraId, status: "online" } });
+    logger.info(`🟢 Camera ${cameraId} — status changed to ONLINE`);
+  }
+}
+
+async function setCameraOffline(cameraId: string) {
+  await query("UPDATE cameras SET status = 'offline', updated_at = NOW() WHERE id = ?", [cameraId]);
+  io.emit("camera_status", { type: "camera_status", data: { camera_id: cameraId, status: "offline" } });
+  logger.warn(`🔴 Camera ${cameraId} — status changed to OFFLINE (no frames for ${FRAME_TIMEOUT_MS / 1000}s)`);
+}
+
+function resetFrameTimeout(cameraId: string) {
+  const existing = frameTimers.get(cameraId);
+  if (existing) clearTimeout(existing);
+  frameTimers.set(
+    cameraId,
+    setTimeout(() => setCameraOffline(cameraId).catch(() => {}), FRAME_TIMEOUT_MS),
+  );
 }
 
 // GET /api/cameras — list all cameras
@@ -140,6 +166,8 @@ router.put(
     getEmitter(id).emit("frame", jpeg);
     if (isFirst)
       logger.info(`📹 Camera ${id} — first frame received (MJPEG stream live)`);
+    setCameraOnline(id, isFirst).catch(() => {});
+    resetFrameTimeout(id);
     res.status(204).end();
   },
 );
