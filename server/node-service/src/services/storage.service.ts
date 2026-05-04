@@ -1,222 +1,127 @@
-import {
-  uploadImage,
-  uploadVideo,
-  deleteFile,
-  STORAGE_BUCKETS,
-} from "../config/supabase";
-import { logger } from "../config/logger";
+import axios from "axios";
+import FormData from "form-data";
 import { v4 as uuidv4 } from "uuid";
+import { logger } from "../config/logger";
+
+// All media is stored on the PC running the AI service (Cloudflare tunnel).
+// The AI service exposes /api/storage/upload and /media/... for public access.
+const AI_URL = (process.env.AI_SERVICE_URL || "http://localhost:8000").replace(
+  /\/$/,
+  "",
+);
 
 class StorageService {
-  /**
-   * Save incident snapshot to Supabase Storage
-   * @param imageBuffer - Image buffer
-   * @param cameraId - Camera ID
-   * @param incidentType - Type of incident
-   * @returns Public URL of uploaded image
-   */
+  private async upload(
+    buffer: Buffer,
+    path: string,
+    contentType: string,
+  ): Promise<string | null> {
+    try {
+      const form = new FormData();
+      form.append("file", buffer, {
+        filename: path.split("/").pop()!,
+        contentType,
+      });
+      form.append("path", path);
+
+      const res = await axios.post(`${AI_URL}/api/storage/upload`, form, {
+        headers: form.getHeaders(),
+        timeout: 30_000,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      });
+
+      return (res.data.url as string) ?? null;
+    } catch (err) {
+      logger.error(
+        `PC storage upload failed (${path}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private async deleteByUrl(url: string): Promise<void> {
+    try {
+      const match = url.match(/\/media\/(.+)$/);
+      if (!match) return;
+      await axios.delete(`${AI_URL}/api/storage/delete`, {
+        params: { path: match[1] },
+        timeout: 10_000,
+      });
+    } catch (err) {
+      logger.error(
+        `PC storage delete failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   async saveIncidentSnapshot(
     imageBuffer: Buffer,
     cameraId: string,
     incidentType: string,
   ): Promise<string | null> {
-    try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = `${cameraId}/${incidentType}/${timestamp}_${uuidv4()}.jpg`;
-
-      const url = await uploadImage(
-        STORAGE_BUCKETS.INCIDENTS,
-        filename,
-        imageBuffer,
-        "image/jpeg",
-      );
-
-      if (url) {
-        logger.info(`Incident snapshot saved: ${url}`);
-      }
-
-      return url;
-    } catch (error) {
-      logger.error("Error saving incident snapshot:", error);
-      return null;
-    }
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const path = `incidents/${cameraId}/${incidentType}/${ts}_${uuidv4()}.jpg`;
+    const url = await this.upload(imageBuffer, path, "image/jpeg");
+    if (url) logger.info(`📸 Incident snapshot saved to PC storage: ${url}`);
+    return url;
   }
 
-  /**
-   * Save incident video clip to Supabase Storage
-   * @param videoBuffer - Video buffer
-   * @param cameraId - Camera ID
-   * @param incidentType - Type of incident
-   * @returns Public URL of uploaded video
-   */
   async saveIncidentVideo(
     videoBuffer: Buffer,
     cameraId: string,
     incidentType: string,
   ): Promise<string | null> {
-    try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = `${cameraId}/${incidentType}/${timestamp}_${uuidv4()}.mp4`;
-
-      const url = await uploadVideo(
-        STORAGE_BUCKETS.INCIDENTS,
-        filename,
-        videoBuffer,
-      );
-
-      if (url) {
-        logger.info(`Incident video saved: ${url}`);
-      }
-
-      return url;
-    } catch (error) {
-      logger.error("Error saving incident video:", error);
-      return null;
-    }
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const path = `incidents/${cameraId}/${incidentType}/${ts}_${uuidv4()}.mp4`;
+    const url = await this.upload(videoBuffer, path, "video/mp4");
+    if (url) logger.info(`🎬 Incident video saved to PC storage: ${url}`);
+    return url;
   }
 
-  /**
-   * Save recording to Supabase Storage
-   * @param videoBuffer - Video buffer
-   * @param cameraId - Camera ID
-   * @param recordingId - Recording ID
-   * @returns Public URL of uploaded video
-   */
   async saveRecording(
     videoBuffer: Buffer,
     cameraId: string,
     recordingId: string,
   ): Promise<string | null> {
-    try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = `${cameraId}/${timestamp}_${recordingId}.mp4`;
-
-      const url = await uploadVideo(
-        STORAGE_BUCKETS.RECORDINGS,
-        filename,
-        videoBuffer,
-      );
-
-      if (url) {
-        logger.info(`Recording saved: ${url}`);
-      }
-
-      return url;
-    } catch (error) {
-      logger.error("Error saving recording:", error);
-      return null;
-    }
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const path = `recordings/${cameraId}/${ts}_${recordingId}.mp4`;
+    const url = await this.upload(videoBuffer, path, "video/mp4");
+    if (url) logger.info(`🎬 Recording saved to PC storage: ${url}`);
+    return url;
   }
 
-  /**
-   * Save recording thumbnail
-   * @param imageBuffer - Thumbnail image buffer
-   * @param cameraId - Camera ID
-   * @param recordingId - Recording ID
-   * @returns Public URL of uploaded thumbnail
-   */
   async saveRecordingThumbnail(
     imageBuffer: Buffer,
     cameraId: string,
     recordingId: string,
   ): Promise<string | null> {
-    try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = `${cameraId}/thumbnails/${timestamp}_${recordingId}.jpg`;
-
-      const url = await uploadImage(
-        STORAGE_BUCKETS.RECORDINGS,
-        filename,
-        imageBuffer,
-        "image/jpeg",
-      );
-
-      if (url) {
-        logger.info(`Recording thumbnail saved: ${url}`);
-      }
-
-      return url;
-    } catch (error) {
-      logger.error("Error saving recording thumbnail:", error);
-      return null;
-    }
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const path = `recordings/${cameraId}/thumbnails/${ts}_${recordingId}.jpg`;
+    const url = await this.upload(imageBuffer, path, "image/jpeg");
+    if (url) logger.info(`📸 Thumbnail saved to PC storage: ${url}`);
+    return url;
   }
 
-  /**
-   * Delete incident files
-   * @param imageUrl - Image URL to delete
-   * @param videoUrl - Video URL to delete (optional)
-   */
   async deleteIncidentFiles(
     imageUrl?: string,
     videoUrl?: string,
   ): Promise<void> {
-    try {
-      if (imageUrl) {
-        const imagePath = this.extractPathFromUrl(imageUrl);
-        if (imagePath) {
-          await deleteFile(STORAGE_BUCKETS.INCIDENTS, imagePath);
-        }
-      }
-
-      if (videoUrl) {
-        const videoPath = this.extractPathFromUrl(videoUrl);
-        if (videoPath) {
-          await deleteFile(STORAGE_BUCKETS.INCIDENTS, videoPath);
-        }
-      }
-    } catch (error) {
-      logger.error("Error deleting incident files:", error);
-    }
+    await Promise.all([
+      imageUrl ? this.deleteByUrl(imageUrl) : Promise.resolve(),
+      videoUrl ? this.deleteByUrl(videoUrl) : Promise.resolve(),
+    ]);
   }
 
-  /**
-   * Delete recording files
-   * @param videoUrl - Recording video URL
-   * @param thumbnailUrl - Thumbnail URL (optional)
-   */
   async deleteRecordingFiles(
     videoUrl: string,
     thumbnailUrl?: string,
   ): Promise<void> {
-    try {
-      const videoPath = this.extractPathFromUrl(videoUrl);
-      if (videoPath) {
-        await deleteFile(STORAGE_BUCKETS.RECORDINGS, videoPath);
-      }
-
-      if (thumbnailUrl) {
-        const thumbPath = this.extractPathFromUrl(thumbnailUrl);
-        if (thumbPath) {
-          await deleteFile(STORAGE_BUCKETS.RECORDINGS, thumbPath);
-        }
-      }
-    } catch (error) {
-      logger.error("Error deleting recording files:", error);
-    }
-  }
-
-  /**
-   * Extract file path from Supabase public URL
-   * @param url - Supabase public URL
-   * @returns File path in bucket
-   */
-  private extractPathFromUrl(url: string): string | null {
-    try {
-      // URL format: https://project.supabase.co/storage/v1/object/public/bucket-name/path/to/file
-      const urlParts = url.split("/");
-      const publicIndex = urlParts.indexOf("public");
-      if (publicIndex !== -1 && publicIndex + 2 < urlParts.length) {
-        // Skip bucket name and get the rest as path
-        return urlParts.slice(publicIndex + 2).join("/");
-      }
-      return null;
-    } catch (error) {
-      logger.error("Error extracting path from URL:", error);
-      return null;
-    }
+    await Promise.all([
+      this.deleteByUrl(videoUrl),
+      thumbnailUrl ? this.deleteByUrl(thumbnailUrl) : Promise.resolve(),
+    ]);
   }
 }
 
-// Export singleton instance
 export const storageService = new StorageService();

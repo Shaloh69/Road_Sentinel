@@ -1,8 +1,10 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 import logging
 from typing import Optional
@@ -21,7 +23,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+# ── Local PC storage ───────────────────────────────────────────────────────────
+# Files are saved here and served publicly via Cloudflare tunnel.
+# Set STORAGE_BASE_URL to your Cloudflare tunnel URL, e.g.:
+#   STORAGE_BASE_URL=https://your-pc.trycloudflare.com
+MEDIA_DIR = Path(os.getenv("MEDIA_DIR", "./media"))
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+(MEDIA_DIR / "incidents").mkdir(exist_ok=True)
+(MEDIA_DIR / "recordings").mkdir(exist_ok=True)
+
+STORAGE_BASE_URL = os.getenv("STORAGE_BASE_URL", "").rstrip("/")
+
+# ── Initialize FastAPI app ─────────────────────────────────────────────────────
 app = FastAPI(
     title="Road Sentinel AI Service",
     description="YOLOv8-based traffic and incident detection service",
@@ -36,6 +49,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve stored media files at /media/...
+app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 
 # Initialize detectors (lazy loading)
 traffic_detector: Optional[TrafficDetector] = None
@@ -235,6 +251,67 @@ async def detect_incidents(
     except Exception as e:
         logger.error(f"Incident detection error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/storage/upload")
+async def storage_upload(
+    file: UploadFile = File(...),
+    path: str = Form(...),
+):
+    """
+    Save a file to local PC storage and return its public URL.
+    path  — relative path inside the media dir, e.g. 'incidents/cam_a/2026-01-01_abc.jpg'
+    Returns { url, path }
+    """
+    # Sanitise: prevent directory traversal
+    safe_path = Path(path).as_posix().lstrip("/")
+    if ".." in safe_path:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    dest = MEDIA_DIR / safe_path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    content = await file.read()
+    dest.write_bytes(content)
+
+    # Build public URL from Cloudflare tunnel base or fall back to localhost
+    base = STORAGE_BASE_URL or f"http://localhost:{os.getenv('PORT', '8000')}"
+    public_url = f"{base}/media/{safe_path}"
+
+    logger.info(f"Storage upload: {safe_path}  ({len(content):,} bytes) → {public_url}")
+    return JSONResponse({"success": True, "url": public_url, "path": safe_path})
+
+
+@app.delete("/api/storage/delete")
+async def storage_delete(path: str = Query(...)):
+    """
+    Delete a file from local PC storage.
+    path — relative path inside the media dir
+    """
+    safe_path = Path(path).as_posix().lstrip("/")
+    if ".." in safe_path:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    dest = MEDIA_DIR / safe_path
+    if dest.exists() and dest.is_file():
+        dest.unlink()
+        logger.info(f"Storage delete: {safe_path}")
+        return JSONResponse({"success": True})
+    return JSONResponse({"success": False, "error": "File not found"}, status_code=404)
+
+
+@app.get("/api/storage/list")
+async def storage_list(prefix: str = ""):
+    """List stored files under an optional prefix."""
+    base = MEDIA_DIR / prefix if prefix else MEDIA_DIR
+    if not base.exists():
+        return JSONResponse({"files": []})
+    files = [
+        str(p.relative_to(MEDIA_DIR)).replace("\\", "/")
+        for p in base.rglob("*")
+        if p.is_file()
+    ]
+    return JSONResponse({"files": sorted(files)})
 
 
 @app.get("/api/stats")
