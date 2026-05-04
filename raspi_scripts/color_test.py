@@ -44,7 +44,7 @@ def main():
     )
     fb = np.zeros((H, W, 3), dtype=np.uint8)
     matrix = piomatter.PioMatter(
-        colorspace=piomatter.Colorspace.RGB888Packed,
+        colorspace=piomatter.Colorspace.BGR888Packed,
         pinout=piomatter.Pinout.Active3,
         framebuffer=fb,
         geometry=geo,
@@ -67,8 +67,11 @@ def main():
                 matrix.show()
                 time.sleep(args.delay)
     except KeyboardInterrupt:
+        # Blank the panel — send black a few times so PIO flushes fully
         fb[:] = 0
-        matrix.show()
+        for _ in range(8):
+            matrix.show()
+            time.sleep(0.05)
         print("Done.")
 
 if __name__ == "__main__":
