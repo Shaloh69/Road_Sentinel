@@ -79,34 +79,49 @@ app.use("/api/analytics", analyticsRoutes);
 
 // ── Socket.IO ──────────────────────────────────────────────────────────────
 
-// Track running terminal processes per socket so we can kill on disconnect
+// Track running server-side terminal processes per socket
 const terminalProcesses = new Map<string, ReturnType<typeof spawn>>();
 
+// Track connected Pi agents: piId (e.g. 'pi4') → socket.id
+const piAgents = new Map<string, string>();
+
 io.on("connection", (socket) => {
-  logger.info(`Client connected: ${socket.id}`);
+  logger.info(
+    `🔌 WebSocket client connected: ${socket.id}  (total: ${io.engine.clientsCount})`,
+  );
 
   socket.on("disconnect", () => {
-    // Kill any open terminal process this socket owned
+    // Kill any server-side process this socket owned
     const proc = terminalProcesses.get(socket.id);
     if (proc) {
       proc.kill();
       terminalProcesses.delete(socket.id);
     }
-    logger.info(`Client disconnected: ${socket.id}`);
+    // If this was a Pi agent, notify admins it went offline
+    for (const [piId, sid] of piAgents.entries()) {
+      if (sid === socket.id) {
+        piAgents.delete(piId);
+        io.to("admin").emit("pi_status", { piId, online: false });
+        logger.warn(`🔴 Pi agent OFFLINE: ${piId}`);
+        break;
+      }
+    }
+    logger.info(
+      `🔌 WebSocket client disconnected: ${socket.id}  (total: ${io.engine.clientsCount})`,
+    );
   });
 
-  // Subscribe to a specific camera feed
+  // ── Camera subscriptions ──────────────────────────────────────────────────
+
   socket.on("subscribe_camera", (cameraId: string) => {
     socket.join(`camera:${cameraId}`);
-    logger.info(`Client ${socket.id} subscribed to camera ${cameraId}`);
+    logger.info(`📷 Client subscribed to camera:${cameraId}`);
   });
 
   socket.on("unsubscribe_camera", (cameraId: string) => {
     socket.leave(`camera:${cameraId}`);
-    logger.info(`Client ${socket.id} unsubscribed from camera ${cameraId}`);
   });
 
-  // Subscribe to all incidents regardless of camera
   socket.on("subscribe_incidents", () => {
     socket.join("incidents");
     logger.info(`Client ${socket.id} subscribed to incidents`);
@@ -120,25 +135,68 @@ io.on("connection", (socket) => {
 
   socket.on("subscribe_admin", () => {
     socket.join("admin");
-    logger.info(`Admin terminal session opened: ${socket.id}`);
+    logger.info(`🖥️  Admin terminal session opened: ${socket.id}`);
+    // Send current Pi agent status snapshot to this new admin client
+    const snapshot: Record<string, boolean> = {};
+    for (const [piId] of piAgents.entries()) {
+      snapshot[piId] = true;
+    }
+    socket.emit("pi_status_all", snapshot);
   });
 
   socket.on("unsubscribe_admin", () => {
     socket.leave("admin");
   });
 
-  socket.on("terminal_command", (data: { command: string }) => {
-    const { command } = data;
+  // ── Pi agent ─────────────────────────────────────────────────────────────
+
+  socket.on("pi_register", (piId: string) => {
+    piAgents.set(piId, socket.id);
+    io.to("admin").emit("pi_status", { piId, online: true });
+    logger.info(`🟢 Pi agent ONLINE: ${piId}  socket=${socket.id}`);
+  });
+
+  // Pi streams command output → route back to the requesting admin socket
+  socket.on(
+    "pi_output",
+    (payload: { type: string; data: string; requesterId: string }) => {
+      const { type, data, requesterId } = payload;
+      io.to(requesterId).emit("terminal_output", { type, data });
+    },
+  );
+
+  // ── Terminal command (target: 'server' | 'pi4' | 'pi5') ──────────────────
+
+  socket.on("terminal_command", (data: { command: string; target: string }) => {
+    const { command, target } = data;
     if (!command?.trim()) return;
 
-    // Kill any previous process for this socket
+    if (target !== "server") {
+      // Route command to the Pi agent
+      const piSocketId = piAgents.get(target);
+      if (!piSocketId) {
+        socket.emit("terminal_output", {
+          type: "stderr",
+          data: `\n[${target} is not connected — start roadsentinel-agent service on that Pi]\n`,
+        });
+        socket.emit("terminal_output", { type: "exit", data: "" });
+        return;
+      }
+      io.to(piSocketId).emit("pi_command", {
+        command,
+        requesterId: socket.id,
+      });
+      return;
+    }
+
+    // Server-side: kill previous process for this socket first
     const existing = terminalProcesses.get(socket.id);
     if (existing) {
       existing.kill();
       terminalProcesses.delete(socket.id);
     }
 
-    logger.info(`Terminal [${socket.id}]: ${command}`);
+    logger.info(`🖥️  Terminal [server]: ${command}`);
 
     const isWindows = os.platform() === "win32";
     const shell = isWindows ? "cmd" : "sh";
@@ -182,7 +240,13 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("terminal_kill", () => {
+  socket.on("terminal_kill", (target: string) => {
+    if (target !== "server") {
+      const piSocketId = piAgents.get(target);
+      if (piSocketId) io.to(piSocketId).emit("pi_kill");
+      socket.emit("terminal_output", { type: "stderr", data: "\n^C\n" });
+      return;
+    }
     const proc = terminalProcesses.get(socket.id);
     if (proc) {
       proc.kill("SIGINT");

@@ -83,8 +83,8 @@ mkdir -p "$(dirname "$VENV")"
 python3 -m venv "$VENV" --system-site-packages
 source "$VENV/bin/activate"
 pip install --upgrade pip -q
-pip install aiohttp requests pillow numpy
-python3 -c "import cv2, aiohttp, requests, PIL; print('  deps: OK')"
+pip install aiohttp requests pillow numpy "python-socketio[client]"
+python3 -c "import cv2, aiohttp, requests, PIL, socketio; print('  deps: OK')"
 deactivate
 echo "      Venv OK: $VENV"
 echo
@@ -95,8 +95,10 @@ mkdir -p "$SCRIPTS_DIR" "$LOG_DIR"
 # Use the unified display_manager.py (auto-detects Pi 4 vs Pi 5 via /dev/pio0)
 cp "$SRC_DIR/camera/camera_sender.py"    "$SCRIPTS_DIR/camera_sender.py"
 cp "$SRC_DIR/display_manager.py"         "$SCRIPTS_DIR/display_manager.py"
+cp "$SRC_DIR/pi_agent.py"               "$SCRIPTS_DIR/pi_agent.py"
 chmod +x "$SCRIPTS_DIR/camera_sender.py"
 chmod +x "$SCRIPTS_DIR/display_manager.py"
+chmod +x "$SCRIPTS_DIR/pi_agent.py"
 echo "      Scripts installed to $SCRIPTS_DIR/"
 echo
 
@@ -157,8 +159,33 @@ StandardError=append:${LOG_DIR}/display.log
 WantedBy=multi-user.target
 EOF
 
+# Pi agent service — connects back to Node service for Admin Terminal remote control
+sudo tee /etc/systemd/system/roadsentinel-agent.service > /dev/null <<EOF
+[Unit]
+Description=Road Sentinel Pi Agent (Admin Terminal relay)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=${USER}
+WorkingDirectory=${SCRIPTS_DIR}
+ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/pi_agent.py \\
+    --node ${NODE_URL} \\
+    --id   pi5
+Restart=always
+RestartSec=5
+StandardOutput=append:${LOG_DIR}/agent.log
+StandardError=append:${LOG_DIR}/agent.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 sudo systemctl daemon-reload
-sudo systemctl enable roadsentinel-camera roadsentinel-display
+sudo systemctl enable roadsentinel-camera roadsentinel-display roadsentinel-agent
 echo "      Services installed"
 echo
 
@@ -167,25 +194,29 @@ echo "[6/7] Creating helper scripts..."
 
 cat > "$SCRIPTS_DIR/start.sh" <<'HELPER'
 #!/usr/bin/env bash
-sudo systemctl start roadsentinel-camera roadsentinel-display
+sudo systemctl start roadsentinel-camera roadsentinel-display roadsentinel-agent
 echo "Started. Logs:"
 echo "  tail -f ~/roadsentinel/logs/camera.log"
 echo "  tail -f ~/roadsentinel/logs/display.log"
+echo "  tail -f ~/roadsentinel/logs/agent.log"
 HELPER
 
 cat > "$SCRIPTS_DIR/stop.sh" <<'HELPER'
 #!/usr/bin/env bash
-sudo systemctl stop roadsentinel-camera roadsentinel-display
+sudo systemctl stop roadsentinel-camera roadsentinel-display roadsentinel-agent
 echo "Stopped."
 HELPER
 
 cat > "$SCRIPTS_DIR/status.sh" <<'HELPER'
 #!/usr/bin/env bash
 echo "=== Camera Sender ==="
-sudo systemctl status roadsentinel-camera --no-pager -l | tail -15
+sudo systemctl status roadsentinel-camera --no-pager -l | tail -12
 echo
 echo "=== LED Display ==="
-sudo systemctl status roadsentinel-display --no-pager -l | tail -15
+sudo systemctl status roadsentinel-display --no-pager -l | tail -12
+echo
+echo "=== Pi Agent (Admin Terminal) ==="
+sudo systemctl status roadsentinel-agent --no-pager -l | tail -12
 HELPER
 
 cat > "$SCRIPTS_DIR/test_display.sh" <<HELPER
@@ -199,16 +230,18 @@ HELPER
 cat > "$SCRIPTS_DIR/update.sh" <<HELPER
 #!/usr/bin/env bash
 # Pull latest raspi_scripts from GitHub and restart services
+# This script can also be triggered from the Admin Terminal in the web UI.
 set -euo pipefail
 echo "Pulling latest from GitHub..."
 git -C ${REPO_DIR} pull origin main
 echo "Copying updated scripts..."
 cp "${REPO_DIR}/raspi_scripts/camera/camera_sender.py" "${SCRIPTS_DIR}/camera_sender.py"
 cp "${REPO_DIR}/raspi_scripts/display_manager.py"      "${SCRIPTS_DIR}/display_manager.py"
-chmod +x "${SCRIPTS_DIR}/camera_sender.py" "${SCRIPTS_DIR}/display_manager.py"
+cp "${REPO_DIR}/raspi_scripts/pi_agent.py"             "${SCRIPTS_DIR}/pi_agent.py"
+chmod +x "${SCRIPTS_DIR}/camera_sender.py" "${SCRIPTS_DIR}/display_manager.py" "${SCRIPTS_DIR}/pi_agent.py"
 echo "Restarting services..."
-sudo systemctl restart roadsentinel-camera roadsentinel-display
-echo "Done! Services restarted with latest code."
+sudo systemctl restart roadsentinel-camera roadsentinel-display roadsentinel-agent
+echo "Done! All services restarted with latest code."
 HELPER
 
 chmod +x "$SCRIPTS_DIR/start.sh" "$SCRIPTS_DIR/stop.sh" \
@@ -228,10 +261,11 @@ echo
 echo " Services (start on every boot):"
 echo "   roadsentinel-camera  — Camera B → AI → Node"
 echo "   roadsentinel-display — HUB75 LED matrix (rp1-rio=$LED_RPI_RIO)"
+echo "   roadsentinel-agent   — Admin Terminal relay (connects to $NODE_URL)"
 echo
 echo " Quick commands:"
-echo "   $SCRIPTS_DIR/start.sh        — start both"
-echo "   $SCRIPTS_DIR/stop.sh         — stop both"
+echo "   $SCRIPTS_DIR/start.sh        — start all"
+echo "   $SCRIPTS_DIR/stop.sh         — stop all"
 echo "   $SCRIPTS_DIR/status.sh       — check status"
 echo "   $SCRIPTS_DIR/update.sh       — git pull + restart (or use Admin Terminal)"
 echo "   $SCRIPTS_DIR/test_display.sh — test LED with fake alerts"
@@ -243,7 +277,13 @@ echo " Live logs:"
 echo "   tail -f $LOG_DIR/camera.log"
 echo "   tail -f $LOG_DIR/display.log"
 echo
+echo " Live logs:"
+echo "   tail -f $LOG_DIR/agent.log"
+echo
+echo " Admin Terminal: open the web dashboard → Admin Terminal → select 'Pi 5'"
+echo " (the agent must be running and the Pi must reach $NODE_URL)"
+echo
 echo " Starting services now..."
-sudo systemctl start roadsentinel-camera roadsentinel-display
+sudo systemctl start roadsentinel-camera roadsentinel-display roadsentinel-agent
 echo " Done!"
 echo "================================================"

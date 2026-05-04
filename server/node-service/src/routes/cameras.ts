@@ -1,6 +1,7 @@
 import express, { Router, Request, Response } from "express";
 import { EventEmitter } from "events";
 import { query } from "../config/database";
+import { logger } from "../config/logger";
 import { Camera, ApiResponse } from "../types";
 import { io } from "../server";
 
@@ -103,6 +104,11 @@ router.put("/:id/status", async (req: Request, res: Response) => {
       type: "camera_status",
       data: { camera_id: req.params.id, status },
     });
+    const emoji =
+      status === "online" ? "🟢" : status === "offline" ? "🔴" : "🟡";
+    logger.info(
+      `${emoji} Camera ${req.params.id} — status changed to ${status.toUpperCase()}`,
+    );
     res.json({
       success: true,
       message: `Camera ${req.params.id} status set to ${status}`,
@@ -129,8 +135,11 @@ router.put(
         .json({ success: false, error: "Expected raw JPEG body" });
     }
     const { id } = req.params;
+    const isFirst = !frameBuffer.has(id);
     frameBuffer.set(id, jpeg);
     getEmitter(id).emit("frame", jpeg);
+    if (isFirst)
+      logger.info(`📹 Camera ${id} — first frame received (MJPEG stream live)`);
     res.status(204).end();
   },
 );
@@ -139,6 +148,7 @@ router.put(
 router.get("/:id/stream", (req: Request, res: Response) => {
   const { id } = req.params;
   const boundary = "rsframe";
+  logger.info(`📺 Camera ${id} — new viewer connected to MJPEG stream`);
 
   res.writeHead(200, {
     "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
@@ -169,6 +179,7 @@ router.get("/:id/stream", (req: Request, res: Response) => {
 
   req.on("close", () => {
     emitter.off("frame", sendFrame);
+    logger.info(`📺 Camera ${id} — viewer disconnected from MJPEG stream`);
   });
 });
 

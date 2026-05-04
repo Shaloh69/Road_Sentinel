@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { query } from "../config/database";
+import { logger } from "../config/logger";
 import { Incident, ApiResponse } from "../types";
 import { io } from "../server";
 
@@ -101,6 +102,18 @@ router.post("/", async (req: Request, res: Response) => {
     });
     io.to("incidents").emit("incident", { type: "incident", data: saved });
 
+    const sevEmoji =
+      inc.severity === "critical"
+        ? "🔴"
+        : inc.severity === "high"
+          ? "🟠"
+          : inc.severity === "medium"
+            ? "🟡"
+            : "🔵";
+    logger.warn(
+      `${sevEmoji} INCIDENT [${inc.camera_id}] ${inc.severity?.toUpperCase()} — ${inc.incident_type}: "${inc.title}"`,
+    );
+
     res
       .status(201)
       .json({ success: true, data: saved } as ApiResponse<Incident>);
@@ -133,6 +146,9 @@ router.put("/:id/status", async (req: Request, res: Response) => {
        resolved_at = IF(? = 'resolved', NOW(), resolved_at)
        WHERE id = ?`,
       [status, resolved_by ?? null, notes ?? null, status, req.params.id],
+    );
+    logger.info(
+      `✅ Incident #${req.params.id} → ${status.toUpperCase()}${resolved_by ? ` by ${resolved_by}` : ""}`,
     );
     res.json({
       success: true,

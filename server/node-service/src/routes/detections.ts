@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { query } from "../config/database";
+import { logger } from "../config/logger";
 import { Detection, ApiResponse } from "../types";
 import { io } from "../server";
 
@@ -72,6 +73,11 @@ router.post("/", async (req: Request, res: Response) => {
       type: "detection",
       data: saved,
     });
+
+    const speedStr = d.speed != null ? ` @ ${Math.round(d.speed)} km/h` : "";
+    logger.info(
+      `🚗 Detection [${d.camera_id}] ${d.vehicle_type ?? "vehicle"}${speedStr}  conf=${((d.confidence ?? 0) * 100).toFixed(0)}%`,
+    );
 
     res
       .status(201)

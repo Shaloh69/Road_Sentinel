@@ -6,30 +6,79 @@ import { useState, useEffect, useRef, useCallback, KeyboardEvent } from "react";
 
 import { getSocket } from "@/lib/socket";
 
+type Target = "server" | "pi4" | "pi5";
+
 interface TerminalLine {
   id: number;
   type: "stdout" | "stderr" | "exit" | "command" | "info";
   data: string;
 }
 
-const QUICK_COMMANDS = [
-  { label: "git pull", cmd: "git pull origin main" },
-  { label: "git status", cmd: "git status" },
-  { label: "git log", cmd: "git log --oneline -10" },
-  { label: "node -v", cmd: "node --version && npm --version" },
-  { label: "pwd", cmd: "pwd" },
-  { label: "ls", cmd: "ls -la" },
+interface PiStatus {
+  pi4: boolean;
+  pi5: boolean;
+}
+
+const TARGETS: { id: Target; label: string; desc: string }[] = [
   {
-    label: "env (safe)",
-    cmd: "env | grep -v -i password | grep -v -i key | grep -v -i secret | sort",
+    id: "server",
+    label: "Server",
+    desc: "Node.js service host (Render / local)",
   },
-  { label: "df -h", cmd: "df -h" },
-  { label: "free -h", cmd: "free -h" },
-  { label: "uptime", cmd: "uptime" },
-  { label: "ps aux", cmd: "ps aux | head -20" },
+  { id: "pi4", label: "Pi 4 — Cam A", desc: "Camera A + LED matrix" },
+  { id: "pi5", label: "Pi 5 — Cam B", desc: "Camera B + LED matrix" },
+];
+
+const QUICK_COMMANDS: { label: string; cmd: string; targets: Target[] }[] = [
+  {
+    label: "git pull",
+    cmd: "git pull origin main",
+    targets: ["server", "pi4", "pi5"],
+  },
+  { label: "git status", cmd: "git status", targets: ["server", "pi4", "pi5"] },
+  {
+    label: "git log",
+    cmd: "git log --oneline -10",
+    targets: ["server", "pi4", "pi5"],
+  },
+  {
+    label: "update scripts",
+    cmd: "~/roadsentinel/update.sh",
+    targets: ["pi4", "pi5"],
+  },
   {
     label: "service status",
-    cmd: "systemctl status roadsentinel-camera roadsentinel-display --no-pager 2>&1 | head -40",
+    cmd: "sudo systemctl status roadsentinel-camera roadsentinel-display roadsentinel-agent --no-pager 2>&1 | head -50",
+    targets: ["pi4", "pi5"],
+  },
+  {
+    label: "restart all",
+    cmd: "sudo systemctl restart roadsentinel-camera roadsentinel-display roadsentinel-agent",
+    targets: ["pi4", "pi5"],
+  },
+  {
+    label: "camera log",
+    cmd: "tail -50 ~/roadsentinel/logs/camera.log",
+    targets: ["pi4", "pi5"],
+  },
+  {
+    label: "display log",
+    cmd: "tail -50 ~/roadsentinel/logs/display.log",
+    targets: ["pi4", "pi5"],
+  },
+  {
+    label: "node -v",
+    cmd: "node --version && npm --version",
+    targets: ["server"],
+  },
+  { label: "pwd", cmd: "pwd", targets: ["server", "pi4", "pi5"] },
+  { label: "df -h", cmd: "df -h", targets: ["server", "pi4", "pi5"] },
+  { label: "free -h", cmd: "free -h", targets: ["pi4", "pi5"] },
+  { label: "uptime", cmd: "uptime", targets: ["server", "pi4", "pi5"] },
+  {
+    label: "ps aux",
+    cmd: "ps aux | head -25",
+    targets: ["server", "pi4", "pi5"],
   },
 ];
 
@@ -39,6 +88,11 @@ function stripAnsi(str: string): string {
 }
 
 export default function AdminPage() {
+  const [target, setTarget] = useState<Target>("server");
+  const [piStatus, setPiStatus] = useState<PiStatus>({
+    pi4: false,
+    pi5: false,
+  });
   const [lines, setLines] = useState<TerminalLine[]>([
     {
       id: 0,
@@ -56,6 +110,12 @@ export default function AdminPage() {
   const termRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const lineId = useRef(1);
+  const targetRef = useRef<Target>("server");
+
+  // Keep targetRef in sync for use inside event handlers
+  useEffect(() => {
+    targetRef.current = target;
+  }, [target]);
 
   const push = useCallback((type: TerminalLine["type"], data: string) => {
     setLines((prev) => [
@@ -84,10 +144,25 @@ export default function AdminPage() {
       if (type === "exit") setIsRunning(false);
       push(type as TerminalLine["type"], data);
     };
+    const onPiStatus = ({
+      piId,
+      online,
+    }: {
+      piId: string;
+      online: boolean;
+    }) => {
+      setPiStatus((prev) => ({ ...prev, [piId]: online }));
+      push("info", `${piId} ${online ? "connected" : "disconnected"}.\n`);
+    };
+    const onPiStatusAll = (snapshot: Record<string, boolean>) => {
+      setPiStatus((prev) => ({ ...prev, ...snapshot }));
+    };
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("terminal_output", onOutput);
+    socket.on("pi_status", onPiStatus);
+    socket.on("pi_status_all", onPiStatusAll);
 
     if (socket.connected) {
       setConnected(true);
@@ -99,32 +174,41 @@ export default function AdminPage() {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("terminal_output", onOutput);
+      socket.off("pi_status", onPiStatus);
+      socket.off("pi_status_all", onPiStatusAll);
     };
-    // push is stable (useCallback with no deps)
   }, []);
 
-  // Auto-scroll to bottom on new output
+  // Auto-scroll on new output
   useEffect(() => {
-    if (termRef.current) {
+    if (termRef.current)
       termRef.current.scrollTop = termRef.current.scrollHeight;
-    }
   }, [lines]);
+
+  const isTargetOnline = (t: Target) => {
+    if (t === "server") return connected;
+
+    return piStatus[t as keyof PiStatus];
+  };
 
   const run = useCallback(
     (cmd: string) => {
       if (!cmd.trim() || isRunning || !connected) return;
-      push("command", `$ ${cmd}\n`);
+      push("command", `[${targetRef.current}] $ ${cmd}\n`);
       setHistory((prev) => [cmd, ...prev.slice(0, 49)]);
       setHistoryIdx(-1);
       setCommand("");
       setIsRunning(true);
-      socketRef.current?.emit("terminal_command", { command: cmd });
+      socketRef.current?.emit("terminal_command", {
+        command: cmd,
+        target: targetRef.current,
+      });
     },
     [isRunning, connected, push],
   );
 
   const kill = useCallback(() => {
-    socketRef.current?.emit("terminal_kill");
+    socketRef.current?.emit("terminal_kill", targetRef.current);
     setIsRunning(false);
     push("stderr", "\n^C\n");
   }, [push]);
@@ -172,6 +256,10 @@ export default function AdminPage() {
     }
   };
 
+  const visibleCommands = QUICK_COMMANDS.filter((qc) =>
+    qc.targets.includes(target),
+  );
+
   return (
     <div className="p-6 min-h-screen">
       <div className="max-w-5xl mx-auto space-y-4">
@@ -180,7 +268,7 @@ export default function AdminPage() {
           <div>
             <h1 className="text-2xl font-bold text-white">Admin Terminal</h1>
             <p className="text-white/50 text-sm mt-1">
-              Execute shell commands on the Node service host
+              Run shell commands on the server or directly on each Raspberry Pi
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -193,17 +281,76 @@ export default function AdminPage() {
           </div>
         </div>
 
+        {/* Target selector */}
+        <div className="p-4 bg-white/5 rounded-xl border border-white/10">
+          <p className="text-[10px] uppercase tracking-widest text-white/40 mb-3">
+            Target Device
+          </p>
+          <div className="flex gap-3">
+            {TARGETS.map((t) => {
+              const online = isTargetOnline(t.id);
+              const active = target === t.id;
+
+              return (
+                <button
+                  key={t.id}
+                  className={`flex-1 flex flex-col items-start gap-1 px-4 py-3 rounded-xl border transition-all ${
+                    active
+                      ? "bg-[#ED9E59]/15 border-[#ED9E59]/60 text-white"
+                      : "bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white"
+                  }`}
+                  onClick={() => {
+                    setTarget(t.id);
+                    push("info", `Switched target to ${t.label}.\n`);
+                  }}
+                >
+                  <div className="flex items-center gap-2 w-full">
+                    <span
+                      className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        online ? "bg-green-400 animate-pulse" : "bg-red-400/60"
+                      }`}
+                    />
+                    <span className="font-semibold text-sm">{t.label}</span>
+                    <span
+                      className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                        online
+                          ? "bg-green-400/15 text-green-400"
+                          : "bg-red-400/10 text-red-400/60"
+                      }`}
+                    >
+                      {online ? "ONLINE" : "OFFLINE"}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-white/40 pl-4">
+                    {t.desc}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {(target === "pi4" || target === "pi5") && !piStatus[target] && (
+            <p className="mt-3 text-xs text-yellow-400/70 pl-1">
+              {target} is offline — make sure{" "}
+              <code className="font-mono bg-white/10 px-1 rounded">
+                roadsentinel-agent
+              </code>{" "}
+              service is running on that Pi. The Pi must be able to reach the
+              Node service URL.
+            </p>
+          )}
+        </div>
+
         {/* Quick commands */}
         <div className="p-4 bg-white/5 rounded-xl border border-white/10">
           <p className="text-[10px] uppercase tracking-widest text-white/40 mb-3">
-            Quick Commands
+            Quick Commands — {TARGETS.find((t) => t.id === target)?.label}
           </p>
           <div className="flex flex-wrap gap-2">
-            {QUICK_COMMANDS.map((qc) => (
+            {visibleCommands.map((qc) => (
               <button
                 key={qc.cmd}
                 className="px-3 py-1.5 text-xs rounded-lg bg-white/10 hover:bg-white/20 text-white/75 hover:text-white border border-white/10 transition-all disabled:opacity-30 disabled:cursor-not-allowed font-mono"
-                disabled={isRunning || !connected}
+                disabled={isRunning || !connected || !isTargetOnline(target)}
                 onClick={() => run(qc.cmd)}
               >
                 {qc.label}
@@ -220,7 +367,10 @@ export default function AdminPage() {
             <span className="w-3 h-3 rounded-full bg-[#ffbd2e]" />
             <span className="w-3 h-3 rounded-full bg-[#28c840]" />
             <span className="ml-3 text-xs text-white/30 font-mono">
-              road-sentinel — admin terminal
+              road-sentinel @{" "}
+              <span className="text-[#ED9E59]">
+                {TARGETS.find((t) => t.id === target)?.label ?? target}
+              </span>
             </span>
             {isRunning && (
               <button
@@ -263,7 +413,9 @@ export default function AdminPage() {
 
           {/* Input row */}
           <div className="flex items-center gap-2 px-4 py-3 border-t border-white/10 bg-[#0a0a0a]">
-            <span className="text-[#ED9E59] font-mono select-none">$</span>
+            <span className="text-[#ED9E59] font-mono select-none text-sm">
+              [{TARGETS.find((t) => t.id === target)?.label}] $
+            </span>
             <input
               ref={inputRef}
               autoComplete="off"
@@ -274,7 +426,7 @@ export default function AdminPage() {
                   ? "Not connected..."
                   : isRunning
                     ? "Running... (Ctrl+C to kill)"
-                    : "Type a command and press Enter"
+                    : `Type a command for ${TARGETS.find((t) => t.id === target)?.label}`
               }
               spellCheck={false}
               type="text"
@@ -294,10 +446,22 @@ export default function AdminPage() {
 
         {/* Tips */}
         <div className="p-4 bg-white/5 rounded-xl border border-white/10 text-xs text-white/40 space-y-1">
-          <p className="text-white/60 font-medium mb-1">Keyboard shortcuts</p>
-          <p>↑ / ↓ — navigate command history</p>
-          <p>Ctrl+C — kill running process</p>
-          <p>Ctrl+L — clear terminal</p>
+          <p className="text-white/60 font-medium mb-1">
+            How Pi terminal works
+          </p>
+          <p>
+            Each Pi runs a{" "}
+            <code className="font-mono bg-white/10 px-1 rounded">
+              roadsentinel-agent
+            </code>{" "}
+            service that connects back to this Node server — no SSH or open
+            ports needed on the Pi.
+          </p>
+          <p className="mt-2 text-white/60 font-medium">Keyboard shortcuts</p>
+          <p>
+            ↑ / ↓ — navigate command history &nbsp;·&nbsp; Ctrl+C — kill process
+            &nbsp;·&nbsp; Ctrl+L — clear
+          </p>
         </div>
       </div>
     </div>
