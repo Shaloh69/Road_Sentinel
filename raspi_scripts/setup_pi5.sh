@@ -100,7 +100,7 @@ mkdir -p "$(dirname "$VENV")"
 python3 -m venv "$VENV" --system-site-packages
 source "$VENV/bin/activate"
 pip install --upgrade pip -q
-pip install aiohttp requests "pillow>=10.0" numpy "python-socketio[client]"
+pip install aiohttp requests "pillow>=10.0" numpy "python-socketio[client]" adafruit-blinka-raspberry-pi5-piomatter
 python3 -c "import cv2, aiohttp, requests, PIL, socketio; print('  deps: OK')"
 deactivate
 echo "      Venv OK: $VENV"
