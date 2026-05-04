@@ -9,6 +9,8 @@
 #   NODE_URL   = http://192.168.8.50:3001
 #   CAM_A_RTSP = rtsp://192.168.8.104:554/cam/realmonitor?channel=1&subtype=1
 #   AI_URL     = http://192.168.8.50:8000
+#
+# After setup, SSH via:  ssh pi@pi4-sentinel.local  (no IP needed, ever)
 
 set -euo pipefail
 
@@ -16,6 +18,7 @@ NODE_URL="${1:-http://192.168.8.50:3001}"
 CAM_A_RTSP="${2:-rtsp://192.168.8.104:554/cam/realmonitor?channel=1&subtype=1}"
 AI_URL="${3:-http://192.168.8.50:8000}"
 CAMERA_ID="CAM-A-001"
+HOSTNAME="pi4-sentinel"
 
 VENV="$HOME/venvs/cam_venv"
 SCRIPTS_DIR="$HOME/roadsentinel"
@@ -31,7 +34,22 @@ echo " Node service : $NODE_URL"
 echo " AI service   : $AI_URL"
 echo " Camera A     : $CAM_A_RTSP"
 echo " Camera ID    : $CAMERA_ID"
+echo " Hostname     : $HOSTNAME"
 echo "================================================"
+echo
+
+# ── [0] Set hostname ───────────────────────────────────────────────────────────
+echo "[0/7] Setting hostname to '$HOSTNAME'..."
+CURRENT_HOSTNAME="$(hostname)"
+if [ "$CURRENT_HOSTNAME" != "$HOSTNAME" ]; then
+    sudo hostnamectl set-hostname "$HOSTNAME"
+    # Update /etc/hosts so localhost resolution still works
+    sudo sed -i "s/127\.0\.1\.1.*/127.0.1.1\t$HOSTNAME/" /etc/hosts
+    echo "      Hostname changed: $CURRENT_HOSTNAME → $HOSTNAME"
+    echo "      SSH after reboot: ssh pi@${HOSTNAME}.local"
+else
+    echo "      Already set to '$HOSTNAME' — skipping"
+fi
 echo
 
 # ── [1] System packages ────────────────────────────────────────────────────────
@@ -261,6 +279,9 @@ echo "   tail -f $LOG_DIR/agent.log"
 echo
 echo " Admin Terminal: open the web dashboard → Admin Terminal → select 'Pi 4'"
 echo " (the agent must be running and the Pi must reach $NODE_URL)"
+echo
+echo " SSH (no IP needed — works even after router restarts):"
+echo "   ssh pi@${HOSTNAME}.local"
 echo
 echo " Starting services now..."
 sudo systemctl start roadsentinel-camera roadsentinel-display roadsentinel-agent
