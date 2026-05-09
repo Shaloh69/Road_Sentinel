@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import signal
 import time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -73,7 +74,9 @@ def main():
                     matrix.show()
                     time.sleep(0.016)  # ~60 Hz refresh — HUB75 needs continuous show()
     except KeyboardInterrupt:
-        # Blank the panel — send black a few times so PIO flushes fully
+        # Block further Ctrl-C so a double-tap doesn't kill cleanup mid-flight
+        # and leave PIO state machines allocated (causes "PANIC: No PIO state machines")
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         fb[:] = 0
         for _ in range(8):
             matrix.show()
