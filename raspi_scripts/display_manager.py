@@ -33,6 +33,7 @@ Run:
 import argparse
 import logging
 import os
+import signal
 import socket
 import subprocess
 import time
@@ -296,7 +297,10 @@ class PioMatterBackend(DisplayBackend):
         self._matrix.show()
 
     def close(self) -> None:
-        self.clear()
+        self._fb[:] = 0
+        for _ in range(16):
+            self._matrix.show()
+            time.sleep(0.02)
 
 
 # ── Emulator backend: RGBMatrixEmulator (Windows / Mac / Linux, no Pi needed) ─
@@ -926,10 +930,14 @@ Examples:
         time.sleep(0.5)
         provider.trigger_test_vehicle()
 
+    # SIGTERM (sent by systemctl stop) must be converted to KeyboardInterrupt
+    # so the finally block runs and the panel gets blanked.
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+
     try:
         run(backend, state)
     except KeyboardInterrupt:
-        log.info("Stopped by user")
+        log.info("Stopped by user or SIGTERM")
     finally:
         backend.close()
         log.info("Display cleared")
