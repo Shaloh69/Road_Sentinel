@@ -1,5 +1,5 @@
 # HUB75 + Raspberry Pi 5 + piomatter — Research Notes
-> Last updated: 2026-05-09
+> Last updated: 2026-05-09 (added hzeller findings)
 
 ---
 
@@ -21,22 +21,38 @@
 - In a tight loop: restart every ~1ms = constant micro-blackouts = flickering + noise
 - **Fix:** Call show() ONCE when content changes, then sleep. Do NOT hammer show().
 
-### [SECONDARY] OE (Output Enable) Pin Floating
-- OE is active LOW on HUB75 (LOW = panel ON, HIGH = panel OFF)
-- If OE is floating, panel randomly enables/disables → white characters, noise
-- GPIO 18 (Pi physical pin 12) → HUB75 pin 15 (OE)
-- Verify this jumper is actually connected
+### [CRITICAL] OE (Output Enable) Pin Floating — hzeller confirmed
+- OE- is **active LOW** (LOW = panel ON, HIGH = panel OFF)
+- hzeller docs: "If OE/CLK/LAT float → erratic pixels, random dots, flickering, garbage output"
+- **OE floating = panel randomly fires at full brightness → white characters/noise**
+- GPIO 18 (Pi physical pin 12) → HUB75 pin 15 (OE) — must be connected, cannot float
+- Same for CLK (GPIO17) and LAT (GPIO4) — all three must be solid connections
 
-### [SECONDARY] 3.3V Logic vs 5V HUB75
-- Pi outputs 3.3V; HUB75 expects 5V logic
-- Many cheap panels accept 3.3V but it degrades signal margin
-- Level shifter (74AHCT245) is the proper fix; without it, keep wires SHORT
+### [CRITICAL] Disable Pi On-Board Audio — hzeller confirmed
+- hzeller explicitly warns: **disable on-board sound** — it uses the same PWM timing hardware as GPIO
+- On Pi 5 this still applies; audio driver competing for timing resources causes GPIO noise
+- Fix on Pi: `sudo nano /boot/firmware/config.txt` → add `dtparam=audio=off` → reboot
+- Or check: `sudo systemctl disable --now pulseaudio`
 
-### [MINOR] Slowdown Argument — Currently a Dead Arg
-- Our `--slowdown` arg is parsed but NEVER passed to piomatter
-- The Adafruit examples do not show any slowdown parameter in PioMatter or Geometry
-- piomatter does not expose slowdown — it handles timing internally via PIO
-- Do not rely on slowdown for noise reduction
+### [SECONDARY] 3.3V Logic vs 5V HUB75 — hzeller confirmed
+- Pi outputs 3.3V; HUB75 panels expect 5V logic
+- hzeller: "3.3V works on most panels but reduces noise margin; use level shifter if glitching"
+- Proper fix: **74AHCT245** (must have "T" — NOT 74HC245 or 74AHC245; "T" has correct VIH for 3.3V→5V)
+- hzeller Active-3 adapter uses 4x 74HCT245/74AHCT245 chips
+- Without level shifter: keep jumper wires as short as possible (< 20cm)
+
+### [SECONDARY] Power Supply — hzeller specs
+- ~3.5A per 32×32 panel at full white
+- Wire gauge: **2.5mm² copper minimum per meter per panel** (≈ 13 AWG)
+- Capacitors: 6400µF total low-ESR near panel input (e.g. 2× 3300µF in parallel)
+- Voltage drop limit: <50mV from PSU to panel connector
+- Pi must share GND with panel PSU — hzeller explicitly calls this out
+
+### [MINOR] Slowdown — hzeller's library only, not piomatter
+- hzeller's C++ library has `--led-slowdown-gpio` (range 0-10, default 1)
+- This slows GPIO write speed for faster Pis / slower panels
+- **piomatter does NOT have this parameter** — it handles timing internally via PIO
+- Our `--slowdown` arg in color_test.py was dead code — removed
 
 ---
 
@@ -149,8 +165,51 @@ AND to the negative terminal of the LED panel's power supply.
 
 ---
 
-## 8. Sources
+## 8. hzeller GPIO Map (Regular / Active-3, Chain 1) — Verified Match
+
+This is the authoritative hzeller table for Chain 1 ("regular" wiring).
+**piomatter Active3 uses IDENTICAL GPIO numbers** — confirmed.
+
+| Signal | BCM GPIO | Pi Physical Pin | HUB75 Pin |
+|--------|----------|-----------------|-----------|
+| R1     | GPIO 11  | Pin 23          | 1         |
+| G1     | GPIO 27  | Pin 13          | 2         |
+| B1     | GPIO  7  | Pin 26          | 3         |
+| GND    | GND      | Pin 6/9/14/20   | 4         |
+| R2     | GPIO  8  | Pin 24          | 5         |
+| G2     | GPIO  9  | Pin 21          | 6         |
+| B2     | GPIO 10  | Pin 19          | 7         |
+| GND    | GND      | Pin 6/9/14/20   | 8         |
+| A      | GPIO 22  | Pin 15          | 9         |
+| B      | GPIO 23  | Pin 16          | 10        |
+| C      | GPIO 24  | Pin 18          | 11        |
+| D      | GPIO 25  | Pin 22          | 12        |
+| CLK    | GPIO 17  | Pin 11          | 13        |
+| LAT    | GPIO  4  | Pin  7          | 14        |
+| OE-    | GPIO 18  | Pin 12          | 15        |
+| GND    | GND      | Pin 6/9/14/20   | 16        |
+
+**ALL three GND pins on HUB75 (4, 8, 16) must be connected to Pi GND
+AND to the negative terminal of the LED panel power supply.**
+
+---
+
+## 9. Pre-flight Checklist (do these before every test)
+
+- [ ] Pi GND → LED PSU GND (common ground wire)
+- [ ] HUB75 pin 4, 8, 16 all connected to GND
+- [ ] OE (GPIO18, pin 12) → HUB75 pin 15 — solid connection, not floating
+- [ ] CLK (GPIO17, pin 11) → HUB75 pin 13
+- [ ] LAT (GPIO4, pin 7) → HUB75 pin 14
+- [ ] Panel powered by separate 5V supply, NOT from Pi 5V pin
+- [ ] Audio disabled on Pi: `dtparam=audio=off` in /boot/firmware/config.txt
+- [ ] Jumper wires < 20cm (level shifter needed if longer)
+
+---
+
+## 10. Sources
 
 - Adafruit piomatter examples: https://github.com/adafruit/Adafruit_Blinka_Raspberry_Pi5_Piomatter/tree/main/examples
 - hzeller wiring guide: https://github.com/hzeller/rpi-rgb-led-matrix/blob/master/wiring.md
+- hzeller Active-3 adapter: https://github.com/hzeller/rpi-rgb-led-matrix/tree/master/adapter/active-3
 - Adafruit learn: https://learn.adafruit.com/rgb-matrix-panels-with-raspberry-pi-5
