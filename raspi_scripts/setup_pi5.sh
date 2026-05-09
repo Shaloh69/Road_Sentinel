@@ -242,19 +242,22 @@ sudo ${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py --test \\
     --slowdown ${LED_SLOWDOWN} --pi 5
 HELPER
 
-cat > "$SCRIPTS_DIR/update.sh" <<HELPER
+cat > "$SCRIPTS_DIR/update.sh" <<'HELPER'
 #!/usr/bin/env bash
-# Pull latest raspi_scripts from GitHub and restart services
-# This script can also be triggered from the Admin Terminal in the web UI.
+# Pull latest raspi_scripts from GitHub and restart services.
+# Self-contained — defines its own paths so it works from any shell.
 set -euo pipefail
+REPO_DIR="$HOME/roadsentinel-repo"
+SCRIPTS_DIR="$HOME/roadsentinel"
 echo "Pulling latest from GitHub..."
-git -C ${REPO_DIR} pull origin main
+git -C "$REPO_DIR" pull origin main
 echo "Copying updated scripts..."
-cp "${REPO_DIR}/raspi_scripts/camera/camera_sender.py" "${SCRIPTS_DIR}/camera_sender.py"
-cp "${REPO_DIR}/raspi_scripts/display_manager.py"      "${SCRIPTS_DIR}/display_manager.py"
-cp "${REPO_DIR}/raspi_scripts/pi_agent.py"             "${SCRIPTS_DIR}/pi_agent.py"
-cp "${REPO_DIR}/raspi_scripts/color_test.py"           "${SCRIPTS_DIR}/color_test.py"
-chmod +x "${SCRIPTS_DIR}/camera_sender.py" "${SCRIPTS_DIR}/display_manager.py" "${SCRIPTS_DIR}/pi_agent.py" "${SCRIPTS_DIR}/color_test.py"
+cp "$REPO_DIR/raspi_scripts/camera/camera_sender.py" "$SCRIPTS_DIR/camera_sender.py"
+cp "$REPO_DIR/raspi_scripts/display_manager.py"      "$SCRIPTS_DIR/display_manager.py"
+cp "$REPO_DIR/raspi_scripts/pi_agent.py"             "$SCRIPTS_DIR/pi_agent.py"
+cp "$REPO_DIR/raspi_scripts/color_test.py"           "$SCRIPTS_DIR/color_test.py"
+chmod +x "$SCRIPTS_DIR/camera_sender.py" "$SCRIPTS_DIR/display_manager.py" \
+         "$SCRIPTS_DIR/pi_agent.py" "$SCRIPTS_DIR/color_test.py"
 echo "Restarting services..."
 sudo systemctl restart roadsentinel-camera roadsentinel-display roadsentinel-agent
 echo "Done! All services restarted with latest code."
