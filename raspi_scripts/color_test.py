@@ -3,29 +3,20 @@
 Quick HUB75 color + pinout test for Pi 5 (PioMatter backend).
 Shows solid RED → GREEN → BLUE → WHITE → BLACK then repeats.
 
-Active3 GPIO wiring (BCM numbers → HUB75 connector):
-  R1  = GPIO 11  (Pi physical pin 23)   → HUB75 pin 1
-  G1  = GPIO 27  (Pi physical pin 13)   → HUB75 pin 2
-  B1  = GPIO  7  (Pi physical pin 26)   → HUB75 pin 3
-  R2  = GPIO  8  (Pi physical pin 24)   → HUB75 pin 5
-  G2  = GPIO  9  (Pi physical pin 21)   → HUB75 pin 6
-  B2  = GPIO 10  (Pi physical pin 19)   → HUB75 pin 7
-  A   = GPIO 22  (Pi physical pin 15)   → HUB75 pin 9
-  B   = GPIO 23  (Pi physical pin 16)   → HUB75 pin 10
-  C   = GPIO 24  (Pi physical pin 18)   → HUB75 pin 11
-  D   = GPIO 25  (Pi physical pin 22)   → HUB75 pin 12
-  CLK = GPIO 17  (Pi physical pin 11)   → HUB75 pin 13
-  LAT = GPIO  4  (Pi physical pin  7)   → HUB75 pin 14
-  OE  = GPIO 18  (Pi physical pin 12)   → HUB75 pin 15
-  GND = any GND  (Pi physical pin 6/9…) → HUB75 pin 4/8/16
+WIRING (Active3, single panel, BCM GPIO → HUB75 pin):
+  R1=GPIO11(pin23)→HUB75-1   G1=GPIO27(pin13)→HUB75-2   B1=GPIO7(pin26)→HUB75-3
+  R2=GPIO8(pin24)→HUB75-5    G2=GPIO9(pin21)→HUB75-6    B2=GPIO10(pin19)→HUB75-7
+  A=GPIO22(pin15)→HUB75-9    B=GPIO23(pin16)→HUB75-10   C=GPIO24(pin18)→HUB75-11
+  D=GPIO25(pin22)→HUB75-12   CLK=GPIO17(pin11)→HUB75-13 LAT=GPIO4(pin7)→HUB75-14
+  OE=GPIO18(pin12)→HUB75-15  GND(pin6/9/14)→HUB75-4/8/16 + LED PSU negative
 
-Active3BGR = same wiring above BUT piomatter swaps R↔B in software.
-Use BGR only if Red appears Blue with plain Active3.
+CRITICAL: Pi GND must be connected to the LED panel power supply GND.
+Without a common ground, all signals are undefined → flickering/noise.
 
 Usage:
     sudo ~/venvs/cam_venv/bin/python3 ~/roadsentinel/color_test.py
     sudo ~/venvs/cam_venv/bin/python3 ~/roadsentinel/color_test.py --pinout active3
-    sudo ~/venvs/cam_venv/bin/python3 ~/roadsentinel/color_test.py --addr-lines 3 --slowdown 4
+    sudo ~/venvs/cam_venv/bin/python3 ~/roadsentinel/color_test.py --addr-lines 3
 """
 
 import argparse
@@ -38,7 +29,7 @@ from PIL import Image, ImageDraw, ImageFont
 try:
     import adafruit_blinka_raspberry_pi5_piomatter as piomatter
 except ImportError:
-    raise SystemExit("PioMatter not installed. Run:\n  pip install adafruit-blinka-raspberry-pi5-piomatter")
+    raise SystemExit("PioMatter not installed.\n  pip install adafruit-blinka-raspberry-pi5-piomatter")
 
 W, H = 128, 32
 
@@ -59,20 +50,20 @@ def build_frame(name: str, rgb: tuple) -> np.ndarray:
     except TypeError:
         font = ImageFont.load_default()
     ImageDraw.Draw(img).text((2, 10), name, fill=label_color, font=font)
-    return np.asarray(img.convert("RGB"))
+    return np.asarray(img.convert("RGB")) + 0  # +0 = mutable copy (Adafruit pattern)
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--addr-lines", type=int, default=4)
-    p.add_argument("--slowdown",   type=int, default=3)
-    p.add_argument("--delay",      type=float, default=3.0, help="Seconds per color")
-    p.add_argument("--pinout",     default="active3bgr",
+    p.add_argument("--addr-lines", type=int, default=4,
+                   help="4 for 32px tall (1/16 scan), 3 for 16px tall (1/8 scan)")
+    p.add_argument("--delay",  type=float, default=3.0, help="Seconds per color")
+    p.add_argument("--fps",    type=int,   default=30,  help="Refresh rate for show() calls")
+    p.add_argument("--pinout", default="active3bgr",
                    choices=["active3", "active3bgr"],
-                   help="active3bgr swaps R↔B in software (use if Red appears Blue)")
+                   help="active3bgr swaps R↔B in software; use active3 for standard wiring")
     args = p.parse_args()
 
-    # Resolve pinout
     if args.pinout == "active3bgr":
         pinout = getattr(piomatter.Pinout, "Active3BGR", piomatter.Pinout.Active3)
     else:
@@ -83,7 +74,9 @@ def main():
         n_addr_lines=args.addr_lines,
         rotation=piomatter.Orientation.Normal,
     )
-    fb = np.zeros((H, W, 3), dtype=np.uint8)
+    canvas = Image.new("RGB", (W, H), (0, 0, 0))
+    fb = np.asarray(canvas) + 0  # mutable writable framebuffer (Adafruit pattern)
+
     matrix = piomatter.PioMatter(
         colorspace=piomatter.Colorspace.RGB888Packed,
         pinout=pinout,
@@ -91,17 +84,20 @@ def main():
         geometry=geo,
     )
 
-    # Pre-build all frames so color switching is instant (no gap in show() calls)
     frames = [(name, rgb, build_frame(name, rgb)) for name, rgb in COLORS]
+    frame_interval = 1.0 / args.fps  # sleep between show() calls
 
     print(f"Color test — {W}x{H}  addr_lines={args.addr_lines}  "
-          f"pinout={args.pinout}  slowdown={args.slowdown}  (Ctrl-C to stop)")
-    print("GPIO → HUB75:  R1=GPIO11  G1=GPIO27  B1=GPIO7  CLK=GPIO17  LAT=GPIO4  OE=GPIO18")
+          f"pinout={args.pinout}  refresh={args.fps}fps  (Ctrl-C to stop)")
+    print("Checklist before running:")
+    print("  [ ] Pi GND wire connected to LED panel power supply GND")
+    print("  [ ] OE = GPIO18 (Pi pin 12) → HUB75 pin 15")
+    print("  [ ] Panel powered by separate 5V supply (not from Pi)")
 
     color_iter = itertools.cycle(frames)
     name, rgb, arr = next(color_iter)
     deadline = time.monotonic() + args.delay
-    print(f"  → {name}  {rgb}")
+    print(f"\n  → {name}  {rgb}")
 
     try:
         while True:
@@ -110,12 +106,15 @@ def main():
                 name, rgb, arr = next(color_iter)
                 deadline = now + args.delay
                 print(f"  → {name}  {rgb}")
-            # Always keep the panel refreshed — never let show() gap between colors
+
             fb[:] = arr
             matrix.show()
+            # Sleep between show() calls — piomatter PIO refreshes the panel
+            # independently between calls. Hammering show() restarts the PIO
+            # scan mid-frame causing micro-blackouts (flickering).
+            time.sleep(frame_interval)
 
     except KeyboardInterrupt:
-        # Block second Ctrl-C so cleanup isn't interrupted mid-flush
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         fb[:] = 0
         for _ in range(16):
