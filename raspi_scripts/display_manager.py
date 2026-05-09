@@ -182,7 +182,16 @@ class DisplayBackend(ABC):
 
 # ── Pi 4 backend: ledcat subprocess ───────────────────────────────────────────
 
-LEDCAT_DEFAULT = os.path.expanduser("~/rpi-rgb-led-matrix/examples-api-use/ledcat")
+def _find_ledcat() -> str:
+    for p in [
+        os.path.expanduser("~/rpi-rgb-led-matrix/examples-api-use/ledcat"),
+        "/home/roadsentinel/rpi-rgb-led-matrix/examples-api-use/ledcat",
+    ]:
+        if os.path.isfile(p):
+            return p
+    return os.path.expanduser("~/rpi-rgb-led-matrix/examples-api-use/ledcat")
+
+LEDCAT_DEFAULT = _find_ledcat()
 _BLACK_FRAME   = bytes(WIDTH * HEIGHT * 3)
 
 
@@ -195,7 +204,8 @@ class LedcatBackend(DisplayBackend):
 
     def __init__(self, ledcat_path: str, slowdown: int, mapping: str,
                  no_hw_pulse: bool, cols: int, chain: int,
-                 multiplexing: int, scan_mode: int):
+                 multiplexing: int, scan_mode: int,
+                 rp1_rio: bool = False, pwm_bits: int = 0):
         if not os.path.isfile(ledcat_path):
             raise FileNotFoundError(
                 f"ledcat not found: {ledcat_path}\n"
@@ -218,6 +228,10 @@ class LedcatBackend(DisplayBackend):
             cmd.append(f"--led-multiplexing={multiplexing}")
         if scan_mode != 0:
             cmd.append(f"--led-scan-mode={scan_mode}")
+        if rp1_rio:
+            cmd.append("--led-rp1-rio=1")
+        if pwm_bits > 0:
+            cmd.append(f"--led-pwm-bits={pwm_bits}")
 
         log.info("Pi 4 backend — ledcat: %s", " ".join(cmd))
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
@@ -352,10 +366,18 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        log.info("Detected Raspberry Pi 5 → PioMatter backend")
-        return PioMatterBackend(
-            pinout_name  = args.pinout,
-            n_addr_lines = args.addr_lines,
+        log.info("Detected Raspberry Pi 5 → ledcat backend (hzeller, multiplexing=1, rp1-rio=1)")
+        return LedcatBackend(
+            ledcat_path  = os.path.expanduser(args.ledcat or LEDCAT_DEFAULT),
+            slowdown     = 0,
+            mapping      = "regular",
+            no_hw_pulse  = True,
+            cols         = args.cols,
+            chain        = args.chain if args.chain > 0 else 2,
+            multiplexing = args.multiplexing if args.multiplexing > 0 else 1,
+            scan_mode    = args.scan_mode,
+            rp1_rio      = True,
+            pwm_bits     = 7,
         )
     else:
         log.info("Detected Raspberry Pi 4 → ledcat backend")
