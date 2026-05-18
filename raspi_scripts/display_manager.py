@@ -4,11 +4,12 @@ Road Sentinel — HUB75 128×32 RGB LED Matrix Display Manager
 Unified version — works on Raspberry Pi 4 AND Raspberry Pi 5 automatically.
 
 Pi detection at startup:
-  /dev/pio0 exists  → Pi 5 → hzeller ledcat (--led-rp1-rio=1, multiplexing=1)
+  /dev/pio0 exists  → Pi 5 → Adafruit PioMatter (RP1 PIO state machines)
   otherwise         → Pi 4 → hzeller ledcat (/dev/mem GPIO)
 
-Frame pipeline (identical on both Pi versions):
-  PIL Image (128×32) → numpy palette-snap → raw RGB24 bytes → ledcat stdin
+Frame pipeline:
+  Pi 4: PIL Image (128×32) → numpy palette-snap → raw RGB24 bytes → ledcat stdin
+  Pi 5: PIL Image (128×32) → numpy array → PioMatter framebuffer → RP1 PIO
 
 Pi 4 backend:
   ledcat → hzeller C lib → /dev/mem GPIO
@@ -16,19 +17,18 @@ Pi 4 backend:
   Requires: sudo
 
 Pi 5 backend:
-  ledcat --led-rp1-rio=1 → RP1 RIO GPIO
-  Requires: ~/rpi-rgb-led-matrix/examples-api-use/ledcat  (built by install.sh)
-  Requires: sudo
-  NOTE: Pi 5 RP1 has a double-buffer sync window — if a new frame arrives after
-  >~200ms idle the RP1 is mid-refresh and the swap corrupts output.  Fix: write
-  at 25 fps (TICK=0.04s) so the RP1 never idles long enough to de-sync.
+  Adafruit PioMatter → /dev/pio0 (RP1 PIO state machines)
+  PIO hardware drives the panel scan independently — no CPU sync issues.
+  Install: pip install adafruit-blinka-raspberry-pi5-piomatter
+  Does NOT require sudo.
 
 Install:
   Pi 4:  bash raspi_scripts/lcd_pi4/install.sh
   Pi 5:  bash raspi_scripts/lcd/install.sh
 
 Run:
-  sudo python3 display_manager.py           # Pi 4 or Pi 5 (sudo needed)
+  sudo python3 display_manager.py           # Pi 4 (sudo needed)
+       python3 display_manager.py           # Pi 5 (no sudo)
        python3 display_manager.py --test    # test mode (cycles states automatically)
 """
 
@@ -273,6 +273,9 @@ class LedcatBackend(DisplayBackend):
         log.info("ledcat backend: %s", " ".join(cmd))
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         log.info("ledcat PID=%d", self._proc.pid)
+        # Cache last snapped bytes — avoids re-running _snap_frame on identical frames
+        self._last_snap_id: int   = -1
+        self._last_snap_bytes: bytes = _BLACK_FRAME
 
     def _write(self, data: bytes) -> None:
         rc = self._proc.poll()
@@ -286,9 +289,14 @@ class LedcatBackend(DisplayBackend):
             log.error("ledcat write failed: %s", e)
 
     def show(self, img: Image.Image) -> None:
-        self._write(_snap_frame(img))
+        img_id = id(img)
+        if img_id != self._last_snap_id:
+            self._last_snap_bytes = _snap_frame(img)
+            self._last_snap_id    = img_id
+        self._write(self._last_snap_bytes)
 
     def clear(self) -> None:
+        self._last_snap_id = -1
         self._write(_BLACK_FRAME)
 
     def close(self) -> None:
@@ -495,20 +503,11 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        log.info("Detected Raspberry Pi 5 → ledcat backend (direct 25 fps, multiplexing=1)")
-        return LedcatBackend(
-            ledcat_path  = os.path.expanduser(
-                getattr(args, "ledcat", None) or LEDCAT_DEFAULT
-            ),
-            slowdown     = 0,
-            mapping      = "regular",
-            no_hw_pulse  = True,
-            cols         = args.cols,
-            chain        = args.chain if args.chain > 0 else 2,
-            multiplexing = 1,
-            scan_mode    = 0,
-            rp1_rio      = True,
-            pwm_bits     = 7,
+        log.info("Detected Raspberry Pi 5 → PioMatter backend (RP1 PIO, pinout=%s, addr_lines=%d)",
+                 args.pinout, args.addr_lines)
+        return PioMatterBackend(
+            pinout_name  = args.pinout,
+            n_addr_lines = args.addr_lines,
         )
     else:
         log.info("Detected Raspberry Pi 4 → ledcat backend")
@@ -965,16 +964,15 @@ def render_incident_ahead(state: SystemState, flash_phase: int = 0) -> Image.Ima
 #  MAIN LOOP
 # ══════════════════════════════════════════════════════════════════════════════
 
-TICK = 0.04   # 25 fps — ledcat reads at ~28 fps so pipe stays near-empty;
-              # 40 ms intervals stay below Pi 5 RP1 cold-start threshold
+TICK = 0.04   # 25 fps main loop rate — ledcat reads at ~28 fps so pipe stays near-empty
 
 
-def _blank_transition(backend: LedcatBackend, hold: float = 0.3) -> None:
-    """Write BLACK at TICK rate for hold seconds, then log ready."""
+def _blank_transition(backend: DisplayBackend, hold: float = 0.3) -> None:
+    """Clear panel at TICK rate for hold seconds."""
     log.info("Clearing panel...")
     end = time.monotonic() + hold
     while time.monotonic() < end:
-        backend._write(_BLACK_FRAME)
+        backend.clear()
         time.sleep(TICK)
     log.info("Panel cleared")
 
@@ -983,11 +981,10 @@ def run(backend: DisplayBackend, state: SystemState):
     prev_state_key = None
     log.info("Display loop started")
 
-    # Rapid burst of 16 BLACK frames at 50fps, then 300ms settle.
-    # This initializes the RP1 RIO state machine before the first content frame.
+    # Rapid burst of 16 BLACK clears, then 300ms settle — flushes any stale panel state.
     log.info("Clearing panel...")
     for _ in range(16):
-        backend._write(_BLACK_FRAME)
+        backend.clear()
         time.sleep(0.02)
     time.sleep(0.3)
     log.info("Panel cleared — starting display")
@@ -998,31 +995,32 @@ def run(backend: DisplayBackend, state: SystemState):
         backend.show(render_color_bars(phase))
         time.sleep(0.5)
 
-    # Pre-render and pre-snap frames once — avoids numpy palette computation on
-    # every TICK. PIL images are deterministic so bytes are identical each call.
-    _bytes_slow_down = _snap_frame(render_slow_down(state, flash_phase=0))
-    _bytes_vehicle   = _snap_frame(render_vehicle_incoming(state, flash_phase=0))
-    _bytes_incident  = _snap_frame(render_incident_ahead(state, flash_phase=0))
+    # Pre-render static frames once — PIL rendering is the expensive part.
+    # LedcatBackend caches the snapped bytes per image object so _snap_frame
+    # runs only once per frame type, not every tick.
+    _img_slow_down = render_slow_down(state, flash_phase=0)
+    _img_vehicle   = render_vehicle_incoming(state, flash_phase=0)
+    _img_incident  = render_incident_ahead(state, flash_phase=0)
 
     while True:
         # Priority: INCIDENT AHEAD > VEHICLE INCOMING > SLOW DOWN (default)
         incident = state.pop_incident_alert()
         if incident:
-            state_key  = "incident"
-            frame_data = _bytes_incident
+            state_key = "incident"
+            frame_img = _img_incident
         elif state.has_vehicle_alert():
-            state_key  = "vehicle"
-            frame_data = _bytes_vehicle
+            state_key = "vehicle"
+            frame_img = _img_vehicle
         else:
-            state_key  = "slow_down"
-            frame_data = _bytes_slow_down
+            state_key = "slow_down"
+            frame_img = _img_slow_down
 
         if state_key != prev_state_key:
             _blank_transition(backend, hold=0.15)
             prev_state_key = state_key
             log.info("Now showing: %s", state_key.replace("_", " ").upper())
 
-        backend._write(frame_data)
+        backend.show(frame_img)
         time.sleep(TICK)
 
 
@@ -1036,8 +1034,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Auto-detects Pi model at startup:
-  Pi 5 (/dev/pio0 exists) → ledcat --led-rp1-rio=1 (writes at 25 fps)
-  Pi 4 (default)          → ledcat /dev/mem GPIO
+  Pi 5 (/dev/pio0 exists) → PioMatter (RP1 PIO, no sudo needed)
+  Pi 4 (default)          → ledcat (hzeller, /dev/mem GPIO, sudo needed)
 
 Examples:
   sudo python3 display_manager.py --test           # Pi 4 test mode
