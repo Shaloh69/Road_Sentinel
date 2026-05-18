@@ -136,7 +136,7 @@ def main():
     args = parser.parse_args()
 
     pi_model = f"pi{args.pi}" if args.pi else _detect_pi()
-    log.info("Pi: %s | test: %s | hold: %.1fs", pi_model, args.test, args.hold)
+    log.info("Pi: %s | test: %s", pi_model, args.test)
 
     backend = create_backend(_DefaultArgs(), pi_model)
     state   = SystemState()
