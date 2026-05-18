@@ -18,8 +18,8 @@ Usage:
 import argparse
 import logging
 import os
+import select
 import sys
-import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -104,46 +104,39 @@ def main():
         "incidents_today": 0, "cameras_online": 2, "cameras_total": 2,
     })
 
-    current     = [args.start]   # list so the input thread can mutate it
-    stop        = threading.Event()
-    color_phase = [0]
-    phase_end   = [time.monotonic() + 0.5]
-
-    def _input_loop():
-        print("Type + Enter to switch:  1=SLOW DOWN  2=VEHICLE  3=INCIDENT  4=COLOR BARS  q=quit")
-        while not stop.is_set():
-            try:
-                key = input("> ").strip()
-            except EOFError:
-                stop.set()
-                break
-            if key == "q":
-                stop.set()
-                break
-            if key in SCREENS:
-                current[0]     = SCREENS[key]
-                color_phase[0] = 0
-                phase_end[0]   = time.monotonic() + 0.5
-                log.info("Now showing: %s", LABELS[current[0]])
-            else:
-                print("Unknown key. Use 1 / 2 / 3 / 4 / q")
-
     try:
         _startup_blank(backend)
-        log.info("Now showing: %s", LABELS[current[0]])
 
-        threading.Thread(target=_input_loop, daemon=True).start()
+        current     = args.start
+        color_phase = 0
+        phase_end   = time.monotonic() + 0.5
 
-        prev = None
-        while not stop.is_set():
-            if current[0] != prev:
-                prev = current[0]
+        log.info("Now showing: %s", LABELS[current])
+        log.info("Type + Enter:  1=SLOW DOWN  2=VEHICLE  3=INCIDENT  4=COLOR BARS  q=quit")
 
-            if current[0] == "color_bars" and time.monotonic() >= phase_end[0]:
-                color_phase[0] = (color_phase[0] + 1) % 6
-                phase_end[0]   = time.monotonic() + 0.5
+        while True:
+            # Non-blocking stdin check — works in web terminals without raw mode
+            r, _, _ = select.select([sys.stdin], [], [], 0)
+            if r:
+                line = sys.stdin.readline()
+                if not line:          # EOF — stdin closed
+                    break
+                key = line.strip()
+                if key == "q":
+                    break
+                if key in SCREENS:
+                    current     = SCREENS[key]
+                    color_phase = 0
+                    phase_end   = time.monotonic() + 0.5
+                    log.info("Now showing: %s", LABELS[current])
+                elif key:
+                    log.info("Unknown: %s  — use 1 / 2 / 3 / 4 / q", key)
 
-            backend.show(_get_frame(current[0], state, color_phase[0]))
+            if current == "color_bars" and time.monotonic() >= phase_end:
+                color_phase = (color_phase + 1) % 6
+                phase_end   = time.monotonic() + 0.5
+
+            backend.show(_get_frame(current, state, color_phase))
             time.sleep(TICK)
 
     except KeyboardInterrupt:
