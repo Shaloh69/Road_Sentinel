@@ -2,23 +2,25 @@
 """
 Road Sentinel — interactive display test.
 
-Type a number + Enter to switch screens:
-  1  SLOW DOWN
-  2  VEHICLE INCOMING
-  3  INCIDENT AHEAD
-  4  COLOR BARS
-  q  Quit
+Start the script in one terminal, then switch screens by running echo
+commands from any other terminal (or the same one after backgrounding):
 
-Usage:
-  sudo python3 raspi_scripts/test_display.py
-  sudo python3 raspi_scripts/test_display.py --start vehicle
-  sudo python3 raspi_scripts/test_display.py --pi 4
+  sudo python3 raspi_scripts/test_display.py        # starts, shows SLOW DOWN
+
+  echo 1 > /tmp/led_cmd    # switch to SLOW DOWN
+  echo 2 > /tmp/led_cmd    # switch to VEHICLE INCOMING
+  echo 3 > /tmp/led_cmd    # switch to INCIDENT AHEAD
+  echo 4 > /tmp/led_cmd    # switch to COLOR BARS
+  echo q > /tmp/led_cmd    # quit
+
+Or run in background first:
+  sudo python3 raspi_scripts/test_display.py &
+  echo 2 > /tmp/led_cmd
 """
 
 import argparse
 import logging
 import os
-import select
 import sys
 import time
 
@@ -36,6 +38,8 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+CMD_FILE = "/tmp/led_cmd"
 
 SCREENS = {
     "1": "slow_down",
@@ -74,6 +78,19 @@ def _get_frame(name, state, color_phase):
     return render_color_bars(color_phase)
 
 
+def _read_cmd():
+    """Read and clear the command file. Returns stripped string or None."""
+    try:
+        if not os.path.exists(CMD_FILE):
+            return None
+        with open(CMD_FILE) as f:
+            cmd = f.read().strip()
+        open(CMD_FILE, "w").close()   # clear after reading
+        return cmd or None
+    except OSError:
+        return None
+
+
 class _DefaultArgs:
     cols           = 64
     chain          = 2
@@ -96,6 +113,12 @@ def main():
     parser.add_argument("--pi", choices=["4", "5"], default=None)
     args = parser.parse_args()
 
+    # Clear any stale command file from a previous run
+    try:
+        open(CMD_FILE, "w").close()
+    except OSError:
+        pass
+
     pi_model = f"pi{args.pi}" if args.pi else _detect_pi()
     backend  = create_backend(_DefaultArgs(), pi_model)
     state    = SystemState()
@@ -112,25 +135,21 @@ def main():
         phase_end   = time.monotonic() + 0.5
 
         log.info("Now showing: %s", LABELS[current])
-        log.info("Type + Enter:  1=SLOW DOWN  2=VEHICLE  3=INCIDENT  4=COLOR BARS  q=quit")
+        log.info("To switch — in another terminal:  echo 2 > /tmp/led_cmd")
+        log.info("Screens: 1=SLOW DOWN  2=VEHICLE  3=INCIDENT  4=COLOR BARS  q=quit")
 
         while True:
-            # Non-blocking stdin check — works in web terminals without raw mode
-            r, _, _ = select.select([sys.stdin], [], [], 0)
-            if r:
-                line = sys.stdin.readline()
-                if not line:          # EOF — stdin closed
+            cmd = _read_cmd()
+            if cmd:
+                if cmd == "q":
                     break
-                key = line.strip()
-                if key == "q":
-                    break
-                if key in SCREENS:
-                    current     = SCREENS[key]
+                if cmd in SCREENS:
+                    current     = SCREENS[cmd]
                     color_phase = 0
                     phase_end   = time.monotonic() + 0.5
                     log.info("Now showing: %s", LABELS[current])
-                elif key:
-                    log.info("Unknown: %s  — use 1 / 2 / 3 / 4 / q", key)
+                else:
+                    log.info("Unknown command: %s", cmd)
 
             if current == "color_bars" and time.monotonic() >= phase_end:
                 color_phase = (color_phase + 1) % 6
