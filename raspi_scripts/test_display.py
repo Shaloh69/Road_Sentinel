@@ -136,7 +136,6 @@ def main():
         log.info("To switch — in another terminal:  echo 2 > /tmp/led_cmd")
         log.info("Screens: 1=SLOW DOWN  2=VEHICLE  3=INCIDENT  4=COLOR BARS  q=quit")
 
-        next_tick = time.monotonic() + TICK
         while True:
             cmd = _read_cmd()
             if cmd:
@@ -156,13 +155,7 @@ def main():
 
             frame = color_bar_frames[color_phase] if current == "color_bars" else frames[current]
             backend._write(frame)
-
-            # Deadline-based sleep — corrects for OS scheduling jitter
-            now  = time.monotonic()
-            wait = next_tick - now
-            if wait > 0:
-                time.sleep(wait)
-            next_tick = max(next_tick + TICK, time.monotonic())
+            time.sleep(TICK)
 
     except KeyboardInterrupt:
         pass
