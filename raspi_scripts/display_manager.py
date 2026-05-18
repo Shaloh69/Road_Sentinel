@@ -15,12 +15,17 @@ Pi 4 backend:
   Requires: ~/rpi-rgb-led-matrix/examples-api-use/ledcat  (built by install.sh)
   Requires: sudo
 
-Pi 5 backend:
-  led-image-viewer → hzeller C lib → RP1 coprocessor mode (no --led-rp1-rio=1)
-  Uses SwapOnVSync for atomic frame updates — no mid-scan RP1 corruption.
-  RIO mode (--led-rp1-rio=1) causes state machine de-sync → do NOT use it.
-  Requires: ~/rpi-rgb-led-matrix/utils/led-image-viewer  (built by install.sh)
+Pi 5 backend (preferred):
+  rgbmatrix Python bindings → hzeller C lib → RP1 coprocessor mode
+  Background thread drives panel continuously; SwapOnVSync is atomic.
+  No subprocess, no PPM files, no restart gaps — most stable option.
+  Build: cd ~/rpi-rgb-led-matrix && sudo make build-python PYTHON=$(which python3)
+         sudo make install-python PYTHON=$(which python3)
   Requires: sudo
+
+Pi 5 backend (fallback, if Python bindings not installed):
+  led-image-viewer subprocess → hzeller C lib → RP1 coprocessor mode
+  RIO mode (--led-rp1-rio=1) causes state machine de-sync → do NOT use it.
 
 Install:
   Pi 4:  bash raspi_scripts/lcd_pi4/install.sh
@@ -493,6 +498,65 @@ class PioMatterBackend(DisplayBackend):
             time.sleep(0.02)
 
 
+# ── Pi 5 backend: hzeller Python bindings (direct SwapOnVSync, no subprocess) ──
+
+class RGBMatrixBackend(DisplayBackend):
+    """
+    Pi 5 — uses hzeller rgbmatrix Python bindings directly.
+    No subprocess, no PPM file, no restart gaps.
+    The hzeller library runs a background refresh thread; SwapOnVSync atomically
+    swaps the frame buffer so the panel is driven continuously without interruption.
+    Install: cd ~/rpi-rgb-led-matrix && sudo make build-python PYTHON=$(which python3)
+             sudo make install-python PYTHON=$(which python3)
+    Requires: sudo
+    """
+
+    def __init__(self, cols: int, chain: int, slowdown: int = 4, multiplexing: int = 1):
+        try:
+            from rgbmatrix import RGBMatrix, RGBMatrixOptions
+        except ImportError:
+            raise ImportError(
+                "rgbmatrix Python bindings not installed.\n"
+                "Build with:\n"
+                "  cd ~/rpi-rgb-led-matrix\n"
+                "  sudo make build-python PYTHON=$(which python3)\n"
+                "  sudo make install-python PYTHON=$(which python3)"
+            )
+        _chain = chain if chain > 0 else (WIDTH // cols)
+        options = RGBMatrixOptions()
+        options.rows                    = HEIGHT
+        options.cols                    = cols
+        options.chain_length            = _chain
+        options.parallel                = 1
+        options.hardware_mapping        = "regular"
+        options.gpio_slowdown           = slowdown
+        options.disable_hardware_pulsing = True
+        options.multiplexing            = multiplexing
+        options.pwm_bits                = 7
+        options.drop_privileges         = False
+        self._matrix = RGBMatrix(options=options)
+        self._canvas = self._matrix.CreateFrameCanvas()
+        log.info("RGBMatrixBackend — cols=%d  chain=%d  slowdown=%d  multiplexing=%d",
+                 cols, _chain, slowdown, multiplexing)
+
+    def show(self, img: Image.Image) -> None:
+        self._canvas.SetImage(img.convert("RGB"))
+        self._canvas = self._matrix.SwapOnVSync(self._canvas)
+
+    def clear(self) -> None:
+        self._canvas.Clear()
+        self._canvas = self._matrix.SwapOnVSync(self._canvas)
+
+    def close(self) -> None:
+        try:
+            for _ in range(16):
+                self.clear()
+                time.sleep(0.02)
+        except Exception:
+            pass
+        self._matrix.Clear()
+
+
 # ── Emulator backend: RGBMatrixEmulator (Windows / Mac / Linux, no Pi needed) ─
 
 class EmulatorBackend(DisplayBackend):
@@ -542,14 +606,24 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        log.info("Detected Raspberry Pi 5 → led-image-viewer backend (SwapOnVSync)")
-        return LedImageViewerBackend(
-            viewer_path = os.path.expanduser(
-                getattr(args, "viewer", None) or LED_IMAGE_VIEWER_DEFAULT
-            ),
-            cols  = args.cols,
-            chain = args.chain if args.chain > 0 else 2,
-        )
+        try:
+            backend = RGBMatrixBackend(
+                cols         = args.cols,
+                chain        = args.chain if args.chain > 0 else 2,
+                slowdown     = getattr(args, "slowdown", 4),
+                multiplexing = getattr(args, "multiplexing", 1),
+            )
+            log.info("Pi 5 → RGBMatrix Python bindings (direct SwapOnVSync)")
+            return backend
+        except ImportError as e:
+            log.warning("rgbmatrix bindings unavailable (%s) → falling back to led-image-viewer", e)
+            return LedImageViewerBackend(
+                viewer_path = os.path.expanduser(
+                    getattr(args, "viewer", None) or LED_IMAGE_VIEWER_DEFAULT
+                ),
+                cols  = args.cols,
+                chain = args.chain if args.chain > 0 else 2,
+            )
     else:
         log.info("Detected Raspberry Pi 4 → ledcat backend")
         return LedcatBackend(
