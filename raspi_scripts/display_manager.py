@@ -508,7 +508,7 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        log.info("Detected Raspberry Pi 5 → ledcat backend (direct 50 fps, multiplexing=1)")
+        log.info("Detected Raspberry Pi 5 → ledcat backend (direct 25 fps, multiplexing=1)")
         return LedcatBackend(
             ledcat_path  = os.path.expanduser(
                 getattr(args, "ledcat", None) or LEDCAT_DEFAULT
@@ -978,16 +978,17 @@ def render_incident_ahead(state: SystemState, flash_phase: int = 0) -> Image.Ima
 #  MAIN LOOP
 # ══════════════════════════════════════════════════════════════════════════════
 
-TICK = 0.02   # 50 fps — same rate as startup init; keeps ledcat warm on Pi 5 RP1
+TICK = 0.04   # 25 fps — ledcat reads at ~28 fps so pipe stays near-empty;
+              # 40 ms intervals stay below Pi 5 RP1 cold-start threshold
 
 
 def _blank_transition(backend: DisplayBackend, hold: float = 0.3) -> None:
-    """Write black at 50 fps for hold seconds (matches startup init rate)."""
+    """Write black at TICK rate for hold seconds so pipe stays clear for next content frame."""
     log.info("Clearing panel...")
     end = time.monotonic() + hold
     while time.monotonic() < end:
         backend.clear()
-        time.sleep(0.02)
+        time.sleep(TICK)
     log.info("Panel cleared")
 
 
