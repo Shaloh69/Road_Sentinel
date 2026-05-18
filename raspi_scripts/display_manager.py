@@ -375,11 +375,11 @@ class LedImageViewerBackend(DisplayBackend):
             f"--led-chain={_chain}",
             "--led-parallel=1",
             "--led-gpio-mapping=regular",
-            "--led-slowdown-gpio=4",
+            "--led-slowdown-gpio=2",
             "--led-no-drop-privs",
             "--led-no-hardware-pulse",
             "--led-multiplexing=1",
-            "--led-pwm-bits=4",
+            "--led-pwm-bits=7",
         ]
         self._ppm         = "/tmp/roadsentinel_frame.ppm"
         self._proc: Optional[subprocess.Popen] = None
@@ -394,17 +394,14 @@ class LedImageViewerBackend(DisplayBackend):
 
     def _restart(self) -> None:
         if self._proc and self._proc.poll() is None:
-            # Process still running — kill it and wait for panel to blank cleanly.
             self._proc.terminate()
             try:
                 self._proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
-            time.sleep(0.2)
-        # No sleep when process already exited naturally — panel blanked cleanly.
-        # -l 1 -w 30: show image for 30 s then exit; Python restarts immediately,
-        # resetting the RP1 refresh thread before PWM timing can drift.
-        cmd = [self._viewer] + self._flags + ["-l", "1", "-w", "30", self._ppm]
+            time.sleep(0.2)  # let panel fully blank after SIGTERM before next init
+        cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
+        log.info("led-image-viewer PID starting...")
         self._proc = subprocess.Popen(cmd)
 
     def _proc_alive(self) -> bool:
@@ -505,12 +502,12 @@ class PioMatterBackend(DisplayBackend):
 
 class RGBMatrixBackend(DisplayBackend):
     """
-    Pi 5 — hzeller Python bindings, SwapOnVSync called every tick.
-    Calling SwapOnVSync at 25 fps continuously re-anchors RP1 PWM timing,
-    preventing the drift that corrupts LedImageViewerBackend after a few seconds.
-    Uses explicit SetPixel(x,y) from _snap_frame() bytes so orientation matches
-    the working ledcat/PPM backends (SetImage mirrors chained panels).
-    Requires: cd ~/rpi-rgb-led-matrix && sudo pip3 install --break-system-packages .
+    Pi 5 — uses hzeller rgbmatrix Python bindings directly.
+    No subprocess, no PPM file, no restart gaps.
+    The hzeller library runs a background refresh thread; SwapOnVSync atomically
+    swaps the frame buffer so the panel is driven continuously without interruption.
+    Install: cd ~/rpi-rgb-led-matrix && sudo make build-python PYTHON=$(which python3)
+             sudo make install-python PYTHON=$(which python3)
     Requires: sudo
     """
 
@@ -520,41 +517,33 @@ class RGBMatrixBackend(DisplayBackend):
         except ImportError:
             raise ImportError(
                 "rgbmatrix Python bindings not installed.\n"
-                "Run: cd ~/rpi-rgb-led-matrix && sudo pip3 install --break-system-packages ."
+                "Build with:\n"
+                "  cd ~/rpi-rgb-led-matrix\n"
+                "  sudo make build-python PYTHON=$(which python3)\n"
+                "  sudo make install-python PYTHON=$(which python3)"
             )
         _chain = chain if chain > 0 else (WIDTH // cols)
         options = RGBMatrixOptions()
-        options.rows                     = HEIGHT
-        options.cols                     = cols
-        options.chain_length             = _chain
-        options.parallel                 = 1
-        options.hardware_mapping         = "regular"
-        options.gpio_slowdown            = slowdown
+        options.rows                    = HEIGHT
+        options.cols                    = cols
+        options.chain_length            = _chain
+        options.parallel                = 1
+        options.hardware_mapping        = "regular"
+        options.gpio_slowdown           = slowdown
         options.disable_hardware_pulsing = True
-        options.multiplexing             = multiplexing
-        options.pwm_bits                 = 4
-        options.drop_privileges          = False
-        self._matrix      = RGBMatrix(options=options)
-        self._canvas      = self._matrix.CreateFrameCanvas()
-        self._last_img_id = -1
-        self._last_rgb    = None
+        options.multiplexing            = multiplexing
+        options.pwm_bits                = 7
+        options.drop_privileges         = False
+        self._matrix = RGBMatrix(options=options)
+        self._canvas = self._matrix.CreateFrameCanvas()
         log.info("RGBMatrixBackend — cols=%d  chain=%d  slowdown=%d  multiplexing=%d",
                  cols, _chain, slowdown, multiplexing)
 
     def show(self, img: Image.Image) -> None:
-        if id(img) != self._last_img_id:
-            # FLIP_LEFT_RIGHT: SetImage reverses x on chained panels; pre-flip cancels it.
-            self._last_rgb    = img.convert("RGB").transpose(Image.FLIP_LEFT_RIGHT)
-            self._last_img_id = id(img)
-        # SetImage every tick (fast C call) keeps BOTH double-buffer canvases current —
-        # without this, every other SwapOnVSync shows a blank back buffer (flicker).
-        # SwapOnVSync every tick re-anchors RP1 PWM timing → no drift.
-        self._canvas.SetImage(self._last_rgb)
+        self._canvas.SetImage(img.convert("RGB"))
         self._canvas = self._matrix.SwapOnVSync(self._canvas)
 
     def clear(self) -> None:
-        self._last_img_id = -1
-        self._last_rgb    = None
         self._canvas.Clear()
         self._canvas = self._matrix.SwapOnVSync(self._canvas)
 
@@ -617,24 +606,16 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        try:
-            backend = RGBMatrixBackend(
-                cols         = args.cols,
-                chain        = args.chain if args.chain > 0 else 2,
-                slowdown     = getattr(args, "slowdown", 4),
-                multiplexing = getattr(args, "multiplexing", 1),
-            )
-            log.info("Pi 5 → RGBMatrixBackend (SwapOnVSync every tick, no drift)")
-            return backend
-        except ImportError as e:
-            log.warning("rgbmatrix bindings unavailable (%s) → falling back to led-image-viewer", e)
-            return LedImageViewerBackend(
-                viewer_path = os.path.expanduser(
-                    getattr(args, "viewer", None) or LED_IMAGE_VIEWER_DEFAULT
-                ),
-                cols  = args.cols,
-                chain = args.chain if args.chain > 0 else 2,
-            )
+        # RGBMatrixBackend disabled: SetImage mirrors display on chained panels.
+        # TODO: fix pixel mapping before re-enabling.
+        log.info("Detected Raspberry Pi 5 → led-image-viewer backend (SwapOnVSync)")
+        return LedImageViewerBackend(
+            viewer_path = os.path.expanduser(
+                getattr(args, "viewer", None) or LED_IMAGE_VIEWER_DEFAULT
+            ),
+            cols  = args.cols,
+            chain = args.chain if args.chain > 0 else 2,
+        )
     else:
         log.info("Detected Raspberry Pi 4 → ledcat backend")
         return LedcatBackend(
