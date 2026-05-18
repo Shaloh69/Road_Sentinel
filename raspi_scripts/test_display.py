@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
 """
-Road Sentinel — interactive display test.
+Road Sentinel — auto-cycling display test.
 
-Start the script in one terminal, then switch screens by running echo
-commands from any other terminal (or the same one after backgrounding):
+Cycles through SLOW DOWN → VEHICLE INCOMING → VACANT ROAD every 5 seconds,
+restarting led-image-viewer on each transition. This keeps the RP1 refresh
+thread fresh and prevents PWM timing drift that causes white-line corruption.
 
-  sudo python3 raspi_scripts/test_display.py        # starts, shows SLOW DOWN
-
-  echo 1 > /tmp/led_cmd    # switch to SLOW DOWN
-  echo 2 > /tmp/led_cmd    # switch to VEHICLE INCOMING
-  echo 3 > /tmp/led_cmd    # switch to INCIDENT AHEAD
-  echo 4 > /tmp/led_cmd    # switch to COLOR BARS
-  echo q > /tmp/led_cmd    # quit
-
-Or run in background first:
-  sudo python3 raspi_scripts/test_display.py &
-  echo 2 > /tmp/led_cmd
+Usage:
+  sudo python3 raspi_scripts/test_display.py
+  sudo python3 raspi_scripts/test_display.py --pi 5
+  sudo python3 raspi_scripts/test_display.py --interval 10
 """
 
 import argparse
@@ -28,8 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from display_manager import (
     create_backend, _detect_pi, TICK,
     SystemState,
-    render_slow_down, render_vehicle_incoming,
-    render_incident_ahead, render_color_bars,
+    render_slow_down, render_vehicle_incoming, render_vacant_road,
 )
 
 logging.basicConfig(
@@ -39,25 +32,17 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-CMD_FILE = "/tmp/led_cmd"
-
-SCREENS = {
-    "1": "slow_down",
-    "2": "vehicle",
-    "3": "incident",
-    "4": "color_bars",
-}
+CYCLE = ["slow_down", "vehicle", "vacant"]
 
 LABELS = {
-    "slow_down":  "SLOW DOWN",
-    "vehicle":    "VEHICLE INCOMING",
-    "incident":   "INCIDENT AHEAD",
-    "color_bars": "COLOR BARS",
+    "slow_down": "SLOW DOWN",
+    "vehicle":   "VEHICLE INCOMING",
+    "vacant":    "VACANT ROAD",
 }
 
 
 def _startup_blank(backend):
-    log.info("Startup blank burst...")
+    log.info("Blanking panel...")
     for _ in range(16):
         backend.clear()
         time.sleep(0.02)
@@ -66,19 +51,6 @@ def _startup_blank(backend):
         backend.clear()
         time.sleep(TICK)
     log.info("Panel ready")
-
-
-def _read_cmd():
-    """Read and clear the command file. Returns stripped string or None."""
-    try:
-        if not os.path.exists(CMD_FILE):
-            return None
-        with open(CMD_FILE) as f:
-            cmd = f.read().strip()
-        open(CMD_FILE, "w").close()   # clear after reading
-        return cmd or None
-    except OSError:
-        return None
 
 
 class _DefaultArgs:
@@ -97,68 +69,51 @@ class _DefaultArgs:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Road Sentinel interactive display test")
-    parser.add_argument("--start", default="slow_down", choices=list(LABELS.keys()),
-                        help="Starting screen (default: slow_down)")
-    parser.add_argument("--pi", choices=["4", "5"], default=None)
+    parser = argparse.ArgumentParser(description="Road Sentinel auto-cycling display test")
+    parser.add_argument("--pi",       choices=["4", "5"], default=None,
+                        help="Force Pi model (default: auto-detect)")
+    parser.add_argument("--interval", type=float, default=5.0,
+                        help="Seconds per screen (default: 5)")
     args = parser.parse_args()
 
-    # Clear any stale command file from a previous run
-    try:
-        open(CMD_FILE, "w").close()
-    except OSError:
-        pass
-
     pi_model = f"pi{args.pi}" if args.pi else _detect_pi()
-    backend  = create_backend(_DefaultArgs(), pi_model)
+    log.info("Pi model: %s  |  cycle interval: %.1fs", pi_model, args.interval)
+
+    backend = create_backend(_DefaultArgs(), pi_model)
 
     try:
         _startup_blank(backend)
 
-        # Pre-render frames once — passed by identity so show() skips re-snap on repeat
         state_obj = SystemState()
         state_obj.update_summary({
             "vehicles_today": 42, "average_speed": 35,
             "incidents_today": 0, "cameras_online": 2, "cameras_total": 2,
         })
+
         frames = {
-            "slow_down": render_slow_down(state_obj, flash_phase=0),
+            "slow_down": render_slow_down(state_obj,        flash_phase=0),
             "vehicle":   render_vehicle_incoming(state_obj, flash_phase=0),
-            "incident":  render_incident_ahead(state_obj, flash_phase=0),
+            "vacant":    render_vacant_road(state_obj),
         }
-        color_bar_imgs = [render_color_bars(p) for p in range(6)]
 
-        current     = args.start
-        color_phase = 0
-        phase_end   = time.monotonic() + 0.5
+        cycle_idx  = 0
+        next_cycle = time.monotonic() + args.interval
 
-        log.info("Now showing: %s", LABELS[current])
-        log.info("To switch — in another terminal:  echo 2 > /tmp/led_cmd")
-        log.info("Screens: 1=SLOW DOWN  2=VEHICLE  3=INCIDENT  4=COLOR BARS  q=quit")
+        current = CYCLE[cycle_idx]
+        log.info("► Showing: %s", LABELS[current])
 
         while True:
-            cmd = _read_cmd()
-            if cmd:
-                if cmd == "q":
-                    break
-                if cmd in SCREENS:
-                    current     = SCREENS[cmd]
-                    color_phase = 0
-                    phase_end   = time.monotonic() + 0.5
-                    log.info("Now showing: %s", LABELS[current])
-                else:
-                    log.info("Unknown command: %s", cmd)
+            if time.monotonic() >= next_cycle:
+                cycle_idx  = (cycle_idx + 1) % len(CYCLE)
+                current    = CYCLE[cycle_idx]
+                next_cycle = time.monotonic() + args.interval
+                log.info("► Showing: %s", LABELS[current])
 
-            if current == "color_bars" and time.monotonic() >= phase_end:
-                color_phase = (color_phase + 1) % 6
-                phase_end   = time.monotonic() + 0.5
-
-            img = color_bar_imgs[color_phase] if current == "color_bars" else frames[current]
-            backend.show(img)
+            backend.show(frames[current])
             time.sleep(TICK)
 
     except KeyboardInterrupt:
-        pass
+        log.info("Interrupted")
     finally:
         backend.close()
         log.info("Stopped")
