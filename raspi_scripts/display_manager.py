@@ -232,13 +232,12 @@ LED_IMAGE_VIEWER_DEFAULT = _find_led_image_viewer()
 
 class LedcatBackend(DisplayBackend):
     """
-    Pi 4/5 — streams raw RGB24 frames at 25 fps to hzeller ledcat via stdin.
-    Ledcat uses SwapOnVSync internally → atomic frame updates, no scan garbage.
-    Single persistent process; state changes update _current under a lock.
+    Pi 4/5 — pipes raw RGB24 frames to hzeller ledcat C binary via stdin.
+    Single persistent process; no restarts → no GPIO initialization garbage.
+    Ledcat blocks on read() between frames; its background refresh thread keeps
+    the panel stable. SwapOnVSync handles each frame atomically on write.
     Frame size: 128 × 32 × 3 = 12,288 bytes per frame, no header.
     """
-
-    _FPS = 25
 
     def __init__(self, ledcat_path: str, slowdown: int, mapping: str,
                  no_hw_pulse: bool, cols: int, chain: int,
@@ -272,40 +271,34 @@ class LedcatBackend(DisplayBackend):
             cmd.append(f"--led-pwm-bits={pwm_bits}")
 
         log.info("ledcat backend: %s", " ".join(cmd))
-        self._proc    = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        self._current = _BLACK_FRAME
-        self._lock    = threading.Lock()
-        self._running = True
-        t = threading.Thread(target=self._feed, daemon=True, name="ledcat-feed")
-        t.start()
-        log.info("ledcat PID=%d  streaming at %d fps", self._proc.pid, self._FPS)
+        self._proc       = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        self._last_frame = b""
+        log.info("ledcat PID=%d  frame=%d bytes", self._proc.pid, WIDTH * HEIGHT * 3)
 
-    def _feed(self) -> None:
-        interval = 1.0 / self._FPS
-        while self._running:
-            try:
-                with self._lock:
-                    frame = self._current
-                self._proc.stdin.write(frame)
-                self._proc.stdin.flush()
-            except OSError:
-                break
-            time.sleep(interval)
+    def _write(self, data: bytes) -> None:
+        try:
+            self._proc.stdin.write(data)
+            self._proc.stdin.flush()
+        except OSError:
+            rc = self._proc.poll()
+            log.error("ledcat write failed — process exited with rc=%s", rc)
 
     def show(self, img: Image.Image) -> None:
         data = _snap_frame(img)
-        with self._lock:
-            self._current = data
+        if data == self._last_frame:
+            return
+        self._last_frame = data
+        self._write(data)
 
     def clear(self) -> None:
-        with self._lock:
-            self._current = _BLACK_FRAME
+        if self._last_frame == _BLACK_FRAME:
+            return
+        self._last_frame = _BLACK_FRAME
+        self._write(_BLACK_FRAME)
 
     def close(self) -> None:
-        self._running = False
-        self.clear()
-        time.sleep(0.1)
         try:
+            self.clear()
             self._proc.stdin.close()
             self._proc.wait(timeout=3)
         except Exception:
@@ -521,8 +514,7 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        log.info("Detected Raspberry Pi 5 → ledcat backend (streaming %d fps, SwapOnVSync, multiplexing=1)",
-                 LedcatBackend._FPS)
+        log.info("Detected Raspberry Pi 5 → ledcat backend (single-process, SwapOnVSync, multiplexing=1)")
         return LedcatBackend(
             ledcat_path  = os.path.expanduser(
                 getattr(args, "ledcat", None) or LEDCAT_DEFAULT
