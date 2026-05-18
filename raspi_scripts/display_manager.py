@@ -353,6 +353,12 @@ class LedcatBackend(DisplayBackend):
 
 # ── Pi 5 backend: led-image-viewer subprocess ────────────────────────────────
 
+# Restart led-image-viewer every N seconds even when showing the same image.
+# The RP1 coprocessor's PWM scan timing drifts within the viewer's own refresh
+# loop; restarting before drift accumulates prevents garbage/white-line output.
+_HEARTBEAT_SECS = 3.0
+
+
 class LedImageViewerBackend(DisplayBackend):
     """
     Pi 5 — renders PIL frames to a temp PPM file, displays with led-image-viewer.
@@ -381,49 +387,66 @@ class LedImageViewerBackend(DisplayBackend):
             "--led-multiplexing=1",
             "--led-pwm-bits=4",
         ]
-        self._ppm         = "/tmp/roadsentinel_frame.ppm"
+        self._ppm           = "/tmp/roadsentinel_frame.ppm"
         self._proc: Optional[subprocess.Popen] = None
-        self._last_frame  = b""
-        self._last_img_id = -1
-        log.info("LedImageViewerBackend — %s  cols=%d  chain=%d", viewer_path, cols, _chain)
+        self._last_frame    = b""
+        self._last_img_id   = -1
+        self._last_restart_t = 0.0
+        log.info("LedImageViewerBackend — %s  cols=%d  chain=%d  heartbeat=%.1fs",
+                 viewer_path, cols, _chain, _HEARTBEAT_SECS)
 
     def _write_ppm(self, data: bytes) -> None:
         with open(self._ppm, "wb") as f:
             f.write(f"P6\n{WIDTH} {HEIGHT}\n255\n".encode())
             f.write(data)
 
-    def _restart(self) -> None:
+    def _restart(self, reason: str = "content changed") -> None:
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()
             try:
                 self._proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
-            time.sleep(0.2)  # let panel fully blank after SIGTERM before next init
+            time.sleep(0.1)  # let RP1 flush before new process takes GPIO
         cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
-        log.info("led-image-viewer PID starting...")
         self._proc = subprocess.Popen(cmd)
+        self._last_restart_t = time.monotonic()
+        log.info("► viewer restart [%s]  PID=%d", reason, self._proc.pid)
 
     def _proc_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
     def show(self, img: Image.Image) -> None:
-        if id(img) == self._last_img_id and self._proc_alive():
-            return  # same image object, viewer still running — skip
-        if not self._proc_alive():
-            log.warning("led-image-viewer died — restarting")
+        now         = time.monotonic()
+        same_img    = id(img) == self._last_img_id
+        proc_alive  = self._proc_alive()
+        elapsed     = now - self._last_restart_t
+        heartbeat   = proc_alive and same_img and elapsed >= _HEARTBEAT_SECS
+
+        if same_img and proc_alive and not heartbeat:
+            return  # viewer running, content unchanged, heartbeat not due — nothing to do
+
+        if not proc_alive:
+            exit_code = self._proc.poll() if self._proc else "?"
+            log.warning("led-image-viewer died (exit=%s) — restarting", exit_code)
+            reason = f"process died (exit={exit_code})"
+        elif heartbeat:
+            reason = f"heartbeat ({elapsed:.1f}s — preventing RP1 drift)"
+        else:
+            reason = "content changed"
+
         data = _snap_frame(img)
         self._last_img_id = id(img)
         self._last_frame  = data
         self._write_ppm(data)
-        self._restart()
+        self._restart(reason)
 
     def clear(self) -> None:
         if self._last_frame == _BLACK_FRAME and self._proc_alive():
             return
         self._last_frame = _BLACK_FRAME
         self._write_ppm(_BLACK_FRAME)
-        self._restart()
+        self._restart("clear")
 
     def close(self) -> None:
         try:
