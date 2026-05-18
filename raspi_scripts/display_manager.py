@@ -257,14 +257,22 @@ class LedcatBackend(DisplayBackend):
             cmd.append(f"--led-pwm-bits={pwm_bits}")
 
         log.info("Pi 4 backend — ledcat: %s", " ".join(cmd))
-        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        self._proc       = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        self._last_frame = b""
         log.info("ledcat PID=%d  frame=%d bytes", self._proc.pid, WIDTH * HEIGHT * 3)
 
     def show(self, img: Image.Image) -> None:
-        self._proc.stdin.write(_snap_frame(img))
+        data = _snap_frame(img)
+        if data == self._last_frame:
+            return  # identical content — skip write to avoid mid-scan corruption
+        self._last_frame = data
+        self._proc.stdin.write(data)
         self._proc.stdin.flush()
 
     def clear(self) -> None:
+        if self._last_frame == _BLACK_FRAME:
+            return
+        self._last_frame = _BLACK_FRAME
         self._proc.stdin.write(_BLACK_FRAME)
         self._proc.stdin.flush()
 
@@ -879,7 +887,7 @@ def run(backend: DisplayBackend, state: SystemState):
 
     while True:
         flash_tick = (flash_tick + 1) % 4
-        fp         = flash_tick % 2  # 0 or 1, alternates at 2 fps
+        fp         = 0  # flash disabled — constant phase avoids mid-scan writes
 
         # Priority: INCIDENT AHEAD > VEHICLE INCOMING > SLOW DOWN (default)
         incident = state.pop_incident_alert()
