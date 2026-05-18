@@ -386,8 +386,12 @@ export default function AdminPage() {
           {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
           <div
             ref={termRef}
-            className="h-[420px] overflow-y-auto p-4 font-mono text-xs leading-relaxed cursor-text"
-            onClick={() => inputRef.current?.focus()}
+            className="h-[420px] overflow-y-auto p-4 font-mono text-xs leading-relaxed cursor-text select-text"
+            onClick={() => {
+              if (!window.getSelection()?.toString()) {
+                inputRef.current?.focus();
+              }
+            }}
             onKeyDown={() => inputRef.current?.focus()}
           >
             {lines.map((l) => (

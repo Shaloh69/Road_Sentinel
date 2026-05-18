@@ -359,22 +359,26 @@ class LedImageViewerBackend(DisplayBackend):
                 self._proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
-            time.sleep(0.05)
+            time.sleep(0.2)  # let panel fully blank after SIGTERM before next init
         cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
-        log.info("led-image-viewer: %s", " ".join(cmd))
+        log.info("led-image-viewer PID starting...")
         self._proc = subprocess.Popen(cmd)
-        log.info("led-image-viewer PID=%d", self._proc.pid)
+
+    def _proc_alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
 
     def show(self, img: Image.Image) -> None:
         data = _snap_frame(img)
-        if data == self._last_frame:
-            return
+        if data == self._last_frame and self._proc_alive():
+            return  # identical content and viewer still running — skip
+        if not self._proc_alive():
+            log.warning("led-image-viewer died — restarting")
         self._last_frame = data
         self._write_ppm(data)
         self._restart()
 
     def clear(self) -> None:
-        if self._last_frame == _BLACK_FRAME:
+        if self._last_frame == _BLACK_FRAME and self._proc_alive():
             return
         self._last_frame = _BLACK_FRAME
         self._write_ppm(_BLACK_FRAME)
@@ -995,21 +999,27 @@ def run(backend: DisplayBackend, state: SystemState):
         backend.show(render_color_bars(phase))
         time.sleep(0.5)
 
+    # Pre-render static frames ONCE so the same PIL object is reused every tick.
+    # Re-rendering each tick produces a new Image object whose bytes may differ
+    # slightly (PIL FreeType non-determinism), defeating byte-level deduplication.
+    _img_slow_down = render_slow_down(state, flash_phase=0)
+    _img_vehicle   = render_vehicle_incoming(state, flash_phase=0)
+    _img_incident  = render_incident_ahead(state, flash_phase=0)
+
     while True:
         flash_tick = (flash_tick + 1) % 4
-        fp         = 0  # flash disabled — constant phase avoids mid-scan writes
 
         # Priority: INCIDENT AHEAD > VEHICLE INCOMING > SLOW DOWN (default)
         incident = state.pop_incident_alert()
         if incident:
             state_key = "incident"
-            img = render_incident_ahead(state, flash_phase=fp)
+            img = _img_incident
         elif state.has_vehicle_alert():
             state_key = "vehicle"
-            img = render_vehicle_incoming(state, flash_phase=fp)
+            img = _img_vehicle
         else:
             state_key = "slow_down"
-            img = render_slow_down(state, flash_phase=fp)
+            img = _img_slow_down
 
         if state_key != prev_state_key:
             log.info("State: %s → %s  (blanking panel)", prev_state_key, state_key)
