@@ -983,13 +983,16 @@ def run(backend: DisplayBackend, state: SystemState):
     prev_state_key = None
     log.info("Display loop started")
 
-    # Rapid burst of 16 BLACK frames at 50fps, then 300ms settle.
-    # This initializes the RP1 RIO state machine before the first content frame.
+    # Rapid burst at 50fps, then continue at TICK rate for 500ms total.
+    # Never let the RP1 idle — 300ms silent gap causes de-sync on Pi 5.
     log.info("Clearing panel...")
     for _ in range(16):
         backend._write(_BLACK_FRAME)
         time.sleep(0.02)
-    time.sleep(0.3)
+    end = time.monotonic() + 0.5
+    while time.monotonic() < end:
+        backend._write(_BLACK_FRAME)
+        time.sleep(TICK)
     log.info("Panel cleared — starting display")
 
     # Startup color-bar sequence (3 s) — confirms all RGB channels and both panels

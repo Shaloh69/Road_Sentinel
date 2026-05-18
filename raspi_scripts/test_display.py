@@ -48,12 +48,15 @@ log = logging.getLogger(__name__)
 
 
 def _startup_blank(backend):
-    """16 rapid BLACK frames + 300ms settle — same as display_manager startup."""
+    """Rapid burst at 50fps, then hold at TICK rate for 500ms — never lets RP1 idle."""
     log.info("Startup blank burst...")
     for _ in range(16):
         backend.clear()
         time.sleep(0.02)
-    time.sleep(0.3)
+    end = time.monotonic() + 0.5
+    while time.monotonic() < end:
+        backend.clear()
+        time.sleep(TICK)
     log.info("Panel ready")
 
 
