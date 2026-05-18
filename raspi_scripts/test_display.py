@@ -33,8 +33,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from display_manager import (
-    create_backend, _blank_transition, _detect_pi, TICK,
-    SystemState, _BLACK_FRAME,
+    create_backend, _detect_pi, TICK,
+    SystemState,
     render_slow_down, render_vehicle_incoming,
     render_incident_ahead, render_color_bars,
 )
@@ -70,38 +70,26 @@ def _show_hold(backend, img, hold: float):
 
 # ── Individual test functions ─────────────────────────────────────────────────
 
-def test_slow_down(backend, state, raw: bool, hold: float):
-    img = render_slow_down(state, flash_phase=0)
-    if not raw:
-        _blank_transition(backend, hold=0.15)
+def test_slow_down(backend, state, hold: float):
     log.info("Now showing: SLOW DOWN")
-    _show_hold(backend, img, hold)
+    _show_hold(backend, render_slow_down(state, flash_phase=0), hold)
 
 
-def test_vehicle(backend, state, raw: bool, hold: float):
-    img = render_vehicle_incoming(state, flash_phase=0)
-    if not raw:
-        _blank_transition(backend, hold=0.15)
+def test_vehicle(backend, state, hold: float):
     log.info("Now showing: VEHICLE INCOMING")
-    _show_hold(backend, img, hold)
+    _show_hold(backend, render_vehicle_incoming(state, flash_phase=0), hold)
 
 
-def test_incident(backend, state, raw: bool, hold: float):
-    img = render_incident_ahead(state, flash_phase=0)
-    if not raw:
-        _blank_transition(backend, hold=0.15)
+def test_incident(backend, state, hold: float):
     log.info("Now showing: INCIDENT AHEAD")
-    _show_hold(backend, img, hold)
+    _show_hold(backend, render_incident_ahead(state, flash_phase=0), hold)
 
 
-def test_color_bars(backend, state, raw: bool, hold: float):
+def test_color_bars(backend, state, hold: float):
     per_phase = max(hold / 6, 0.5)
     for phase in range(6):
-        img = render_color_bars(phase)
-        if not raw:
-            _blank_transition(backend, hold=0.05)
         log.info("Now showing: COLOR BARS phase=%d", phase)
-        _show_hold(backend, img, per_phase)
+        _show_hold(backend, render_color_bars(phase), per_phase)
 
 
 TESTS = {
@@ -110,6 +98,7 @@ TESTS = {
     "incident":   test_incident,
     "color_bars": test_color_bars,
 }
+
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -138,8 +127,6 @@ def main():
     )
     parser.add_argument("test", choices=[*TESTS.keys(), "all"],
                         help="Screen to test")
-    parser.add_argument("--raw",  action="store_true",
-                        help="Skip blank transition — write content directly")
     parser.add_argument("--hold", type=float, default=4.0,
                         help="Seconds to hold each screen (default: 4)")
     parser.add_argument("--pi",   choices=["4", "5"], default=None,
@@ -147,8 +134,7 @@ def main():
     args = parser.parse_args()
 
     pi_model = f"pi{args.pi}" if args.pi else _detect_pi()
-    mode     = "RAW — no transition" if args.raw else "with blank transition"
-    log.info("Pi: %s | test: %s | %s | hold: %.1fs", pi_model, args.test, mode, args.hold)
+    log.info("Pi: %s | test: %s | hold: %.1fs", pi_model, args.test, args.hold)
 
     backend = create_backend(_DefaultArgs(), pi_model)
     state   = SystemState()
@@ -162,14 +148,13 @@ def main():
 
         if args.test == "all":
             for name, fn in TESTS.items():
-                log.info("--- %s [%s] ---", name.upper(), mode)
-                fn(backend, state, args.raw, args.hold)
+                log.info("--- %s ---", name.upper())
+                fn(backend, state, args.hold)
         else:
-            log.info("--- %s [%s] ---", args.test.upper(), mode)
-            TESTS[args.test](backend, state, args.raw, args.hold)
+            log.info("--- %s ---", args.test.upper())
+            TESTS[args.test](backend, state, args.hold)
 
-        _blank_transition(backend, hold=0.2)
-        log.info("Test complete — panel cleared")
+        log.info("Test complete")
 
     except KeyboardInterrupt:
         log.info("Stopped by user")

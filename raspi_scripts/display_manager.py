@@ -995,14 +995,7 @@ def run(backend: DisplayBackend, state: SystemState):
         time.sleep(TICK)
     log.info("Panel cleared — starting display")
 
-    # Startup color-bar sequence (3 s) — confirms all RGB channels and both panels
-    for phase in range(6):
-        _blank_transition(backend, hold=0.05)
-        backend.show(render_color_bars(phase))
-        time.sleep(0.5)
-
-    # Pre-render and pre-snap frames once — avoids numpy palette computation on
-    # every TICK. PIL images are deterministic so bytes are identical each call.
+    # Pre-render and pre-snap frames once
     _bytes_slow_down = _snap_frame(render_slow_down(state, flash_phase=0))
     _bytes_vehicle   = _snap_frame(render_vehicle_incoming(state, flash_phase=0))
     _bytes_incident  = _snap_frame(render_incident_ahead(state, flash_phase=0))
@@ -1021,7 +1014,6 @@ def run(backend: DisplayBackend, state: SystemState):
             frame_data = _bytes_slow_down
 
         if state_key != prev_state_key:
-            _blank_transition(backend, hold=0.15)
             prev_state_key = state_key
             log.info("Now showing: %s", state_key.replace("_", " ").upper())
 
