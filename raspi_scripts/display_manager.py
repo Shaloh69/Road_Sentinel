@@ -270,20 +270,54 @@ class LedcatBackend(DisplayBackend):
         if pwm_bits > 0:
             cmd.append(f"--led-pwm-bits={pwm_bits}")
 
+        self._cmd = cmd
         log.info("ledcat backend: %s", " ".join(cmd))
-        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        log.info("ledcat PID=%d", self._proc.pid)
+        self._proc = self._launch()
+
+    def _launch(self) -> subprocess.Popen:
+        proc = subprocess.Popen(self._cmd, stdin=subprocess.PIPE)
+        log.info("ledcat PID=%d", proc.pid)
+        return proc
+
+    def _restart(self) -> None:
+        """Kill ledcat, relaunch, burst 16 black frames to re-sync RP1."""
+        log.warning("Restarting ledcat + RP1 re-init burst...")
+        try:
+            self._proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            self._proc.kill()
+            self._proc.wait(timeout=2)
+        except Exception:
+            pass
+        self._proc = self._launch()
+        for _ in range(16):
+            try:
+                self._proc.stdin.write(_BLACK_FRAME)
+                self._proc.stdin.flush()
+            except Exception:
+                pass
+            time.sleep(0.02)
+        log.warning("ledcat restarted — RP1 re-synced")
 
     def _write(self, data: bytes) -> None:
-        rc = self._proc.poll()
-        if rc is not None:
-            log.error("ledcat PID=%d exited rc=%d — write skipped", self._proc.pid, rc)
+        if self._proc.poll() is not None:
+            log.error("ledcat PID=%d died — restarting", self._proc.pid)
+            self._restart()
             return
+        t0 = time.monotonic()
         try:
             self._proc.stdin.write(data)
             self._proc.stdin.flush()
         except OSError as e:
-            log.error("ledcat write failed: %s", e)
+            log.error("ledcat write failed: %s — restarting", e)
+            self._restart()
+            return
+        if time.monotonic() - t0 > 0.08:
+            log.warning("Write blocked %.0fms — pipe backup, restarting",
+                        (time.monotonic() - t0) * 1000)
+            self._restart()
 
     def show(self, img: Image.Image) -> None:
         self._write(_snap_frame(img))
