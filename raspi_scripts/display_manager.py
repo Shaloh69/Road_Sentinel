@@ -218,6 +218,18 @@ LEDCAT_DEFAULT = _find_ledcat()
 _BLACK_FRAME   = bytes(WIDTH * HEIGHT * 3)
 
 
+def _find_led_image_viewer() -> str:
+    for p in [
+        os.path.expanduser("~/rpi-rgb-led-matrix/utils/led-image-viewer"),
+        "/home/roadsentinel/rpi-rgb-led-matrix/utils/led-image-viewer",
+    ]:
+        if os.path.isfile(p):
+            return p
+    return os.path.expanduser("~/rpi-rgb-led-matrix/utils/led-image-viewer")
+
+LED_IMAGE_VIEWER_DEFAULT = _find_led_image_viewer()
+
+
 class LedcatBackend(DisplayBackend):
     """
     Pi 4 — pipes raw RGB24 frames to hzeller ledcat C binary via stdin.
@@ -283,6 +295,99 @@ class LedcatBackend(DisplayBackend):
             self._proc.wait(timeout=3)
         except Exception:
             self._proc.kill()
+
+
+# ── Pi 5 backend: led-image-viewer subprocess ────────────────────────────────
+
+class LedImageViewerBackend(DisplayBackend):
+    """
+    Pi 5 — renders PIL frames to a temp PPM file, displays with led-image-viewer.
+    led-image-viewer uses hzeller FrameCanvas + SwapOnVSync internally so frame
+    updates are always atomic — no mid-scan corruption possible.
+    Viewer process is restarted only when content actually changes.
+    """
+
+    _PI5_FLAGS = [
+        f"--led-rows={HEIGHT}",
+        "--led-cols=64",
+        "--led-chain=2",
+        "--led-parallel=1",
+        "--led-gpio-mapping=regular",
+        "--led-slowdown-gpio=0",
+        "--led-no-drop-privs",
+        "--led-no-hardware-pulse",
+        "--led-multiplexing=1",
+        "--led-rp1-rio=1",
+        "--led-pwm-bits=7",
+    ]
+
+    def __init__(self, viewer_path: str, cols: int, chain: int):
+        if not os.path.isfile(viewer_path):
+            raise FileNotFoundError(
+                f"led-image-viewer not found: {viewer_path}\n"
+                "Build with: cd ~/rpi-rgb-led-matrix/utils && make"
+            )
+        _chain = chain if chain > 0 else (WIDTH // cols)
+        self._viewer = viewer_path
+        self._flags  = [
+            f"--led-rows={HEIGHT}",
+            f"--led-cols={cols}",
+            f"--led-chain={_chain}",
+            "--led-parallel=1",
+            "--led-gpio-mapping=regular",
+            "--led-slowdown-gpio=0",
+            "--led-no-drop-privs",
+            "--led-no-hardware-pulse",
+            "--led-multiplexing=1",
+            "--led-rp1-rio=1",
+            "--led-pwm-bits=7",
+        ]
+        self._ppm        = "/tmp/roadsentinel_frame.ppm"
+        self._proc: Optional[subprocess.Popen] = None
+        self._last_frame = b""
+        log.info("LedImageViewerBackend — %s  cols=%d  chain=%d", viewer_path, cols, _chain)
+
+    def _write_ppm(self, data: bytes) -> None:
+        with open(self._ppm, "wb") as f:
+            f.write(f"P6\n{WIDTH} {HEIGHT}\n255\n".encode())
+            f.write(data)
+
+    def _restart(self) -> None:
+        if self._proc and self._proc.poll() is None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+            time.sleep(0.05)
+        cmd = [self._viewer] + self._flags + ["-l", "-1", self._ppm]
+        log.info("led-image-viewer: %s", " ".join(cmd))
+        self._proc = subprocess.Popen(cmd)
+        log.info("led-image-viewer PID=%d", self._proc.pid)
+
+    def show(self, img: Image.Image) -> None:
+        data = _snap_frame(img)
+        if data == self._last_frame:
+            return
+        self._last_frame = data
+        self._write_ppm(data)
+        self._restart()
+
+    def clear(self) -> None:
+        if self._last_frame == _BLACK_FRAME:
+            return
+        self._last_frame = _BLACK_FRAME
+        self._write_ppm(_BLACK_FRAME)
+        self._restart()
+
+    def close(self) -> None:
+        try:
+            self.clear()
+            time.sleep(0.3)
+        except Exception:
+            pass
+        if self._proc and self._proc.poll() is None:
+            self._proc.terminate()
 
 
 # ── Pi 5 backend: Adafruit PioMatter ──────────────────────────────────────────
@@ -397,18 +502,14 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        log.info("Detected Raspberry Pi 5 → ledcat backend (hzeller, multiplexing=1, rp1-rio=1)")
-        return LedcatBackend(
-            ledcat_path  = os.path.expanduser(args.ledcat or LEDCAT_DEFAULT),
-            slowdown     = 0,
-            mapping      = "regular",
-            no_hw_pulse  = True,
-            cols         = args.cols,
-            chain        = args.chain if args.chain > 0 else 2,
-            multiplexing = args.multiplexing if args.multiplexing > 0 else 1,
-            scan_mode    = args.scan_mode,
-            rp1_rio      = True,
-            pwm_bits     = 7,
+        viewer = os.path.expanduser(
+            getattr(args, "viewer", None) or LED_IMAGE_VIEWER_DEFAULT
+        )
+        log.info("Detected Raspberry Pi 5 → led-image-viewer backend (SwapOnVSync, multiplexing=1)")
+        return LedImageViewerBackend(
+            viewer_path = viewer,
+            cols        = args.cols,
+            chain       = args.chain if args.chain > 0 else 2,
         )
     else:
         log.info("Detected Raspberry Pi 4 → ledcat backend")
@@ -870,7 +971,7 @@ TICK = 0.25   # 4 fps — smooth flashing at 2 fps
 
 def _blank_transition(backend: DisplayBackend, hold: float = 0.15) -> None:
     """Black out the panel and hold briefly before showing new content."""
-    backend._last_frame = b""   # force clear() to actually write
+    backend._last_frame = b""  # reset so clear() always writes, even if already black
     backend.clear()
     time.sleep(hold)
 
@@ -958,7 +1059,9 @@ Examples:
 
     # ── Pi 4 / ledcat ──
     parser.add_argument("--ledcat",         default=None,
-                        help=f"ledcat binary path (default: {LEDCAT_DEFAULT})")
+                        help=f"ledcat binary path (Pi 4, default: {LEDCAT_DEFAULT})")
+    parser.add_argument("--viewer",         default=None,
+                        help=f"led-image-viewer binary path (Pi 5, default: {LED_IMAGE_VIEWER_DEFAULT})")
     parser.add_argument("--slowdown",       type=int, default=4,
                         help="GPIO slowdown (Pi 4, default: 4)")
     parser.add_argument("--cols",           type=int, default=64,
