@@ -26,7 +26,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from display_manager import (
-    create_backend, _detect_pi, TICK,
+    create_backend, _detect_pi, _snap_frame, TICK, _BLACK_FRAME,
     SystemState,
     render_slow_down, render_vehicle_incoming,
     render_incident_ahead, render_color_bars,
@@ -59,23 +59,13 @@ LABELS = {
 def _startup_blank(backend):
     log.info("Startup blank burst...")
     for _ in range(16):
-        backend.clear()
+        backend._write(_BLACK_FRAME)
         time.sleep(0.02)
     end = time.monotonic() + 0.5
     while time.monotonic() < end:
-        backend.clear()
+        backend._write(_BLACK_FRAME)
         time.sleep(TICK)
     log.info("Panel ready")
-
-
-def _get_frame(name, state, color_phase):
-    if name == "slow_down":
-        return render_slow_down(state, flash_phase=0)
-    if name == "vehicle":
-        return render_vehicle_incoming(state, flash_phase=0)
-    if name == "incident":
-        return render_incident_ahead(state, flash_phase=0)
-    return render_color_bars(color_phase)
 
 
 def _read_cmd():
@@ -121,14 +111,22 @@ def main():
 
     pi_model = f"pi{args.pi}" if args.pi else _detect_pi()
     backend  = create_backend(_DefaultArgs(), pi_model)
-    state    = SystemState()
-    state.update_summary({
-        "vehicles_today": 42, "average_speed": 35,
-        "incidents_today": 0, "cameras_online": 2, "cameras_total": 2,
-    })
 
     try:
         _startup_blank(backend)
+
+        # Pre-compute all frames as raw bytes once — zero PIL/numpy overhead in loop
+        state_obj = SystemState()
+        state_obj.update_summary({
+            "vehicles_today": 42, "average_speed": 35,
+            "incidents_today": 0, "cameras_online": 2, "cameras_total": 2,
+        })
+        frames = {
+            "slow_down": _snap_frame(render_slow_down(state_obj, flash_phase=0)),
+            "vehicle":   _snap_frame(render_vehicle_incoming(state_obj, flash_phase=0)),
+            "incident":  _snap_frame(render_incident_ahead(state_obj, flash_phase=0)),
+        }
+        color_bar_frames = [_snap_frame(render_color_bars(p)) for p in range(6)]
 
         current     = args.start
         color_phase = 0
@@ -138,6 +136,7 @@ def main():
         log.info("To switch — in another terminal:  echo 2 > /tmp/led_cmd")
         log.info("Screens: 1=SLOW DOWN  2=VEHICLE  3=INCIDENT  4=COLOR BARS  q=quit")
 
+        next_tick = time.monotonic() + TICK
         while True:
             cmd = _read_cmd()
             if cmd:
@@ -155,8 +154,15 @@ def main():
                 color_phase = (color_phase + 1) % 6
                 phase_end   = time.monotonic() + 0.5
 
-            backend.show(_get_frame(current, state, color_phase))
-            time.sleep(TICK)
+            frame = color_bar_frames[color_phase] if current == "color_bars" else frames[current]
+            backend._write(frame)
+
+            # Deadline-based sleep — corrects for OS scheduling jitter
+            now  = time.monotonic()
+            wait = next_tick - now
+            if wait > 0:
+                time.sleep(wait)
+            next_tick = max(next_tick + TICK, time.monotonic())
 
     except KeyboardInterrupt:
         pass
