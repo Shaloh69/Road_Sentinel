@@ -356,7 +356,7 @@ class LedcatBackend(DisplayBackend):
 # Restart led-image-viewer every N seconds even when showing the same image.
 # The RP1 coprocessor's PWM scan timing drifts within the viewer's own refresh
 # loop; restarting before drift accumulates prevents garbage/white-line output.
-_HEARTBEAT_SECS = 3.0
+_HEARTBEAT_SECS = 1.5
 
 
 class LedImageViewerBackend(DisplayBackend):
@@ -385,7 +385,7 @@ class LedImageViewerBackend(DisplayBackend):
             "--led-no-drop-privs",
             "--led-no-hardware-pulse",
             "--led-multiplexing=1",
-            "--led-pwm-bits=4",
+            "--led-pwm-bits=3",
         ]
         self._ppm           = "/tmp/roadsentinel_frame.ppm"
         self._proc: Optional[subprocess.Popen] = None
