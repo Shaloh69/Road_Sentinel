@@ -1,35 +1,27 @@
 #!/usr/bin/env python3
 """
-Road Sentinel — isolated display test.
-Tests each screen individually, with and without the blank transition.
+Road Sentinel — interactive display test.
+
+Keys during run:
+  1  SLOW DOWN
+  2  VEHICLE INCOMING
+  3  INCIDENT AHEAD
+  4  COLOR BARS
+  q  Quit
 
 Usage:
-  sudo python3 raspi_scripts/test_display.py <test> [--raw] [--hold N]
-
-Tests:
-  slow_down    SLOW DOWN screen (red)
-  vehicle      VEHICLE INCOMING screen (orange)
-  incident     INCIDENT AHEAD screen (magenta)
-  color_bars   Color bar sweep
-  all          Run all four tests in sequence
-
-Flags:
-  --raw        Skip blank transition — write content directly to panel
-  --hold N     Hold each screen for N seconds (default: 4)
-  --pi 4|5     Force Pi model (default: auto-detect)
-
-Examples:
-  sudo python3 raspi_scripts/test_display.py slow_down
-  sudo python3 raspi_scripts/test_display.py slow_down --raw
-  sudo python3 raspi_scripts/test_display.py all
-  sudo python3 raspi_scripts/test_display.py all --raw
+  sudo python3 raspi_scripts/test_display.py [--start slow_down|vehicle|incident|color_bars]
+  sudo python3 raspi_scripts/test_display.py --pi 4
 """
 
 import argparse
 import logging
 import os
+import select
 import sys
+import termios
 import time
+import tty
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from display_manager import (
@@ -46,9 +38,22 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+SCREENS = {
+    "1": "slow_down",
+    "2": "vehicle",
+    "3": "incident",
+    "4": "color_bars",
+}
+
+LABELS = {
+    "slow_down":  "SLOW DOWN",
+    "vehicle":    "VEHICLE INCOMING",
+    "incident":   "INCIDENT AHEAD",
+    "color_bars": "COLOR BARS",
+}
+
 
 def _startup_blank(backend):
-    """Rapid burst at 50fps, then hold at TICK rate for 500ms — never lets RP1 idle."""
     log.info("Startup blank burst...")
     for _ in range(16):
         backend.clear()
@@ -60,55 +65,26 @@ def _startup_blank(backend):
     log.info("Panel ready")
 
 
-def _show_forever(backend, img):
-    """Push the same frame at TICK rate until Ctrl+C."""
-    while True:
-        backend.show(img)
-        time.sleep(TICK)
+def _read_key():
+    """Return a keypress if available, else None (non-blocking)."""
+    if select.select([sys.stdin], [], [], 0)[0]:
+        return sys.stdin.read(1)
+    return None
 
 
-# ── Individual test functions ─────────────────────────────────────────────────
+def _get_frame(name, state, color_phase):
+    if name == "slow_down":
+        return render_slow_down(state, flash_phase=0)
+    if name == "vehicle":
+        return render_vehicle_incoming(state, flash_phase=0)
+    if name == "incident":
+        return render_incident_ahead(state, flash_phase=0)
+    if name == "color_bars":
+        return render_color_bars(color_phase)
+    return render_slow_down(state, flash_phase=0)
 
-def test_slow_down(backend, state):
-    log.info("Now showing: SLOW DOWN")
-    _show_forever(backend, render_slow_down(state, flash_phase=0))
-
-
-def test_vehicle(backend, state):
-    log.info("Now showing: VEHICLE INCOMING")
-    _show_forever(backend, render_vehicle_incoming(state, flash_phase=0))
-
-
-def test_incident(backend, state):
-    log.info("Now showing: INCIDENT AHEAD")
-    _show_forever(backend, render_incident_ahead(state, flash_phase=0))
-
-
-def test_color_bars(backend, state):
-    phase = 0
-    while True:
-        log.info("Now showing: COLOR BARS phase=%d", phase)
-        img = render_color_bars(phase)
-        end = time.monotonic() + 0.5
-        while time.monotonic() < end:
-            backend.show(img)
-            time.sleep(TICK)
-        phase = (phase + 1) % 6
-
-
-TESTS = {
-    "slow_down":  test_slow_down,
-    "vehicle":    test_vehicle,
-    "incident":   test_incident,
-    "color_bars": test_color_bars,
-}
-
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 class _DefaultArgs:
-    """Minimal args object that satisfies create_backend for both Pi 4 and Pi 5."""
     cols           = 64
     chain          = 2
     slowdown       = 4
@@ -124,39 +100,63 @@ class _DefaultArgs:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Road Sentinel isolated display test",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument("test", choices=list(TESTS.keys()),
-                        help="Screen to test")
-    parser.add_argument("--pi",   choices=["4", "5"], default=None,
-                        help="Force Pi model (default: auto-detect)")
+    parser = argparse.ArgumentParser(description="Road Sentinel interactive display test")
+    parser.add_argument("--start", default="slow_down",
+                        choices=list(LABELS.keys()),
+                        help="Starting screen (default: slow_down)")
+    parser.add_argument("--pi", choices=["4", "5"], default=None)
     args = parser.parse_args()
 
     pi_model = f"pi{args.pi}" if args.pi else _detect_pi()
-    log.info("Pi: %s | test: %s", pi_model, args.test)
-
-    backend = create_backend(_DefaultArgs(), pi_model)
-    state   = SystemState()
+    backend  = create_backend(_DefaultArgs(), pi_model)
+    state    = SystemState()
     state.update_summary({
         "vehicles_today": 42, "average_speed": 35,
         "incidents_today": 0, "cameras_online": 2, "cameras_total": 2,
     })
 
+    old_tty = termios.tcgetattr(sys.stdin.fileno())
     try:
         _startup_blank(backend)
 
-        log.info("--- %s --- (Ctrl+C to stop)", args.test.upper())
-        TESTS[args.test](backend, state)
+        log.info("Keys: 1=SLOW DOWN  2=VEHICLE INCOMING  3=INCIDENT AHEAD  4=COLOR BARS  q=quit")
+        tty.setraw(sys.stdin.fileno())
 
-        log.info("Test complete")
+        current      = args.start
+        color_phase  = 0
+        phase_end    = time.monotonic() + 0.5
+        prev         = None
+
+        while True:
+            key = _read_key()
+            if key == "q":
+                break
+            if key in SCREENS:
+                current = SCREENS[key]
+                color_phase = 0
+                phase_end   = time.monotonic() + 0.5
+
+            if current != prev:
+                # Log outside raw mode so the line isn't garbled
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_tty)
+                log.info("Now showing: %s", LABELS[current])
+                tty.setraw(sys.stdin.fileno())
+                prev = current
+
+            # Cycle color bar phases automatically
+            if current == "color_bars" and time.monotonic() >= phase_end:
+                color_phase = (color_phase + 1) % 6
+                phase_end   = time.monotonic() + 0.5
+
+            backend.show(_get_frame(current, state, color_phase))
+            time.sleep(TICK)
 
     except KeyboardInterrupt:
-        log.info("Stopped by user")
+        pass
     finally:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_tty)
         backend.close()
+        log.info("Stopped")
 
 
 if __name__ == "__main__":
