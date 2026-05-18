@@ -868,8 +868,16 @@ def render_incident_ahead(state: SystemState, flash_phase: int = 0) -> Image.Ima
 TICK = 0.25   # 4 fps — smooth flashing at 2 fps
 
 
+def _blank_transition(backend: DisplayBackend, hold: float = 0.15) -> None:
+    """Black out the panel and hold briefly before showing new content."""
+    backend._last_frame = b""   # force clear() to actually write
+    backend.clear()
+    time.sleep(hold)
+
+
 def run(backend: DisplayBackend, state: SystemState):
-    flash_tick = 0
+    flash_tick     = 0
+    prev_state_key = None
     log.info("Display loop started")
 
     # Blank the panel fully before showing anything
@@ -882,6 +890,7 @@ def run(backend: DisplayBackend, state: SystemState):
 
     # Startup color-bar sequence (3 s) — confirms all RGB channels and both panels
     for phase in range(6):
+        _blank_transition(backend, hold=0.05)
         backend.show(render_color_bars(phase))
         time.sleep(0.5)
 
@@ -892,11 +901,19 @@ def run(backend: DisplayBackend, state: SystemState):
         # Priority: INCIDENT AHEAD > VEHICLE INCOMING > SLOW DOWN (default)
         incident = state.pop_incident_alert()
         if incident:
+            state_key = "incident"
             img = render_incident_ahead(state, flash_phase=fp)
         elif state.has_vehicle_alert():
+            state_key = "vehicle"
             img = render_vehicle_incoming(state, flash_phase=fp)
         else:
+            state_key = "slow_down"
             img = render_slow_down(state, flash_phase=fp)
+
+        if state_key != prev_state_key:
+            log.info("State: %s → %s  (blanking panel)", prev_state_key, state_key)
+            _blank_transition(backend, hold=0.15)
+            prev_state_key = state_key
 
         backend.show(img)
         time.sleep(TICK)
