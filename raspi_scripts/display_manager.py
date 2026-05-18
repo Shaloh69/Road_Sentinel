@@ -401,17 +401,19 @@ class LedImageViewerBackend(DisplayBackend):
             f.write(data)
 
     def _restart(self, reason: str = "content changed") -> None:
-        old_proc = self._proc
+        if self._proc and self._proc.poll() is None:
+            # SIGKILL: instant death, no hzeller cleanup handler → no deliberate
+            # panel clear. RP1 DMA keeps driving the matrix autonomously until the
+            # new process re-programs it, so the last frame stays visible.
+            self._proc.kill()
+            try:
+                self._proc.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
         cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
-        # Start new process FIRST so it takes GPIO before old one clears the panel.
-        # The new process is displaying in ~1ms; only then do we send SIGTERM to the
-        # old one — its cleanup blank is overwritten immediately by the new process.
         self._proc = subprocess.Popen(cmd)
         self._last_restart_t = time.monotonic()
         log.info("► viewer restart [%s]  PID=%d", reason, self._proc.pid)
-        if old_proc and old_proc.poll() is None:
-            time.sleep(0.015)   # give new process ~15ms to init and own GPIO
-            old_proc.terminate()
 
     def _proc_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
