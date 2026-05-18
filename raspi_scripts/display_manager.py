@@ -4,11 +4,11 @@ Road Sentinel — HUB75 128×32 RGB LED Matrix Display Manager
 Unified version — works on Raspberry Pi 4 AND Raspberry Pi 5 automatically.
 
 Pi detection at startup:
-  /dev/pio0 exists  → Pi 5 → hzeller ledcat (--led-rp1-rio=1, multiplexing=1)
+  /dev/pio0 exists  → Pi 5 → led-image-viewer (SwapOnVSync, coprocessor mode)
   otherwise         → Pi 4 → hzeller ledcat (/dev/mem GPIO)
 
-Frame pipeline (identical on both Pi versions):
-  PIL Image (128×32) → numpy palette-snap → raw RGB24 bytes → ledcat stdin
+Frame pipeline:
+  PIL Image (128×32) → numpy palette-snap → raw RGB24 bytes → PPM file → led-image-viewer
 
 Pi 4 backend:
   ledcat → hzeller C lib → /dev/mem GPIO
@@ -16,12 +16,11 @@ Pi 4 backend:
   Requires: sudo
 
 Pi 5 backend:
-  ledcat --led-rp1-rio=1 → RP1 RIO GPIO
-  Requires: ~/rpi-rgb-led-matrix/examples-api-use/ledcat  (built by install.sh)
+  led-image-viewer → hzeller C lib → RP1 coprocessor mode (no --led-rp1-rio=1)
+  Uses SwapOnVSync for atomic frame updates — no mid-scan RP1 corruption.
+  RIO mode (--led-rp1-rio=1) causes state machine de-sync → do NOT use it.
+  Requires: ~/rpi-rgb-led-matrix/utils/led-image-viewer  (built by install.sh)
   Requires: sudo
-  NOTE: Pi 5 RP1 has a double-buffer sync window — if a new frame arrives after
-  >~200ms idle the RP1 is mid-refresh and the swap corrupts output.  Fix: write
-  at 25 fps (TICK=0.04s) so the RP1 never idles long enough to de-sync.
 
 Install:
   Pi 4:  bash raspi_scripts/lcd_pi4/install.sh
@@ -371,11 +370,10 @@ class LedImageViewerBackend(DisplayBackend):
             f"--led-chain={_chain}",
             "--led-parallel=1",
             "--led-gpio-mapping=regular",
-            "--led-slowdown-gpio=0",
+            "--led-slowdown-gpio=2",
             "--led-no-drop-privs",
             "--led-no-hardware-pulse",
             "--led-multiplexing=1",
-            "--led-rp1-rio=1",
             "--led-pwm-bits=7",
         ]
         self._ppm         = "/tmp/roadsentinel_frame.ppm"
