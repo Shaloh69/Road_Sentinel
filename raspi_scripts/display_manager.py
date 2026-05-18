@@ -232,12 +232,15 @@ LED_IMAGE_VIEWER_DEFAULT = _find_led_image_viewer()
 
 class LedcatBackend(DisplayBackend):
     """
-    Pi 4/5 — direct synchronous writes to hzeller ledcat via stdin.
-    No streaming thread — writes every show()/clear() call (4 fps stable,
-    ~12 fps during blank) so ledcat never idles long enough to cold-start.
-    Cold-start after long idle is what causes the transition garbage on Pi 5.
+    Pi 4/5 — streams raw RGB24 frames to hzeller ledcat via stdin at 25 fps.
+    A background thread repeats _current at 25 fps so ledcat is never idle
+    long enough to trigger the RP1 cold-start swap artifact on Pi 5.
+    show()/clear() update _current atomically (Python GIL); the thread picks
+    it up on its next cycle — no queue, no race during _blank_transition.
     Frame size: 128 × 32 × 3 = 12,288 bytes per frame, no header.
     """
+
+    _FPS = 25
 
     def __init__(self, ledcat_path: str, slowdown: int, mapping: str,
                  no_hw_pulse: bool, cols: int, chain: int,
@@ -271,33 +274,40 @@ class LedcatBackend(DisplayBackend):
             cmd.append(f"--led-pwm-bits={pwm_bits}")
 
         log.info("ledcat backend: %s", " ".join(cmd))
-        self._proc       = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        self._last_frame = b""
-        log.info("ledcat PID=%d", self._proc.pid)
+        self._proc    = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        self._current = _BLACK_FRAME   # atomic under Python GIL
+        self._running = True
+        t = threading.Thread(target=self._feed, daemon=True, name="ledcat-feed")
+        t.start()
+        log.info("ledcat PID=%d  streaming at %d fps", self._proc.pid, self._FPS)
 
-    def _write(self, data: bytes) -> None:
-        rc = self._proc.poll()
-        if rc is not None:
-            log.error("ledcat PID=%d exited rc=%d — write skipped", self._proc.pid, rc)
-            return
-        try:
-            self._proc.stdin.write(data)
-            self._proc.stdin.flush()
-        except OSError as e:
-            log.error("ledcat write failed: %s", e)
+    def _feed(self) -> None:
+        interval = 1.0 / self._FPS
+        while self._running:
+            t0    = time.monotonic()
+            frame = self._current      # atomic read (GIL)
+            try:
+                self._proc.stdin.write(frame)
+                self._proc.stdin.flush()
+            except OSError as e:
+                log.error("ledcat-feed: %s (PID=%d rc=%s)",
+                          e, self._proc.pid, self._proc.poll())
+                break
+            remain = interval - (time.monotonic() - t0)
+            if remain > 0.001:
+                time.sleep(remain)
+        log.warning("ledcat-feed thread exiting")
 
     def show(self, img: Image.Image) -> None:
-        data = _snap_frame(img)
-        self._last_frame = data
-        self._write(data)   # always write — 4 fps from TICK keeps ledcat warm
+        self._current = _snap_frame(img)   # atomic write (GIL); thread picks up next cycle
 
     def clear(self) -> None:
-        self._last_frame = _BLACK_FRAME
-        self._write(_BLACK_FRAME)
+        self._current = _BLACK_FRAME       # atomic write (GIL)
 
     def close(self) -> None:
+        self._running = False
+        time.sleep(0.15)
         try:
-            self.clear()
             self._proc.stdin.close()
             self._proc.wait(timeout=3)
         except Exception:
@@ -513,7 +523,8 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        log.info("Detected Raspberry Pi 5 → ledcat backend (direct 4 fps, multiplexing=1)")
+        log.info("Detected Raspberry Pi 5 → ledcat backend (streaming %d fps, multiplexing=1)",
+                 LedcatBackend._FPS)
         return LedcatBackend(
             ledcat_path  = os.path.expanduser(
                 getattr(args, "ledcat", None) or LEDCAT_DEFAULT
@@ -987,11 +998,11 @@ TICK = 0.25   # 4 fps — smooth flashing at 2 fps
 
 
 def _blank_transition(backend: DisplayBackend, hold: float = 0.3) -> None:
-    """Write black at ~12 fps during hold to keep ledcat warm (no cold-start on next frame)."""
-    end = time.monotonic() + hold
-    while time.monotonic() < end:
-        backend.clear()
-        time.sleep(0.08)
+    """Blank panel for hold seconds; streaming thread keeps ledcat warm at 25 fps."""
+    log.info("Clearing panel...")
+    backend.clear()
+    time.sleep(hold)
+    log.info("Panel cleared")
 
 
 def run(backend: DisplayBackend, state: SystemState):
