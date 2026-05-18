@@ -356,7 +356,7 @@ class LedcatBackend(DisplayBackend):
 # Restart led-image-viewer every N seconds even when showing the same image.
 # The RP1 coprocessor's PWM scan timing drifts within the viewer's own refresh
 # loop; restarting before drift accumulates prevents garbage/white-line output.
-_HEARTBEAT_SECS = 1.5
+_HEARTBEAT_SECS = 1.0
 
 
 class LedImageViewerBackend(DisplayBackend):
@@ -401,17 +401,17 @@ class LedImageViewerBackend(DisplayBackend):
             f.write(data)
 
     def _restart(self, reason: str = "content changed") -> None:
-        if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-            time.sleep(0.1)  # let RP1 flush before new process takes GPIO
+        old_proc = self._proc
         cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
+        # Start new process FIRST so it takes GPIO before old one clears the panel.
+        # The new process is displaying in ~1ms; only then do we send SIGTERM to the
+        # old one — its cleanup blank is overwritten immediately by the new process.
         self._proc = subprocess.Popen(cmd)
         self._last_restart_t = time.monotonic()
         log.info("► viewer restart [%s]  PID=%d", reason, self._proc.pid)
+        if old_proc and old_proc.poll() is None:
+            time.sleep(0.015)   # give new process ~15ms to init and own GPIO
+            old_proc.terminate()
 
     def _proc_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
