@@ -375,11 +375,11 @@ class LedImageViewerBackend(DisplayBackend):
             f"--led-chain={_chain}",
             "--led-parallel=1",
             "--led-gpio-mapping=regular",
-            "--led-slowdown-gpio=2",
+            "--led-slowdown-gpio=4",
             "--led-no-drop-privs",
             "--led-no-hardware-pulse",
             "--led-multiplexing=1",
-            "--led-pwm-bits=7",
+            "--led-pwm-bits=4",
         ]
         self._ppm         = "/tmp/roadsentinel_frame.ppm"
         self._proc: Optional[subprocess.Popen] = None
