@@ -276,12 +276,15 @@ class LedcatBackend(DisplayBackend):
         log.info("ledcat PID=%d  frame=%d bytes", self._proc.pid, WIDTH * HEIGHT * 3)
 
     def _write(self, data: bytes) -> None:
+        rc = self._proc.poll()
+        if rc is not None:
+            log.error("ledcat PID=%d has exited rc=%d — write skipped", self._proc.pid, rc)
+            return
         try:
             self._proc.stdin.write(data)
             self._proc.stdin.flush()
-        except OSError:
-            rc = self._proc.poll()
-            log.error("ledcat write failed — process exited with rc=%s", rc)
+        except OSError as e:
+            log.error("ledcat stdin write failed: %s", e)
 
     def show(self, img: Image.Image) -> None:
         data = _snap_frame(img)
@@ -292,7 +295,9 @@ class LedcatBackend(DisplayBackend):
 
     def clear(self) -> None:
         if self._last_frame == _BLACK_FRAME:
+            log.debug("clear() skipped — already black")
             return
+        log.info("clear() → writing BLACK (%d bytes)", len(_BLACK_FRAME))
         self._last_frame = _BLACK_FRAME
         self._write(_BLACK_FRAME)
 
@@ -987,10 +992,15 @@ def render_incident_ahead(state: SystemState, flash_phase: int = 0) -> Image.Ima
 TICK = 0.25   # 4 fps — smooth flashing at 2 fps
 
 
-def _blank_transition(backend: DisplayBackend, hold: float = 0.15) -> None:
-    """Black out the panel and hold briefly before showing new content."""
-    backend.clear()
-    time.sleep(hold)
+def _blank_transition(backend: DisplayBackend, hold: float = 0.3) -> None:
+    """Blank panel; rapid black writes flush any VSync swap artifact."""
+    end = time.monotonic() + hold
+    while time.monotonic() < end:
+        # Force-reset dedup so clear() always writes on LedcatBackend
+        if hasattr(backend, '_last_frame'):
+            backend._last_frame = b""
+        backend.clear()
+        time.sleep(0.04)  # ~25 fps black during blank period
 
 
 def run(backend: DisplayBackend, state: SystemState):
