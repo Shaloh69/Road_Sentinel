@@ -606,24 +606,16 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        try:
-            backend = RGBMatrixBackend(
-                cols         = args.cols,
-                chain        = args.chain if args.chain > 0 else 2,
-                slowdown     = getattr(args, "slowdown", 4),
-                multiplexing = getattr(args, "multiplexing", 1),
-            )
-            log.info("Pi 5 → RGBMatrix Python bindings (direct SwapOnVSync)")
-            return backend
-        except ImportError as e:
-            log.warning("rgbmatrix bindings unavailable (%s) → falling back to led-image-viewer", e)
-            return LedImageViewerBackend(
-                viewer_path = os.path.expanduser(
-                    getattr(args, "viewer", None) or LED_IMAGE_VIEWER_DEFAULT
-                ),
-                cols  = args.cols,
-                chain = args.chain if args.chain > 0 else 2,
-            )
+        # RGBMatrixBackend disabled: SetImage mirrors display on chained panels.
+        # TODO: fix pixel mapping before re-enabling.
+        log.info("Detected Raspberry Pi 5 → led-image-viewer backend (SwapOnVSync)")
+        return LedImageViewerBackend(
+            viewer_path = os.path.expanduser(
+                getattr(args, "viewer", None) or LED_IMAGE_VIEWER_DEFAULT
+            ),
+            cols  = args.cols,
+            chain = args.chain if args.chain > 0 else 2,
+        )
     else:
         log.info("Detected Raspberry Pi 4 → ledcat backend")
         return LedcatBackend(
