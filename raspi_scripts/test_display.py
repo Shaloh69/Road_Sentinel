@@ -2,7 +2,7 @@
 """
 Road Sentinel — interactive display test.
 
-Keys during run:
+Type a number + Enter to switch screens:
   1  SLOW DOWN
   2  VEHICLE INCOMING
   3  INCIDENT AHEAD
@@ -10,18 +10,17 @@ Keys during run:
   q  Quit
 
 Usage:
-  sudo python3 raspi_scripts/test_display.py [--start slow_down|vehicle|incident|color_bars]
+  sudo python3 raspi_scripts/test_display.py
+  sudo python3 raspi_scripts/test_display.py --start vehicle
   sudo python3 raspi_scripts/test_display.py --pi 4
 """
 
 import argparse
 import logging
 import os
-import select
 import sys
-import termios
+import threading
 import time
-import tty
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from display_manager import (
@@ -65,13 +64,6 @@ def _startup_blank(backend):
     log.info("Panel ready")
 
 
-def _read_key():
-    """Return a keypress if available, else None (non-blocking)."""
-    if select.select([sys.stdin], [], [], 0)[0]:
-        return sys.stdin.read(1)
-    return None
-
-
 def _get_frame(name, state, color_phase):
     if name == "slow_down":
         return render_slow_down(state, flash_phase=0)
@@ -79,9 +71,7 @@ def _get_frame(name, state, color_phase):
         return render_vehicle_incoming(state, flash_phase=0)
     if name == "incident":
         return render_incident_ahead(state, flash_phase=0)
-    if name == "color_bars":
-        return render_color_bars(color_phase)
-    return render_slow_down(state, flash_phase=0)
+    return render_color_bars(color_phase)
 
 
 class _DefaultArgs:
@@ -101,8 +91,7 @@ class _DefaultArgs:
 
 def main():
     parser = argparse.ArgumentParser(description="Road Sentinel interactive display test")
-    parser.add_argument("--start", default="slow_down",
-                        choices=list(LABELS.keys()),
+    parser.add_argument("--start", default="slow_down", choices=list(LABELS.keys()),
                         help="Starting screen (default: slow_down)")
     parser.add_argument("--pi", choices=["4", "5"], default=None)
     args = parser.parse_args()
@@ -115,46 +104,51 @@ def main():
         "incidents_today": 0, "cameras_online": 2, "cameras_total": 2,
     })
 
-    old_tty = termios.tcgetattr(sys.stdin.fileno())
-    try:
-        _startup_blank(backend)
+    current     = [args.start]   # list so the input thread can mutate it
+    stop        = threading.Event()
+    color_phase = [0]
+    phase_end   = [time.monotonic() + 0.5]
 
-        log.info("Keys: 1=SLOW DOWN  2=VEHICLE INCOMING  3=INCIDENT AHEAD  4=COLOR BARS  q=quit")
-        tty.setraw(sys.stdin.fileno())
-
-        current      = args.start
-        color_phase  = 0
-        phase_end    = time.monotonic() + 0.5
-        prev         = None
-
-        while True:
-            key = _read_key()
+    def _input_loop():
+        print("Type + Enter to switch:  1=SLOW DOWN  2=VEHICLE  3=INCIDENT  4=COLOR BARS  q=quit")
+        while not stop.is_set():
+            try:
+                key = input("> ").strip()
+            except EOFError:
+                stop.set()
+                break
             if key == "q":
+                stop.set()
                 break
             if key in SCREENS:
-                current = SCREENS[key]
-                color_phase = 0
-                phase_end   = time.monotonic() + 0.5
+                current[0]     = SCREENS[key]
+                color_phase[0] = 0
+                phase_end[0]   = time.monotonic() + 0.5
+                log.info("Now showing: %s", LABELS[current[0]])
+            else:
+                print("Unknown key. Use 1 / 2 / 3 / 4 / q")
 
-            if current != prev:
-                # Log outside raw mode so the line isn't garbled
-                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_tty)
-                log.info("Now showing: %s", LABELS[current])
-                tty.setraw(sys.stdin.fileno())
-                prev = current
+    try:
+        _startup_blank(backend)
+        log.info("Now showing: %s", LABELS[current[0]])
 
-            # Cycle color bar phases automatically
-            if current == "color_bars" and time.monotonic() >= phase_end:
-                color_phase = (color_phase + 1) % 6
-                phase_end   = time.monotonic() + 0.5
+        threading.Thread(target=_input_loop, daemon=True).start()
 
-            backend.show(_get_frame(current, state, color_phase))
+        prev = None
+        while not stop.is_set():
+            if current[0] != prev:
+                prev = current[0]
+
+            if current[0] == "color_bars" and time.monotonic() >= phase_end[0]:
+                color_phase[0] = (color_phase[0] + 1) % 6
+                phase_end[0]   = time.monotonic() + 0.5
+
+            backend.show(_get_frame(current[0], state, color_phase[0]))
             time.sleep(TICK)
 
     except KeyboardInterrupt:
         pass
     finally:
-        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_tty)
         backend.close()
         log.info("Stopped")
 
