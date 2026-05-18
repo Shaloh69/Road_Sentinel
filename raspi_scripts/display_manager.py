@@ -360,7 +360,7 @@ class LedImageViewerBackend(DisplayBackend):
             except subprocess.TimeoutExpired:
                 self._proc.kill()
             time.sleep(0.05)
-        cmd = [self._viewer] + self._flags + ["-l", "-1", self._ppm]
+        cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
         log.info("led-image-viewer: %s", " ".join(cmd))
         self._proc = subprocess.Popen(cmd)
         log.info("led-image-viewer PID=%d", self._proc.pid)
