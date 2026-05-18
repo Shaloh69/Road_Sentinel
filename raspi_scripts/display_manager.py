@@ -375,11 +375,11 @@ class LedImageViewerBackend(DisplayBackend):
             f"--led-chain={_chain}",
             "--led-parallel=1",
             "--led-gpio-mapping=regular",
-            "--led-slowdown-gpio=2",
+            "--led-slowdown-gpio=4",
             "--led-no-drop-privs",
             "--led-no-hardware-pulse",
             "--led-multiplexing=1",
-            "--led-pwm-bits=7",
+            "--led-pwm-bits=4",
         ]
         self._ppm         = "/tmp/roadsentinel_frame.ppm"
         self._proc: Optional[subprocess.Popen] = None
@@ -394,14 +394,17 @@ class LedImageViewerBackend(DisplayBackend):
 
     def _restart(self) -> None:
         if self._proc and self._proc.poll() is None:
+            # Process still running — kill it and wait for panel to blank cleanly.
             self._proc.terminate()
             try:
                 self._proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
-            time.sleep(0.2)  # let panel fully blank after SIGTERM before next init
-        cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
-        log.info("led-image-viewer PID starting...")
+            time.sleep(0.2)
+        # No sleep when process already exited naturally — panel blanked cleanly.
+        # -l 1 -w 30: show image for 30 s then exit; Python restarts immediately,
+        # resetting the RP1 refresh thread before PWM timing can drift.
+        cmd = [self._viewer] + self._flags + ["-l", "1", "-w", "30", self._ppm]
         self._proc = subprocess.Popen(cmd)
 
     def _proc_alive(self) -> bool:
