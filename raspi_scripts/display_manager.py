@@ -864,6 +864,14 @@ def run(backend: DisplayBackend, state: SystemState):
     flash_tick = 0
     log.info("Display loop started")
 
+    # Blank the panel fully before showing anything
+    log.info("Clearing panel...")
+    for _ in range(16):
+        backend.clear()
+        time.sleep(0.02)
+    time.sleep(0.3)
+    log.info("Panel cleared — starting display")
+
     # Startup color-bar sequence (3 s) — confirms all RGB channels and both panels
     for phase in range(6):
         backend.show(render_color_bars(phase))
