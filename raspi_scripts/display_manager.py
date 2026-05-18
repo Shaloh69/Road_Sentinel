@@ -42,6 +42,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -76,6 +77,28 @@ SEVERITY_COLORS = {
     "medium":   YELLOW,
     "low":      CYAN,
 }
+
+# Palette of every color the renderers can produce.
+# Used to snap anti-aliased PIL pixels to the nearest pure color
+# before sending frames to the LED panel via ledcat.
+_LED_PALETTE = np.array([
+    [0,   0,   0  ], [255, 255, 255], [220, 0,   0  ], [0,   200, 0  ],
+    [30,  80,  255], [220, 200, 0  ], [255, 110, 0  ], [0,   200, 200],
+    [90,  90,  90 ], [255, 160, 0  ], [0,   80,  0  ], [200, 0,   180],
+    # Background variants used in render functions
+    [0,   40,  0  ], [60,  0,   0  ], [50,  0,   0  ], [110, 0,   0  ],
+    [120, 0,   110], [80,  50,  0  ], [0,   55,  0  ], [150, 65,  0  ],
+    [160, 100, 0  ],
+], dtype=np.float32)
+
+
+def _snap_frame(img: Image.Image) -> bytes:
+    """Snap each pixel to the nearest palette color — eliminates PIL anti-aliasing."""
+    arr = np.array(img.convert("RGB"), dtype=np.float32)
+    flat = arr.reshape(-1, 3)
+    diff = flat[:, np.newaxis, :] - _LED_PALETTE[np.newaxis, :, :]
+    nearest = np.argmin(np.sum(diff ** 2, axis=2), axis=1)
+    return _LED_PALETTE[nearest].reshape(arr.shape).astype(np.uint8).tobytes()
 
 # ── Font & layout ─────────────────────────────────────────────────────────────
 ROW_H      = 5
@@ -238,7 +261,7 @@ class LedcatBackend(DisplayBackend):
         log.info("ledcat PID=%d  frame=%d bytes", self._proc.pid, WIDTH * HEIGHT * 3)
 
     def show(self, img: Image.Image) -> None:
-        self._proc.stdin.write(img.convert("RGB").tobytes())
+        self._proc.stdin.write(_snap_frame(img))
         self._proc.stdin.flush()
 
     def clear(self) -> None:
