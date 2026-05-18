@@ -60,36 +60,40 @@ def _startup_blank(backend):
     log.info("Panel ready")
 
 
-def _show_hold(backend, img, hold: float):
-    """Push the same frame at TICK rate for hold seconds."""
-    end = time.monotonic() + hold
-    while time.monotonic() < end:
+def _show_forever(backend, img):
+    """Push the same frame at TICK rate until Ctrl+C."""
+    while True:
         backend.show(img)
         time.sleep(TICK)
 
 
 # ── Individual test functions ─────────────────────────────────────────────────
 
-def test_slow_down(backend, state, hold: float):
+def test_slow_down(backend, state):
     log.info("Now showing: SLOW DOWN")
-    _show_hold(backend, render_slow_down(state, flash_phase=0), hold)
+    _show_forever(backend, render_slow_down(state, flash_phase=0))
 
 
-def test_vehicle(backend, state, hold: float):
+def test_vehicle(backend, state):
     log.info("Now showing: VEHICLE INCOMING")
-    _show_hold(backend, render_vehicle_incoming(state, flash_phase=0), hold)
+    _show_forever(backend, render_vehicle_incoming(state, flash_phase=0))
 
 
-def test_incident(backend, state, hold: float):
+def test_incident(backend, state):
     log.info("Now showing: INCIDENT AHEAD")
-    _show_hold(backend, render_incident_ahead(state, flash_phase=0), hold)
+    _show_forever(backend, render_incident_ahead(state, flash_phase=0))
 
 
-def test_color_bars(backend, state, hold: float):
-    per_phase = max(hold / 6, 0.5)
-    for phase in range(6):
+def test_color_bars(backend, state):
+    phase = 0
+    while True:
         log.info("Now showing: COLOR BARS phase=%d", phase)
-        _show_hold(backend, render_color_bars(phase), per_phase)
+        img = render_color_bars(phase)
+        end = time.monotonic() + 0.5
+        while time.monotonic() < end:
+            backend.show(img)
+            time.sleep(TICK)
+        phase = (phase + 1) % 6
 
 
 TESTS = {
@@ -125,10 +129,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("test", choices=[*TESTS.keys(), "all"],
+    parser.add_argument("test", choices=list(TESTS.keys()),
                         help="Screen to test")
-    parser.add_argument("--hold", type=float, default=4.0,
-                        help="Seconds to hold each screen (default: 4)")
     parser.add_argument("--pi",   choices=["4", "5"], default=None,
                         help="Force Pi model (default: auto-detect)")
     args = parser.parse_args()
@@ -146,13 +148,8 @@ def main():
     try:
         _startup_blank(backend)
 
-        if args.test == "all":
-            for name, fn in TESTS.items():
-                log.info("--- %s ---", name.upper())
-                fn(backend, state, args.hold)
-        else:
-            log.info("--- %s ---", args.test.upper())
-            TESTS[args.test](backend, state, args.hold)
+        log.info("--- %s --- (Ctrl+C to stop)", args.test.upper())
+        TESTS[args.test](backend, state)
 
         log.info("Test complete")
 
