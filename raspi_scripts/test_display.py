@@ -26,7 +26,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from display_manager import (
-    create_backend, _detect_pi, _snap_frame, TICK, _BLACK_FRAME,
+    create_backend, _detect_pi, TICK,
     SystemState,
     render_slow_down, render_vehicle_incoming,
     render_incident_ahead, render_color_bars,
@@ -59,11 +59,11 @@ LABELS = {
 def _startup_blank(backend):
     log.info("Startup blank burst...")
     for _ in range(16):
-        backend._write(_BLACK_FRAME)
+        backend.clear()
         time.sleep(0.02)
     end = time.monotonic() + 0.5
     while time.monotonic() < end:
-        backend._write(_BLACK_FRAME)
+        backend.clear()
         time.sleep(TICK)
     log.info("Panel ready")
 
@@ -115,18 +115,18 @@ def main():
     try:
         _startup_blank(backend)
 
-        # Pre-compute all frames as raw bytes once — zero PIL/numpy overhead in loop
+        # Pre-render frames once — passed by identity so show() skips re-snap on repeat
         state_obj = SystemState()
         state_obj.update_summary({
             "vehicles_today": 42, "average_speed": 35,
             "incidents_today": 0, "cameras_online": 2, "cameras_total": 2,
         })
         frames = {
-            "slow_down": _snap_frame(render_slow_down(state_obj, flash_phase=0)),
-            "vehicle":   _snap_frame(render_vehicle_incoming(state_obj, flash_phase=0)),
-            "incident":  _snap_frame(render_incident_ahead(state_obj, flash_phase=0)),
+            "slow_down": render_slow_down(state_obj, flash_phase=0),
+            "vehicle":   render_vehicle_incoming(state_obj, flash_phase=0),
+            "incident":  render_incident_ahead(state_obj, flash_phase=0),
         }
-        color_bar_frames = [_snap_frame(render_color_bars(p)) for p in range(6)]
+        color_bar_imgs = [render_color_bars(p) for p in range(6)]
 
         current     = args.start
         color_phase = 0
@@ -153,8 +153,8 @@ def main():
                 color_phase = (color_phase + 1) % 6
                 phase_end   = time.monotonic() + 0.5
 
-            frame = color_bar_frames[color_phase] if current == "color_bars" else frames[current]
-            backend._write(frame)
+            img = color_bar_imgs[color_phase] if current == "color_bars" else frames[current]
+            backend.show(img)
             time.sleep(TICK)
 
     except KeyboardInterrupt:

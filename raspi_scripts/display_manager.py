@@ -270,7 +270,9 @@ class LedcatBackend(DisplayBackend):
         if pwm_bits > 0:
             cmd.append(f"--led-pwm-bits={pwm_bits}")
 
-        self._cmd = cmd
+        self._cmd         = cmd
+        self._last_img_id = -1
+        self._last_snap   = _BLACK_FRAME
         log.info("ledcat backend: %s", " ".join(cmd))
         self._proc = self._launch()
 
@@ -320,9 +322,14 @@ class LedcatBackend(DisplayBackend):
             self._restart()
 
     def show(self, img: Image.Image) -> None:
-        self._write(_snap_frame(img))
+        img_id = id(img)
+        if img_id != self._last_img_id:
+            self._last_snap   = _snap_frame(img)
+            self._last_img_id = img_id
+        self._write(self._last_snap)
 
     def clear(self) -> None:
+        self._last_img_id = -1
         self._write(_BLACK_FRAME)
 
     def close(self) -> None:
@@ -371,9 +378,10 @@ class LedImageViewerBackend(DisplayBackend):
             "--led-rp1-rio=1",
             "--led-pwm-bits=7",
         ]
-        self._ppm        = "/tmp/roadsentinel_frame.ppm"
+        self._ppm         = "/tmp/roadsentinel_frame.ppm"
         self._proc: Optional[subprocess.Popen] = None
-        self._last_frame = b""
+        self._last_frame  = b""
+        self._last_img_id = -1
         log.info("LedImageViewerBackend — %s  cols=%d  chain=%d", viewer_path, cols, _chain)
 
     def _write_ppm(self, data: bytes) -> None:
@@ -397,12 +405,13 @@ class LedImageViewerBackend(DisplayBackend):
         return self._proc is not None and self._proc.poll() is None
 
     def show(self, img: Image.Image) -> None:
-        data = _snap_frame(img)
-        if data == self._last_frame and self._proc_alive():
-            return  # identical content and viewer still running — skip
+        if id(img) == self._last_img_id and self._proc_alive():
+            return  # same image object, viewer still running — skip
         if not self._proc_alive():
             log.warning("led-image-viewer died — restarting")
-        self._last_frame = data
+        data = _snap_frame(img)
+        self._last_img_id = id(img)
+        self._last_frame  = data
         self._write_ppm(data)
         self._restart()
 
@@ -535,20 +544,13 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        log.info("Detected Raspberry Pi 5 → ledcat backend (direct 25 fps, multiplexing=1)")
-        return LedcatBackend(
-            ledcat_path  = os.path.expanduser(
-                getattr(args, "ledcat", None) or LEDCAT_DEFAULT
+        log.info("Detected Raspberry Pi 5 → led-image-viewer backend (SwapOnVSync)")
+        return LedImageViewerBackend(
+            viewer_path = os.path.expanduser(
+                getattr(args, "viewer", None) or LED_IMAGE_VIEWER_DEFAULT
             ),
-            slowdown     = 0,
-            mapping      = "regular",
-            no_hw_pulse  = True,
-            cols         = args.cols,
-            chain        = args.chain if args.chain > 0 else 2,
-            multiplexing = 1,
-            scan_mode    = 0,
-            rp1_rio      = True,
-            pwm_bits     = 7,
+            cols  = args.cols,
+            chain = args.chain if args.chain > 0 else 2,
         )
     else:
         log.info("Detected Raspberry Pi 4 → ledcat backend")
@@ -1023,41 +1025,39 @@ def run(backend: DisplayBackend, state: SystemState):
     prev_state_key = None
     log.info("Display loop started")
 
-    # Rapid burst at 50fps, then continue at TICK rate for 500ms total.
-    # Never let the RP1 idle — 300ms silent gap causes de-sync on Pi 5.
     log.info("Clearing panel...")
     for _ in range(16):
-        backend._write(_BLACK_FRAME)
+        backend.clear()
         time.sleep(0.02)
     end = time.monotonic() + 0.5
     while time.monotonic() < end:
-        backend._write(_BLACK_FRAME)
+        backend.clear()
         time.sleep(TICK)
     log.info("Panel cleared — starting display")
 
-    # Pre-render and pre-snap frames once
-    _bytes_slow_down = _snap_frame(render_slow_down(state, flash_phase=0))
-    _bytes_vehicle   = _snap_frame(render_vehicle_incoming(state, flash_phase=0))
-    _bytes_incident  = _snap_frame(render_incident_ahead(state, flash_phase=0))
+    # Pre-render frames once — passed by identity so show() skips re-snap on repeat
+    _img_slow_down = render_slow_down(state, flash_phase=0)
+    _img_vehicle   = render_vehicle_incoming(state, flash_phase=0)
+    _img_incident  = render_incident_ahead(state, flash_phase=0)
 
     while True:
         # Priority: INCIDENT AHEAD > VEHICLE INCOMING > SLOW DOWN (default)
         incident = state.pop_incident_alert()
         if incident:
-            state_key  = "incident"
-            frame_data = _bytes_incident
+            state_key = "incident"
+            frame_img = _img_incident
         elif state.has_vehicle_alert():
-            state_key  = "vehicle"
-            frame_data = _bytes_vehicle
+            state_key = "vehicle"
+            frame_img = _img_vehicle
         else:
-            state_key  = "slow_down"
-            frame_data = _bytes_slow_down
+            state_key = "slow_down"
+            frame_img = _img_slow_down
 
         if state_key != prev_state_key:
             prev_state_key = state_key
             log.info("Now showing: %s", state_key.replace("_", " ").upper())
 
-        backend._write(frame_data)
+        backend.show(frame_img)
         time.sleep(TICK)
 
 
