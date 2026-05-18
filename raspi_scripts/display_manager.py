@@ -293,11 +293,17 @@ class LedcatBackend(DisplayBackend):
 
     def close(self) -> None:
         try:
-            self.clear()
+            for _ in range(16):
+                self._write(_BLACK_FRAME)
+                time.sleep(0.02)
             self._proc.stdin.close()
             self._proc.wait(timeout=3)
         except Exception:
+            pass
+        try:
             self._proc.kill()
+        except Exception:
+            pass
 
 
 # ── Pi 5 backend: led-image-viewer subprocess ────────────────────────────────
