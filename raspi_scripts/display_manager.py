@@ -537,26 +537,24 @@ class RGBMatrixBackend(DisplayBackend):
         self._matrix      = RGBMatrix(options=options)
         self._canvas      = self._matrix.CreateFrameCanvas()
         self._last_img_id = -1
+        self._last_rgb    = None
         log.info("RGBMatrixBackend — cols=%d  chain=%d  slowdown=%d  multiplexing=%d",
                  cols, _chain, slowdown, multiplexing)
 
-    def _paint(self, data: bytes) -> None:
-        """Write raw RGB24 bytes to canvas via SetPixel so orientation is explicit."""
-        for y in range(HEIGHT):
-            base = y * WIDTH * 3
-            for x in range(WIDTH):
-                off = base + x * 3
-                self._canvas.SetPixel(x, y, data[off], data[off + 1], data[off + 2])
-
     def show(self, img: Image.Image) -> None:
         if id(img) != self._last_img_id:
-            self._paint(_snap_frame(img))
+            # FLIP_LEFT_RIGHT: SetImage reverses x on chained panels; pre-flip cancels it.
+            self._last_rgb    = img.convert("RGB").transpose(Image.FLIP_LEFT_RIGHT)
             self._last_img_id = id(img)
-        # SwapOnVSync every tick — keeps RP1 timing anchored, prevents PWM drift.
+        # SetImage every tick (fast C call) keeps BOTH double-buffer canvases current —
+        # without this, every other SwapOnVSync shows a blank back buffer (flicker).
+        # SwapOnVSync every tick re-anchors RP1 PWM timing → no drift.
+        self._canvas.SetImage(self._last_rgb)
         self._canvas = self._matrix.SwapOnVSync(self._canvas)
 
     def clear(self) -> None:
         self._last_img_id = -1
+        self._last_rgb    = None
         self._canvas.Clear()
         self._canvas = self._matrix.SwapOnVSync(self._canvas)
 
