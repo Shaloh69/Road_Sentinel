@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Road Sentinel — Raspberry Pi 5 Setup
-# Installs: Camera B (CAM-B-002) + HUB75 LED matrix display (rp1-rio backend)
+# Installs: Camera B (CAM-B-002) + HUB75 128×32 LED matrix display
 #
 # Usage:
 #   bash setup_pi5.sh [NODE_URL] [CAM_B_RTSP] [AI_URL]
@@ -10,14 +10,14 @@
 #   CAM_B_RTSP = rtsp://192.168.8.108:554/cam/realmonitor?channel=1&subtype=1
 #   AI_URL     = http://192.168.8.50:8000
 #
-# Pi 5 note: uses --led-rp1-rio=1 (RP1 GPIO chip) for the LED matrix.
-#            If display is corrupt, try --led-rp1-rio=0 in display.service.
+# Pi 5 LED note: uses led-image-viewer (coprocessor mode, no --led-rp1-rio).
+#   RIO mode (--led-rp1-rio=1) causes rapid GPIO de-sync — do NOT use it.
 #
 # After setup, SSH via:  ssh pi@pi5-sentinel.local  (no IP needed, ever)
 
 set -euo pipefail
 
-NODE_URL="${1:-https://road-sentinel-api.onrender.com}"
+NODE_URL="${1:-http://192.168.8.50:3001}"
 CAM_B_RTSP="${2:-rtsp://192.168.8.108:554/cam/realmonitor?channel=1&subtype=1}"
 AI_URL="${3:-http://192.168.8.50:8000}"
 CAMERA_ID="CAM-B-002"
@@ -30,10 +30,7 @@ REPO_DIR="$HOME/roadsentinel-repo"
 REPO_URL="https://github.com/Shaloh69/Road_Sentinel.git"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Pi 5 LED matrix flags (RP1 GPIO chip)
-# rp1-rio=1 — uses new RP1 hardware GPIO; slowdown 3 is typical for Pi 5
-LED_RPI_RIO=1
-LED_SLOWDOWN=3
+LED_SLOWDOWN=4   # gpio slowdown passed to display_manager (4 = stable on Pi 5)
 
 echo "================================================"
 echo " Road Sentinel — Pi 5 Setup (Camera B + LED)"
@@ -43,7 +40,7 @@ echo " AI service   : $AI_URL"
 echo " Camera B     : $CAM_B_RTSP"
 echo " Camera ID    : $CAMERA_ID"
 echo " Hostname     : $HOSTNAME"
-echo " LED backend  : --led-rp1-rio=$LED_RPI_RIO  --led-slowdown=$LED_SLOWDOWN"
+echo " LED backend  : led-image-viewer (coprocessor mode, slowdown=$LED_SLOWDOWN)"
 echo "================================================"
 echo
 
@@ -82,14 +79,17 @@ SRC_DIR="$REPO_DIR/raspi_scripts"
 echo "      Repo at $REPO_DIR"
 echo
 
-# ── [2] Build ledcat (rp1-rio backend for Pi 5) ────────────────────────────
-echo "[2/7] Building ledcat (hzeller rpi-rgb-led-matrix, Pi 5 rp1-rio)..."
+# ── [2] Build hzeller tools (led-image-viewer for Pi 5 display) ───────────────
+echo "[2/7] Building hzeller rpi-rgb-led-matrix tools..."
 if [ ! -d "$HOME/rpi-rgb-led-matrix" ]; then
     git clone https://github.com/hzeller/rpi-rgb-led-matrix.git "$HOME/rpi-rgb-led-matrix"
 else
     git -C "$HOME/rpi-rgb-led-matrix" pull
 fi
-# Build with HARDWARE_DESC=adafruit-hat if using Adafruit bonnet, else leave default
+# led-image-viewer — used by Pi 5 LedImageViewerBackend (coprocessor mode)
+make -C "$HOME/rpi-rgb-led-matrix/utils" led-image-viewer -j2
+echo "      led-image-viewer built at $HOME/rpi-rgb-led-matrix/utils/led-image-viewer"
+# ledcat — built as fallback / Pi 4 compatibility
 make -C "$HOME/rpi-rgb-led-matrix/examples-api-use" ledcat -j2
 echo "      ledcat built at $HOME/rpi-rgb-led-matrix/examples-api-use/ledcat"
 echo
@@ -162,9 +162,8 @@ StartLimitBurst=5
 Type=simple
 User=root
 WorkingDirectory=${SCRIPTS_DIR}
-ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py \\
-    --api ${NODE_URL} \\
-    --slowdown ${LED_SLOWDOWN} \\
+ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py \
+    --api ${NODE_URL} \
     --pi 5
 Restart=always
 RestartSec=5
@@ -238,8 +237,7 @@ HELPER
 cat > "$SCRIPTS_DIR/test_display.sh" <<HELPER
 #!/usr/bin/env bash
 # Run display in TEST mode (cycles fake alerts, no network needed)
-sudo ${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py --test \\
-    --slowdown ${LED_SLOWDOWN} --pi 5
+sudo ${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py --test --pi 5
 HELPER
 
 cat > "$SCRIPTS_DIR/update.sh" <<'HELPER'
@@ -279,7 +277,7 @@ echo "================================================"
 echo
 echo " Services (start on every boot):"
 echo "   roadsentinel-camera  — Camera B → AI → Node"
-echo "   roadsentinel-display — HUB75 LED matrix (rp1-rio=$LED_RPI_RIO)"
+echo "   roadsentinel-display — HUB75 128×32 LED matrix (led-image-viewer)"
 echo "   roadsentinel-agent   — Admin Terminal relay (connects to $NODE_URL)"
 echo
 echo " Quick commands:"
@@ -289,8 +287,8 @@ echo "   $SCRIPTS_DIR/status.sh       — check status"
 echo "   $SCRIPTS_DIR/update.sh       — git pull + restart (or use Admin Terminal)"
 echo "   $SCRIPTS_DIR/test_display.sh — test LED with fake alerts"
 echo
-echo " If LED display flickers/corrupts, edit display.service and try:"
-echo "   --led-rp1-rio=0  or  --led-slowdown=2 (or 4)"
+echo " If LED display shows garbage, check display.log and ensure"
+echo "   led-image-viewer was built: ls ~/rpi-rgb-led-matrix/utils/led-image-viewer"
 echo
 echo " Live logs:"
 echo "   tail -f $LOG_DIR/camera.log"

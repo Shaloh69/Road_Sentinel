@@ -45,7 +45,7 @@ import subprocess
 import time
 import threading
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -698,6 +698,17 @@ class SystemState:
         with self._lock:
             return time.monotonic() < self._vehicle_alert_exp
 
+    def is_road_vacant(self) -> bool:
+        """True when camera data is live and no vehicle has been seen recently.
+        Shows VACANT ROAD only after the system has warmed up and confirmed
+        the road is clear — never immediately on startup."""
+        with self._lock:
+            uptime = (datetime.now() - self.start_time).total_seconds()
+            vehicle_active = time.monotonic() < self._vehicle_alert_exp
+            return (uptime >= VACANT_ROAD_GRACE_SECS
+                    and not vehicle_active
+                    and self.last_poll_ok)
+
     def push_incident_alert(self, incident: dict, hold_secs: float = 12.0):
         with self._lock:
             self._incident    = incident
@@ -755,8 +766,9 @@ class DataProvider(ABC):
 
 
 class ApiDataProvider(DataProvider):
-    POLL_INTERVAL          = 30   # summary + cameras
-    INCIDENT_POLL_INTERVAL = 2    # incidents — drives LED reaction time
+    POLL_INTERVAL           = 30   # summary + cameras
+    INCIDENT_POLL_INTERVAL  = 2    # incidents — drives LED reaction time
+    DETECTION_POLL_INTERVAL = 2    # real-time vehicle detections (both cameras)
 
     def __init__(self, state: SystemState, base_url: str):
         super().__init__(state)
@@ -765,8 +777,9 @@ class ApiDataProvider(DataProvider):
         self._first_poll       = True
 
     def start(self):
-        threading.Thread(target=self._summary_loop,  daemon=True, name="led-summary").start()
-        threading.Thread(target=self._incident_loop, daemon=True, name="led-incidents").start()
+        threading.Thread(target=self._summary_loop,   daemon=True, name="led-summary").start()
+        threading.Thread(target=self._incident_loop,  daemon=True, name="led-incidents").start()
+        threading.Thread(target=self._detection_loop, daemon=True, name="led-detections").start()
         log.info("API provider started — %s", self._base)
 
     def trigger_test_incident(self):
@@ -822,6 +835,36 @@ class ApiDataProvider(DataProvider):
                 self._last_incident_id = inc_id
                 self.state.push_incident_alert(inc, hold_secs=12.0)
                 log.warning("INCIDENT: %s (%s)", inc.get("incident_type"), inc.get("severity"))
+
+    def _detection_loop(self):
+        while True:
+            try:
+                self._poll_detections()
+            except Exception as exc:
+                log.debug("Detection poll error: %s", exc)
+            time.sleep(self.DETECTION_POLL_INTERVAL)
+
+    def _poll_detections(self):
+        """Poll latest detection from either camera — triggers VEHICLE INCOMING if recent."""
+        if not _REQUESTS_OK:
+            return
+        r = _requests.get(f"{self._base}/api/detections",
+                          params={"limit": 1, "order": "desc"}, timeout=3)
+        r.raise_for_status()
+        items = r.json().get("data", [])
+        if not items:
+            return
+        det    = items[0]
+        ts_str = str(det.get("created_at") or det.get("detected_at") or det.get("timestamp") or "")
+        if not ts_str:
+            return
+        try:
+            ts  = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - ts).total_seconds()
+            if age <= VEHICLE_ALERT_SECS:
+                self.state.push_vehicle_alert(hold_secs=VEHICLE_ALERT_SECS)
+        except Exception as exc:
+            log.debug("Detection timestamp parse error: %s", exc)
 
 
 class TestDataProvider(DataProvider):
@@ -1099,6 +1142,14 @@ def render_incident_ahead(state: SystemState, flash_phase: int = 0) -> Image.Ima
 TICK = 0.04   # 25 fps — ledcat reads at ~28 fps so pipe stays near-empty;
               # 40 ms intervals stay below Pi 5 RP1 cold-start threshold
 
+# How long the VEHICLE INCOMING screen stays lit after the last detection.
+# Both cameras contribute — Pi 4 / Pi 5 both POST to /api/detections.
+VEHICLE_ALERT_SECS = 8.0
+
+# Uptime required before VACANT ROAD is shown (camera needs time to warm up
+# and at least one successful API poll must have completed).
+VACANT_ROAD_GRACE_SECS = 15.0
+
 
 def _blank_transition(backend: LedcatBackend, hold: float = 0.3) -> None:
     """Write BLACK at TICK rate for hold seconds, then log ready."""
@@ -1124,13 +1175,18 @@ def run(backend: DisplayBackend, state: SystemState):
         time.sleep(TICK)
     log.info("Panel cleared — starting display")
 
-    # Pre-render frames once — passed by identity so show() skips re-snap on repeat
-    _img_slow_down = render_slow_down(state, flash_phase=0)
+    # Pre-render all frames once — passed by identity so show() avoids re-snap
+    _img_slow_down = render_slow_down(state,        flash_phase=0)
     _img_vehicle   = render_vehicle_incoming(state, flash_phase=0)
-    _img_incident  = render_incident_ahead(state, flash_phase=0)
+    _img_incident  = render_incident_ahead(state,   flash_phase=0)
+    _img_vacant    = render_vacant_road(state)
 
     while True:
-        # Priority: INCIDENT AHEAD > VEHICLE INCOMING > SLOW DOWN (default)
+        # Priority (highest → lowest):
+        #   INCIDENT AHEAD  — confirmed incident from either camera (12s hold)
+        #   VEHICLE INCOMING — vehicle detected by Camera A or B   ( 8s hold)
+        #   SLOW DOWN        — system running, camera not yet confirmed clear
+        #   VACANT ROAD      — camera live, no vehicle seen for 15+ seconds
         incident = state.pop_incident_alert()
         if incident:
             state_key = "incident"
@@ -1138,6 +1194,9 @@ def run(backend: DisplayBackend, state: SystemState):
         elif state.has_vehicle_alert():
             state_key = "vehicle"
             frame_img = _img_vehicle
+        elif state.is_road_vacant():
+            state_key = "vacant"
+            frame_img = _img_vacant
         else:
             state_key = "slow_down"
             frame_img = _img_slow_down
