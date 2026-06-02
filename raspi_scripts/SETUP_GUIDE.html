@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Road Sentinel — Raspberry Pi Setup Guide</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #1a1a1a;
+    background: #fff;
+  }
+
+  /* ── Page layout ── */
+  @media print {
+    body { font-size: 10pt; }
+    .page-break { page-break-before: always; }
+    .no-break { page-break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+
+  .page { max-width: 800px; margin: 0 auto; padding: 40px 48px; }
+
+  /* ── Cover ── */
+  .cover {
+    min-height: 96vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border-bottom: 3px solid #c0392b;
+    padding-bottom: 40px;
+    margin-bottom: 0;
+  }
+  .cover-badge {
+    display: inline-block;
+    background: #c0392b;
+    color: #fff;
+    font-size: 9pt;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border-radius: 3px;
+    margin-bottom: 24px;
+  }
+  .cover h1 {
+    font-size: 32pt;
+    font-weight: 800;
+    color: #1a1a1a;
+    line-height: 1.15;
+    margin-bottom: 12px;
+  }
+  .cover h1 span { color: #c0392b; }
+  .cover .subtitle {
+    font-size: 14pt;
+    color: #555;
+    margin-bottom: 40px;
+  }
+  .cover-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 32px;
+  }
+  .cover-table td {
+    padding: 10px 16px;
+    font-size: 10pt;
+    border-bottom: 1px solid #eee;
+  }
+  .cover-table td:first-child {
+    font-weight: 700;
+    color: #555;
+    width: 160px;
+  }
+  .cover-footer {
+    margin-top: 48px;
+    font-size: 9pt;
+    color: #999;
+  }
+
+  /* ── Sections ── */
+  h2 {
+    font-size: 16pt;
+    font-weight: 800;
+    color: #1a1a1a;
+    border-bottom: 2px solid #c0392b;
+    padding-bottom: 6px;
+    margin: 36px 0 16px;
+  }
+  h3 {
+    font-size: 12pt;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin: 24px 0 10px;
+  }
+  h4 {
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: #333;
+    margin: 16px 0 8px;
+  }
+  p { margin-bottom: 10px; }
+
+  /* ── Architecture diagram ── */
+  .arch {
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 20px 24px;
+    font-family: 'Courier New', monospace;
+    font-size: 9.5pt;
+    line-height: 1.8;
+    white-space: pre;
+    margin: 16px 0;
+  }
+
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px;
+    font-size: 10pt;
+  }
+  th {
+    background: #2c3e50;
+    color: #fff;
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+  }
+  td {
+    padding: 7px 12px;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #f9f9f9; }
+
+  /* ── Code blocks ── */
+  pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 14px 18px;
+    border-radius: 5px;
+    font-family: 'Courier New', monospace;
+    font-size: 9.5pt;
+    line-height: 1.55;
+    margin: 10px 0 16px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  pre .cmt  { color: #6a9955; }
+  pre .kw   { color: #569cd6; }
+  pre .str  { color: #ce9178; }
+  pre .num  { color: #b5cea8; }
+  pre .var  { color: #9cdcfe; }
+
+  code {
+    font-family: 'Courier New', monospace;
+    font-size: 9.5pt;
+    background: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: #c0392b;
+  }
+
+  /* ── Callout boxes ── */
+  .note, .warn, .tip, .danger {
+    padding: 12px 16px;
+    border-radius: 5px;
+    margin: 12px 0;
+    font-size: 10pt;
+  }
+  .note   { background: #e8f4fd; border-left: 4px solid #3498db; }
+  .warn   { background: #fef9e7; border-left: 4px solid #f39c12; }
+  .tip    { background: #e9f7ef; border-left: 4px solid #27ae60; }
+  .danger { background: #fdedec; border-left: 4px solid #c0392b; }
+  .note strong, .warn strong, .tip strong, .danger strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 9.5pt;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  /* ── Step badges ── */
+  .step {
+    display: inline-block;
+    background: #2c3e50;
+    color: #fff;
+    font-size: 8.5pt;
+    font-weight: 700;
+    padding: 2px 9px;
+    border-radius: 12px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .step-heading {
+    font-size: 11.5pt;
+    font-weight: 700;
+    margin: 20px 0 8px;
+  }
+
+  /* ── Status table ── */
+  .ok   { color: #27ae60; font-weight: 700; }
+  .fail { color: #c0392b; font-weight: 700; }
+  .na   { color: #999; }
+
+  /* ── TOC ── */
+  .toc { margin: 20px 0 32px; }
+  .toc-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px dotted #ccc;
+    font-size: 10.5pt;
+  }
+  .toc-item .toc-num { color: #c0392b; font-weight: 700; margin-right: 10px; }
+  .toc-sub { padding-left: 24px; font-size: 10pt; color: #555; }
+
+  ul, ol { padding-left: 22px; margin-bottom: 10px; }
+  li { margin-bottom: 4px; }
+
+  hr { border: none; border-top: 1px solid #eee; margin: 28px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ═══════════════════════════════════════════════════════ COVER -->
+<div class="cover">
+  <div class="cover-badge">Thesis Setup Guide</div>
+  <h1>Road<span>Sentinel</span><br>Setup Guide</h1>
+  <div class="subtitle">Raspberry Pi 4 &amp; Pi 5 — Camera + LED Matrix</div>
+
+  <table class="cover-table">
+    <tr><td>Project</td><td>Road Sentinel — AI Blind-Curve Warning System</td></tr>
+    <tr><td>Location</td><td>Barangay Busay, Cebu</td></tr>
+    <tr><td>Repository</td><td>github.com/Shaloh69/Road_Sentinel</td></tr>
+    <tr><td>Pi 4 Role</td><td>Camera A (CAM-A-001) — detection only</td></tr>
+    <tr><td>Pi 5 Role</td><td>Camera B (CAM-B-002) + HUB75 128×32 LED Matrix</td></tr>
+    <tr><td>LED Display</td><td>2× 64×32 HUB75 panels chained = 128×32 total</td></tr>
+  </table>
+
+  <div class="cover-footer">
+    Print this page using your browser → File → Print → Save as PDF<br>
+    Recommended: A4, Portrait, margins Normal
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ TABLE OF CONTENTS -->
+<div class="page-break"></div>
+
+<h2>Table of Contents</h2>
+<div class="toc">
+  <div class="toc-item"><span><span class="toc-num">1</span> System Overview</span></div>
+  <div class="toc-item"><span><span class="toc-num">2</span> Hardware Requirements</span></div>
+  <div class="toc-item"><span><span class="toc-num">3</span> Prerequisites — Both Pis</span></div>
+  <div class="toc-item toc-sub"><span>3.1 Flash Raspberry Pi OS</span></div>
+  <div class="toc-item toc-sub"><span>3.2 First SSH Login</span></div>
+  <div class="toc-item"><span><span class="toc-num">4</span> Raspberry Pi 4 Setup (Camera A)</span></div>
+  <div class="toc-item toc-sub"><span>4.1 Run Setup Script</span></div>
+  <div class="toc-item toc-sub"><span>4.2 Reboot &amp; Verify</span></div>
+  <div class="toc-item"><span><span class="toc-num">5</span> Raspberry Pi 5 Setup (Camera B + LED)</span></div>
+  <div class="toc-item toc-sub"><span>5.1 Run Setup Script</span></div>
+  <div class="toc-item toc-sub"><span>5.2 Build led-image-viewer</span></div>
+  <div class="toc-item toc-sub"><span>5.3 Reboot &amp; Verify</span></div>
+  <div class="toc-item toc-sub"><span>5.4 Test LED Display</span></div>
+  <div class="toc-item"><span><span class="toc-num">6</span> Display States &amp; Behavior</span></div>
+  <div class="toc-item"><span><span class="toc-num">7</span> Daily Operations</span></div>
+  <div class="toc-item"><span><span class="toc-num">8</span> Updating Code on the Pi</span></div>
+  <div class="toc-item"><span><span class="toc-num">9</span> Quick Reference</span></div>
+  <div class="toc-item"><span><span class="toc-num">10</span> Troubleshooting</span></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 1 -->
+<div class="page-break"></div>
+<h2>1 &nbsp; System Overview</h2>
+
+<p>Road Sentinel uses two Raspberry Pis and one LED matrix panel positioned at a blind curve. Both cameras feed into the AI detection pipeline. The Pi 5 drives the LED matrix, which warns drivers approaching the curve.</p>
+
+<div class="arch">  ┌─────────────────┐         ┌──────────────────────┐
+  │  Raspberry Pi 4 │         │   Raspberry Pi 5     │
+  │  (Camera A)     │         │   (Camera B + LED)   │
+  │                 │         │                      │
+  │  cam_sender.py  │         │  cam_sender.py       │
+  │  pi_agent.py    │         │  display_manager.py  │
+  └────────┬────────┘         │  pi_agent.py         │
+           │ detections        └──────┬───────────────┘
+           │ incidents                │ detections + polls
+           ▼                          ▼
+  ┌────────────────────────────────────────────────────┐
+  │              Node API  :3001  +  AI Service :8000  │
+  │              (runs on your server / laptop)        │
+  └────────────────────────────────────────────────────┘
+                            │
+                     polls every 2s
+                            ▼
+                  ┌──────────────────┐
+                  │  HUB75 LED Panel │
+                  │  128 × 32 pixels │
+                  │  (on Pi 5)       │
+                  └──────────────────┘</div>
+
+<h3>Detection → Display Flow</h3>
+<ol>
+  <li>Camera A (Pi 4) or Camera B (Pi 5) captures a frame and sends it to the AI service.</li>
+  <li>AI detects vehicles or incidents → result is forwarded to the Node API.</li>
+  <li><code>display_manager.py</code> on Pi 5 polls <code>/api/detections</code> every 2 seconds.</li>
+  <li>If a detection is less than 8 seconds old → LED shows <strong>VEHICLE INCOMING</strong>.</li>
+  <li>If an incident is confirmed → LED shows <strong>INCIDENT AHEAD</strong>.</li>
+  <li>When the road has been clear for 15+ seconds → LED shows <strong>VACANT ROAD</strong>.</li>
+</ol>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 2 -->
+<h2>2 &nbsp; Hardware Requirements</h2>
+
+<table>
+  <tr><th>Item</th><th>Qty</th><th>Notes</th></tr>
+  <tr><td>Raspberry Pi 4 (2 GB+)</td><td>1</td><td>Camera A only — no LED needed</td></tr>
+  <tr><td>Raspberry Pi 5 (4 GB+)</td><td>1</td><td>Camera B + LED matrix</td></tr>
+  <tr><td>microSD card (32 GB+)</td><td>2</td><td>One per Pi — Class 10 or better</td></tr>
+  <tr><td>IP Camera (RTSP)</td><td>2</td><td>One per Pi; must stream RTSP on port 554</td></tr>
+  <tr><td>HUB75 LED Panel 64×32</td><td>2</td><td>Chained = 128×32 total</td></tr>
+  <tr><td>HUB75 Adapter Board</td><td>1</td><td>Cheap ₱149 active-3 type (connects to Pi 5 GPIO)</td></tr>
+  <tr><td>5V 4A+ Power Supply</td><td>1</td><td>For the LED panels (separate from Pi power)</td></tr>
+  <tr><td>USB-C Power Supply</td><td>2</td><td>Pi 4: 5V 3A &nbsp;|&nbsp; Pi 5: 5V 5A</td></tr>
+</table>
+
+<div class="warn">
+  <strong>⚠ Power Warning</strong>
+  The two LED panels draw up to 3–4 A at full brightness. Use a dedicated 5V 4A power supply for the panels, separate from the Pi's own USB-C supply. Powering both from one supply can cause Pi brownouts and display corruption.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 3 -->
+<div class="page-break"></div>
+<h2>3 &nbsp; Prerequisites — Both Pis</h2>
+
+<h3>3.1 &nbsp; Flash Raspberry Pi OS</h3>
+
+<p>Do this for each Pi before doing anything else.</p>
+
+<div class="step-heading"><span class="step">1</span> Download Raspberry Pi Imager</div>
+<p>Download from <strong>raspberrypi.com/software</strong> and install on your laptop.</p>
+
+<div class="step-heading"><span class="step">2</span> Flash the SD card</div>
+<p>Open Imager → Choose OS → <strong>Raspberry Pi OS Lite (64-bit)</strong> → Choose Storage → your SD card.</p>
+<p>Before clicking Write, click the <strong>gear icon ⚙</strong> and configure:</p>
+
+<table>
+  <tr><th>Setting</th><th>Pi 4 value</th><th>Pi 5 value</th></tr>
+  <tr><td>Hostname</td><td><code>pi4-sentinel</code></td><td><code>pi5-sentinel</code></td></tr>
+  <tr><td>Username</td><td><code>pi</code></td><td><code>pi</code></td></tr>
+  <tr><td>Password</td><td>your choice</td><td>your choice</td></tr>
+  <tr><td>Wi-Fi SSID</td><td colspan="2">your network name</td></tr>
+  <tr><td>Wi-Fi Password</td><td colspan="2">your network password</td></tr>
+  <tr><td>Enable SSH</td><td colspan="2">✓ Yes — Use password authentication</td></tr>
+  <tr><td>Locale / Timezone</td><td colspan="2">Asia/Manila</td></tr>
+</table>
+
+<div class="step-heading"><span class="step">3</span> Boot and find the IP</div>
+<p>Insert the SD card, connect power, wait 60 seconds for first boot. Find the Pi's IP address in your router admin page (usually <code>192.168.8.x</code> or <code>192.168.1.x</code>).</p>
+
+<h3>3.2 &nbsp; First SSH Login</h3>
+
+<p>From your laptop terminal (or PowerShell on Windows):</p>
+<pre><span class="cmt"># Pi 4</span>
+ssh pi@&lt;pi4-ip-address&gt;
+
+<span class="cmt"># Pi 5</span>
+ssh pi@&lt;pi5-ip-address&gt;</pre>
+
+<p>After setup completes you will never need the IP again — use the hostname instead:</p>
+<pre>ssh pi@pi4-sentinel.local
+ssh pi@pi5-sentinel.local</pre>
+
+<div class="note">
+  <strong>ℹ Note — Windows SSH</strong>
+  If <code>ssh</code> is not found in PowerShell, open <strong>Settings → Apps → Optional Features → Add: OpenSSH Client</strong>.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 4 -->
+<div class="page-break"></div>
+<h2>4 &nbsp; Raspberry Pi 4 Setup (Camera A only)</h2>
+
+<div class="note">
+  <strong>ℹ Pi 4 has NO LED matrix.</strong>
+  Pi 4 runs Camera A only. Its detections are forwarded to the Node API, which Pi 5 polls to update the LED display in real time.
+</div>
+
+<h3>4.1 &nbsp; Run the Setup Script</h3>
+
+<p>SSH into Pi 4, then run:</p>
+
+<pre><span class="cmt"># Download and run the setup script in one command.</span>
+<span class="cmt"># Replace the three values below with your actual addresses.</span>
+
+bash &lt;(curl -fsSL https://raw.githubusercontent.com/Shaloh69/Road_Sentinel/main/raspi_scripts/setup_pi4.sh) \
+  http://&lt;SERVER_IP&gt;:3001 \
+  "rtsp://&lt;CAM_A_IP&gt;:554/cam/realmonitor?channel=1&subtype=1" \
+  http://&lt;SERVER_IP&gt;:8000</pre>
+
+<table>
+  <tr><th>Placeholder</th><th>Replace with</th><th>Example</th></tr>
+  <tr><td><code>&lt;SERVER_IP&gt;</code></td><td>IP of the laptop/PC running the server</td><td><code>192.168.8.50</code></td></tr>
+  <tr><td><code>&lt;CAM_A_IP&gt;</code></td><td>IP of the RTSP camera near Pi 4</td><td><code>192.168.8.104</code></td></tr>
+</table>
+
+<p>The script will automatically:</p>
+<ul>
+  <li>Set the hostname to <code>pi4-sentinel</code></li>
+  <li>Install system packages (Python, OpenCV, ffmpeg, git)</li>
+  <li>Clone the Road Sentinel GitHub repository</li>
+  <li>Create a Python virtual environment with all dependencies</li>
+  <li>Install <code>roadsentinel-camera</code> and <code>roadsentinel-agent</code> systemd services</li>
+  <li>Create <code>start.sh</code>, <code>stop.sh</code>, <code>status.sh</code>, <code>update.sh</code> helper scripts</li>
+  <li>Start both services immediately</li>
+</ul>
+
+<h3>4.2 &nbsp; Reboot and Verify</h3>
+
+<pre>sudo reboot</pre>
+
+<p>After reboot, SSH back in and check:</p>
+
+<pre>~/roadsentinel/status.sh</pre>
+
+<p>Expected output — both services should show <strong>active (running)</strong>:</p>
+
+<pre>=== Camera Sender ===
+● roadsentinel-camera.service — Road Sentinel Camera A Sender
+   Active: <span class="str">active (running)</span>
+
+=== Pi Agent (Admin Terminal) ===
+● roadsentinel-agent.service — Road Sentinel Pi Agent
+   Active: <span class="str">active (running)</span></pre>
+
+<div class="tip">
+  <strong>✓ Pi 4 setup complete.</strong>
+  Camera A is now streaming to the AI service and forwarding detections to the Node API. Pi 5's LED will react to these detections within 2 seconds.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 5 -->
+<div class="page-break"></div>
+<h2>5 &nbsp; Raspberry Pi 5 Setup (Camera B + LED Matrix)</h2>
+
+<h3>5.1 &nbsp; Run the Setup Script</h3>
+
+<p>SSH into Pi 5, then run:</p>
+
+<pre><span class="cmt"># Download and run the setup script.</span>
+<span class="cmt"># Replace the three values below with your actual addresses.</span>
+
+bash &lt;(curl -fsSL https://raw.githubusercontent.com/Shaloh69/Road_Sentinel/main/raspi_scripts/setup_pi5.sh) \
+  http://&lt;SERVER_IP&gt;:3001 \
+  "rtsp://&lt;CAM_B_IP&gt;:554/cam/realmonitor?channel=1&subtype=1" \
+  http://&lt;SERVER_IP&gt;:8000</pre>
+
+<table>
+  <tr><th>Placeholder</th><th>Replace with</th><th>Example</th></tr>
+  <tr><td><code>&lt;SERVER_IP&gt;</code></td><td>IP of the laptop/PC running the server</td><td><code>192.168.8.50</code></td></tr>
+  <tr><td><code>&lt;CAM_B_IP&gt;</code></td><td>IP of the RTSP camera near Pi 5</td><td><code>192.168.8.108</code></td></tr>
+</table>
+
+<p>The script installs:</p>
+<ul>
+  <li>System packages + Python venv + OpenCV + dependencies</li>
+  <li>hzeller <code>rpi-rgb-led-matrix</code> library (cloned, compiled)</li>
+  <li><code>led-image-viewer</code> binary (used by the LED display backend)</li>
+  <li>Three systemd services: camera, display, agent</li>
+  <li>Helper scripts in <code>~/roadsentinel/</code></li>
+</ul>
+
+<h3>5.2 &nbsp; Build <code>led-image-viewer</code> (critical for LED)</h3>
+
+<div class="danger">
+  <strong>🔴 Do not skip this step.</strong>
+  The setup script clones the hzeller library, but you must build <code>led-image-viewer</code> manually. Without it the display service fails silently.
+</div>
+
+<pre><span class="cmt"># Build led-image-viewer for the Pi 5 display backend</span>
+cd ~/rpi-rgb-led-matrix
+make -C utils led-image-viewer -j2
+
+<span class="cmt"># Confirm the binary exists</span>
+ls -lh utils/led-image-viewer</pre>
+
+<p>Expected output: a binary file around 200–500 KB.</p>
+
+<pre>-rwxr-xr-x 1 pi pi 312K  led-image-viewer</pre>
+
+<div class="warn">
+  <strong>⚠ Do NOT use <code>--led-rp1-rio=1</code></strong>
+  This flag enables an experimental GPIO mode that causes rapid display corruption on Pi 5. It is disabled in all scripts. Never add it manually.
+</div>
+
+<h3>5.3 &nbsp; Reboot and Verify</h3>
+
+<pre>sudo reboot</pre>
+
+<p>After reboot:</p>
+
+<pre>~/roadsentinel/status.sh</pre>
+
+<p>All three services should be active:</p>
+
+<pre>=== Camera Sender ===
+● roadsentinel-camera.service
+   Active: <span class="str">active (running)</span>
+
+=== LED Display ===
+● roadsentinel-display.service
+   Active: <span class="str">active (running)</span>
+
+=== Pi Agent (Admin Terminal) ===
+● roadsentinel-agent.service
+   Active: <span class="str">active (running)</span></pre>
+
+<h3>5.4 &nbsp; Test the LED Display</h3>
+
+<p>Stop the display service first (it holds the GPIO), then run the test script:</p>
+
+<pre><span class="cmt"># Stop running display service and kill any lingering viewer process</span>
+sudo systemctl stop roadsentinel-display
+sudo pkill -f led-image-viewer; sleep 1
+
+<span class="cmt"># Run the auto-cycle test (SLOW DOWN → VEHICLE INCOMING → VACANT ROAD)</span>
+sudo python3 ~/roadsentinel-repo/raspi_scripts/test_display.py</pre>
+
+<p>The panel will cycle through the three screens every 5 seconds. The display blinks briefly every 1.4 seconds — this is normal and intentional (it resets the RP1 PWM timing to prevent display corruption).</p>
+
+<p>Press <kbd>Ctrl+C</kbd> to stop. Then restart the display service:</p>
+
+<pre>sudo systemctl start roadsentinel-display</pre>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 6 -->
+<div class="page-break"></div>
+<h2>6 &nbsp; Display States &amp; Behavior</h2>
+
+<p>The LED matrix on Pi 5 shows one of four screens at any time. Priority runs top to bottom:</p>
+
+<table>
+  <tr><th>#</th><th>Screen</th><th>Color</th><th>Trigger</th><th>Duration</th></tr>
+  <tr>
+    <td>1</td>
+    <td><strong>INCIDENT AHEAD</strong></td>
+    <td>Magenta</td>
+    <td>Incident confirmed by either camera (crash, speeding, wrong-way, etc.)</td>
+    <td>12 s hold after last incident</td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td><strong>VEHICLE INCOMING</strong></td>
+    <td>Orange</td>
+    <td>Vehicle detected by Camera A <em>or</em> Camera B within the last 8 s</td>
+    <td>8 s hold after last detection</td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td><strong>SLOW DOWN</strong></td>
+    <td>Red</td>
+    <td>System running but road not yet confirmed clear (startup / camera offline)</td>
+    <td>Until road confirmed vacant</td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td><strong>VACANT ROAD</strong></td>
+    <td>Green</td>
+    <td>Camera is live, no vehicle detected for 15+ seconds</td>
+    <td>Until next detection</td>
+  </tr>
+</table>
+
+<h3>Blink Behavior</h3>
+<p>The display blinks (briefly goes black) every <strong>1.4 seconds</strong>. This is by design — it resets the Raspberry Pi 5's RP1 co-processor PWM timing before drift causes display corruption. The content re-appears immediately after each blink. Any content change (e.g. VACANT ROAD → VEHICLE INCOMING) takes effect on the next blink, not mid-display.</p>
+
+<h3>Detection Source</h3>
+<p>Both cameras contribute to the LED display. <code>display_manager.py</code> polls <code>GET /api/detections</code> every 2 seconds. If the most recent detection from <em>either</em> camera is less than 8 seconds old, VEHICLE INCOMING is shown.</p>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 7 -->
+<h2>7 &nbsp; Daily Operations</h2>
+
+<p>Helper scripts are installed in <code>~/roadsentinel/</code> on each Pi.</p>
+
+<table>
+  <tr><th>Command</th><th>What it does</th><th>Pi 4</th><th>Pi 5</th></tr>
+  <tr><td><code>~/roadsentinel/start.sh</code></td><td>Start all services</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+  <tr><td><code>~/roadsentinel/stop.sh</code></td><td>Stop all services</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+  <tr><td><code>~/roadsentinel/status.sh</code></td><td>Show systemd status</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+  <tr><td><code>~/roadsentinel/update.sh</code></td><td>git pull + restart</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+  <tr><td><code>~/roadsentinel/test_display.sh</code></td><td>Run LED test cycle</td><td class="na">—</td><td class="ok">✓</td></tr>
+</table>
+
+<h3>Live Logs</h3>
+<pre><span class="cmt"># Pi 4</span>
+tail -f ~/roadsentinel/logs/camera.log
+tail -f ~/roadsentinel/logs/agent.log
+
+<span class="cmt"># Pi 5</span>
+tail -f ~/roadsentinel/logs/camera.log
+tail -f ~/roadsentinel/logs/display.log
+tail -f ~/roadsentinel/logs/agent.log</pre>
+
+<h3>Services start automatically on boot</h3>
+<p>Systemd enables all services at install time. After a power cut or reboot, services start automatically within ~30 seconds (network must come up first).</p>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 8 -->
+<div class="page-break"></div>
+<h2>8 &nbsp; Updating Code on the Pi</h2>
+
+<h3>Option A — From the Pi terminal</h3>
+<pre>~/roadsentinel/update.sh</pre>
+<p>This pulls the latest code from GitHub, copies new scripts to <code>~/roadsentinel/</code>, and restarts all services.</p>
+
+<h3>Option B — From the Web Dashboard (Admin Terminal)</h3>
+<ol>
+  <li>Open the Road Sentinel web dashboard in your browser.</li>
+  <li>Go to <strong>Admin Terminal</strong>.</li>
+  <li>Select <strong>Pi 4</strong> or <strong>Pi 5</strong> from the dropdown.</li>
+  <li>Run: <code>~/roadsentinel/update.sh</code></li>
+</ol>
+
+<div class="note">
+  <strong>ℹ Admin Terminal requires the agent service</strong>
+  <code>roadsentinel-agent</code> must be running on the Pi and the Pi must be able to reach the Node API URL for the Admin Terminal to work.
+</div>
+
+<h3>Typical deploy workflow</h3>
+<pre><span class="cmt"># On your dev machine (Windows)</span>
+git push
+
+<span class="cmt"># On each Pi (or via Admin Terminal)</span>
+~/roadsentinel/update.sh</pre>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 9 -->
+<h2>9 &nbsp; Quick Reference</h2>
+
+<h3>Network Addresses</h3>
+<table>
+  <tr><th>Service</th><th>Default URL</th></tr>
+  <tr><td>Node API</td><td><code>http://&lt;SERVER_IP&gt;:3001</code></td></tr>
+  <tr><td>AI Service</td><td><code>http://&lt;SERVER_IP&gt;:8000</code></td></tr>
+  <tr><td>Camera A RTSP</td><td><code>rtsp://&lt;CAM_A_IP&gt;:554/cam/realmonitor?channel=1&subtype=1</code></td></tr>
+  <tr><td>Camera B RTSP</td><td><code>rtsp://&lt;CAM_B_IP&gt;:554/cam/realmonitor?channel=1&subtype=1</code></td></tr>
+</table>
+
+<h3>SSH Addresses (after setup)</h3>
+<pre>ssh pi@pi4-sentinel.local    <span class="cmt"># Pi 4 — no IP needed</span>
+ssh pi@pi5-sentinel.local    <span class="cmt"># Pi 5 — no IP needed</span></pre>
+
+<h3>File Locations on Pi</h3>
+<table>
+  <tr><th>Path</th><th>Contents</th></tr>
+  <tr><td><code>~/roadsentinel/</code></td><td>Running scripts + helper scripts</td></tr>
+  <tr><td><code>~/roadsentinel/logs/</code></td><td>camera.log, display.log, agent.log</td></tr>
+  <tr><td><code>~/roadsentinel-repo/</code></td><td>Git repository clone</td></tr>
+  <tr><td><code>~/venvs/cam_venv/</code></td><td>Python virtual environment</td></tr>
+  <tr><td><code>~/rpi-rgb-led-matrix/</code></td><td>hzeller LED library (Pi 5 only)</td></tr>
+  <tr><td><code>~/rpi-rgb-led-matrix/utils/led-image-viewer</code></td><td>LED display binary (Pi 5 only)</td></tr>
+</table>
+
+<h3>Systemd Service Names</h3>
+<table>
+  <tr><th>Service</th><th>Pi 4</th><th>Pi 5</th></tr>
+  <tr><td><code>roadsentinel-camera</code></td><td class="ok">✓</td><td class="ok">✓</td></tr>
+  <tr><td><code>roadsentinel-display</code></td><td class="na">—</td><td class="ok">✓</td></tr>
+  <tr><td><code>roadsentinel-agent</code></td><td class="ok">✓</td><td class="ok">✓</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ SECTION 10 -->
+<div class="page-break"></div>
+<h2>10 &nbsp; Troubleshooting</h2>
+
+<table>
+  <tr><th>Problem</th><th>Cause</th><th>Fix</th></tr>
+  <tr>
+    <td>LED shows random colors / garbage immediately</td>
+    <td>RIO mode enabled or two <code>led-image-viewer</code> processes running</td>
+    <td><code>sudo pkill -f led-image-viewer; sleep 1</code> then restart display service. Never add <code>--led-rp1-rio=1</code>.</td>
+  </tr>
+  <tr>
+    <td>LED text corrupts after a few seconds</td>
+    <td>RP1 PWM timing drift</td>
+    <td>Normal behavior — display blinks every 1.4 s to reset it. If still corrupting, check that <code>--led-pwm-bits=3</code> and <code>--led-slowdown-gpio=4</code> are in the flags.</td>
+  </tr>
+  <tr>
+    <td>Display service fails to start</td>
+    <td><code>led-image-viewer</code> binary not built</td>
+    <td>Run: <code>cd ~/rpi-rgb-led-matrix && make -C utils led-image-viewer -j2</code></td>
+  </tr>
+  <tr>
+    <td>Camera service not detecting vehicles</td>
+    <td>RTSP URL wrong or camera offline</td>
+    <td>Check <code>camera.log</code>. The script auto-discovers the new camera IP after 3 failures via ONVIF.</td>
+  </tr>
+  <tr>
+    <td>LED stuck on SLOW DOWN, never shows VACANT ROAD</td>
+    <td>API not reachable or first 15 s not elapsed yet</td>
+    <td>Wait 15 s after startup. Check <code>display.log</code> for API errors. Verify <code>--api</code> URL is correct.</td>
+  </tr>
+  <tr>
+    <td>Admin Terminal not working</td>
+    <td><code>roadsentinel-agent</code> not running or can't reach Node API</td>
+    <td>Check <code>agent.log</code>. Run <code>~/roadsentinel/status.sh</code>. Verify the Pi can reach the Node URL.</td>
+  </tr>
+  <tr>
+    <td>SSH connection refused after reboot</td>
+    <td>Pi still booting (takes ~30 s)</td>
+    <td>Wait 30–60 seconds and retry.</td>
+  </tr>
+  <tr>
+    <td><code>ssh pi@pi5-sentinel.local</code> not working</td>
+    <td>mDNS not available on your laptop</td>
+    <td>Use the IP address instead. On Windows, install Bonjour or use <code>ping pi5-sentinel.local</code> to find the IP first.</td>
+  </tr>
+  <tr>
+    <td>make build error for hzeller library</td>
+    <td>Missing build tools</td>
+    <td><code>sudo apt install -y build-essential git</code> then retry.</td>
+  </tr>
+</table>
+
+<hr>
+<p style="text-align:center; color:#999; font-size:9pt; margin-top:24px;">
+  Road Sentinel — AI Blind-Curve Warning System &nbsp;|&nbsp; github.com/Shaloh69/Road_Sentinel
+</p>
+
+</div>
+</body>
+</html>
