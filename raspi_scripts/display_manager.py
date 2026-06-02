@@ -356,7 +356,7 @@ class LedcatBackend(DisplayBackend):
 # Restart led-image-viewer every N seconds even when showing the same image.
 # The RP1 coprocessor's PWM scan timing drifts within the viewer's own refresh
 # loop; restarting before drift accumulates prevents garbage/white-line output.
-_HEARTBEAT_SECS = 1.0
+_HEARTBEAT_SECS = 1.4   # blink interval — panel resets at this rate to prevent RP1 drift
 
 
 class LedImageViewerBackend(DisplayBackend):
@@ -400,42 +400,43 @@ class LedImageViewerBackend(DisplayBackend):
             f.write(f"P6\n{WIDTH} {HEIGHT}\n255\n".encode())
             f.write(data)
 
-    def _restart(self, reason: str = "content changed") -> None:
+    def _restart(self, reason: str = "blink") -> None:
         if self._proc and self._proc.poll() is None:
-            # SIGKILL: instant death, no hzeller cleanup handler → no deliberate
-            # panel clear. RP1 DMA keeps driving the matrix autonomously until the
-            # new process re-programs it, so the last frame stays visible.
-            self._proc.kill()
+            self._proc.terminate()          # SIGTERM → hzeller clears panel cleanly
             try:
-                self._proc.wait(timeout=0.2)
+                self._proc.wait(timeout=0.15)   # typically exits in ~5ms
             except subprocess.TimeoutExpired:
-                pass
+                self._proc.kill()
+                try:
+                    self._proc.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    pass
         cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
         self._proc = subprocess.Popen(cmd)
         self._last_restart_t = time.monotonic()
-        log.info("► viewer restart [%s]  PID=%d", reason, self._proc.pid)
+        log.info("► blink [%s]  PID=%d", reason, self._proc.pid)
 
     def _proc_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
     def show(self, img: Image.Image) -> None:
-        now         = time.monotonic()
-        same_img    = id(img) == self._last_img_id
-        proc_alive  = self._proc_alive()
-        elapsed     = now - self._last_restart_t
-        heartbeat   = proc_alive and same_img and elapsed >= _HEARTBEAT_SECS
+        # The blink IS the refresh mechanism — content only updates at blink time,
+        # never mid-display. This prevents RP1 PWM drift from accumulating between
+        # blinks and ensures display changes happen on a clean panel transition.
+        now        = time.monotonic()
+        elapsed    = now - self._last_restart_t
+        proc_alive = self._proc_alive()
 
-        if same_img and proc_alive and not heartbeat:
-            return  # viewer running, content unchanged, heartbeat not due — nothing to do
+        if proc_alive and elapsed < _HEARTBEAT_SECS:
+            return  # still within blink window — hold current frame
 
         if not proc_alive:
             exit_code = self._proc.poll() if self._proc else "?"
-            log.warning("led-image-viewer died (exit=%s) — restarting", exit_code)
-            reason = f"process died (exit={exit_code})"
-        elif heartbeat:
-            reason = f"heartbeat ({elapsed:.1f}s — preventing RP1 drift)"
+            log.warning("led-image-viewer died (exit=%s) — recovering", exit_code)
+            reason = "process died"
         else:
-            reason = "content changed"
+            content_changed = id(img) != self._last_img_id
+            reason = f"blink + new content" if content_changed else f"blink ({elapsed:.1f}s)"
 
         data = _snap_frame(img)
         self._last_img_id = id(img)
