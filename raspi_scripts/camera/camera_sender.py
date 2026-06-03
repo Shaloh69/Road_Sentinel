@@ -37,7 +37,7 @@ logging.basicConfig(
 log = logging.getLogger("cam_sender")
 
 # ── Config ────────────────────────────────────────────────────────────────────
-JPEG_QUALITY             = 60
+JPEG_QUALITY             = 50
 TARGET_FPS               = 30
 FRAME_INTERVAL           = 1.0 / TARGET_FPS
 RECONNECT_WAIT           = 3.0
@@ -150,13 +150,14 @@ class NodeForwarder:
         session: aiohttp.ClientSession,
         confidence_threshold: float = 0.6,
     ):
-        self._base        = node_url.rstrip("/")
-        self._camera_id   = camera_id
-        self._session     = session
-        self._conf_thresh = confidence_threshold
-        self._last_det    = 0.0
-        self._last_frame  = 0.0
+        self._base          = node_url.rstrip("/")
+        self._camera_id     = camera_id
+        self._session       = session
+        self._conf_thresh   = confidence_threshold
+        self._last_det      = 0.0
+        self._last_frame    = 0.0
         self._inc_last: dict[str, float] = {}
+        self._push_in_flight = 0  # concurrent frame PUTs in flight
 
     async def handle(self, result: dict) -> None:
         detections = result.get("detections", [])
@@ -182,17 +183,30 @@ class NodeForwarder:
                 await self._post_incident(inc)
 
     async def _push_raw(self, jpeg_bytes: bytes) -> None:
-        """HTTP PUT to Node — called only by the sequential frame_push_loop."""
+        """Fire-and-forget frame push — never blocks the capture loop.
+        Limits to 2 concurrent PUTs; drops the frame if both slots are busy.
+        This prevents old frames from queuing up over a slow Cloudflare tunnel."""
+        if self._push_in_flight >= 2:
+            return  # tunnel busy — drop frame, always show latest not oldest
+        asyncio.create_task(self._push_raw_task(jpeg_bytes))
+
+    async def _push_raw_task(self, jpeg_bytes: bytes) -> None:
+        self._push_in_flight += 1
         try:
             async with self._session.put(
                 f"{self._base}/api/cameras/{self._camera_id}/frame",
                 data=jpeg_bytes,
-                headers={"Content-Type": "application/octet-stream"},
+                headers={
+                    "Content-Type": "image/jpeg",
+                    "Cache-Control": "no-store",
+                },
                 timeout=aiohttp.ClientTimeout(total=2.0),
             ) as resp:
                 pass  # 204 No Content expected
         except Exception:
             pass
+        finally:
+            self._push_in_flight -= 1
 
     async def _post_detection(self, det: dict) -> None:
         bbox = det.get("bbox", {})
