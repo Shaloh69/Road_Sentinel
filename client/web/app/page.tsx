@@ -131,7 +131,7 @@ export default function Home() {
       }
     });
 
-    socket.on("detection", (event: { data: { camera_id: string } }) => {
+    socket.on("detection", (_event: { data: { camera_id: string } }) => {
       setSummary((prev) =>
         prev ? { ...prev, vehicles_today: prev.vehicles_today + 1 } : prev,
       );

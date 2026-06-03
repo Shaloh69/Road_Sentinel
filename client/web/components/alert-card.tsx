@@ -20,12 +20,6 @@ const severityColors = {
   critical: "bg-red-500",
 };
 
-const severityTextColors = {
-  low: "text-blue-400",
-  medium: "text-yellow-400",
-  high: "text-orange-400",
-  critical: "text-red-400",
-};
 
 const typeIcons = {
   speeding: (
@@ -91,7 +85,7 @@ const typeIcons = {
 };
 
 export const AlertCard = ({
-  id,
+  id: _id,
   type,
   severity,
   title,
@@ -99,7 +93,7 @@ export const AlertCard = ({
   timestamp,
   cameraId,
   details,
-  imageUrl,
+  imageUrl: _imageUrl,
 }: AlertCardProps) => {
   return (
     <Card className="bg-white/10 backdrop-blur-md border-l-4 border-l-white/30 hover:border-l-white transition-all shadow-lg hover:bg-white/15">

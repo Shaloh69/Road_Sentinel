@@ -137,6 +137,7 @@ export default function MonitorPage() {
           speed: det.speed ?? undefined,
         };
         setBoxes((prev) => ({ ...prev, [det.camera_id]: [box] }));
+
         // Auto-clear box after 3 s so stale boxes don't linger
         clearTimeout(boxTimers.current[det.camera_id]);
         boxTimers.current[det.camera_id] = setTimeout(() => {
