@@ -2,7 +2,7 @@
 
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Chip } from "@heroui/chip";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 interface BoundingBox {
   id: string;
@@ -38,6 +38,52 @@ export const VideoFeed = ({
 }: VideoFeedProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Real-time FPS and latency measured from MJPEG frame load events
+  const frameTimestamps = useRef<number[]>([]);
+  const frameLoadStart  = useRef<number>(0);
+  const [liveFps,     setLiveFps]     = useState<number | null>(null);
+  const [liveLatency, setLiveLatency] = useState<number | null>(null);
+  const [lastFrameAge, setLastFrameAge] = useState<number | null>(null);
+  const lastFrameAt = useRef<number>(0);
+
+  const handleLoadStart = useCallback(() => {
+    frameLoadStart.current = performance.now();
+  }, []);
+
+  const handleLoad = useCallback(() => {
+    const now = performance.now();
+    lastFrameAt.current = now;
+
+    // Frame decode time = rough stream latency
+    const frameMs = Math.round(now - frameLoadStart.current);
+    setLiveLatency(frameMs);
+    setLastFrameAge(0);
+
+    // FPS: keep a 3-second sliding window of timestamps
+    frameTimestamps.current = [
+      ...frameTimestamps.current.filter((t) => now - t < 3000),
+      now,
+    ];
+    const count = frameTimestamps.current.length;
+    if (count >= 2) {
+      const span = (now - frameTimestamps.current[0]) / 1000;
+      setLiveFps(Math.round((count - 1) / span));
+    }
+  }, []);
+
+  // Update "last frame age" every second so the user can see staleness
+  useState(() => {
+    const id = setInterval(() => {
+      if (lastFrameAt.current > 0) {
+        setLastFrameAge(Math.round((performance.now() - lastFrameAt.current) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  });
+
+  const displayFps     = liveFps     ?? fps;
+  const displayLatency = liveLatency ?? latency;
+
   return (
     <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
       <CardHeader className="flex justify-between items-center bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
@@ -61,19 +107,30 @@ export const VideoFeed = ({
             </Chip>
           )}
           <div className="flex flex-col text-right">
-            <span className="text-xs text-white/80">{fps} FPS</span>
-            <span className="text-xs text-white/80">{latency}ms</span>
+            <span className={`text-xs font-mono font-semibold ${liveFps === null ? "text-white/50" : liveFps >= 10 ? "text-green-400" : liveFps >= 5 ? "text-yellow-400" : "text-red-400"}`}>
+              {displayFps} FPS
+            </span>
+            <span className={`text-xs font-mono ${liveLatency === null ? "text-white/50" : liveLatency < 100 ? "text-green-400" : liveLatency < 300 ? "text-yellow-400" : "text-red-400"}`}>
+              {displayLatency}ms
+            </span>
+            {lastFrameAge !== null && lastFrameAge > 2 && (
+              <span className="text-xs text-red-400 font-mono">{lastFrameAge}s ago</span>
+            )}
           </div>
         </div>
       </CardHeader>
       <CardBody className="p-0">
         <div className="relative aspect-video bg-black overflow-hidden">
           {videoUrl && isLive ? (
-            // MJPEG stream from Node service (proxied from camera_sender)
+            // MJPEG stream — onLoad fires per frame in Chrome/Edge
             <img
               alt={cameraName}
               className="absolute inset-0 w-full h-full object-cover"
+              decoding="async"
+              fetchPriority="high"
               src={videoUrl}
+              onLoad={handleLoad}
+              onLoadStart={handleLoadStart}
             />
           ) : (
             // Placeholder when offline or no URL configured
