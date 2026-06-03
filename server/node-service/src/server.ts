@@ -13,7 +13,7 @@ import { runMigrations } from "./database/migrate";
 import { seedCameras } from "./database/seed";
 
 // Routes
-import cameraRoutes from "./routes/cameras";
+import cameraRoutes, { handlePiFrame } from "./routes/cameras";
 import detectionRoutes from "./routes/detections";
 import incidentRoutes from "./routes/incidents";
 import analyticsRoutes from "./routes/analytics";
@@ -131,6 +131,12 @@ io.on("connection", (socket) => {
   socket.on("unsubscribe_stream", (cameraId: string) => {
     socket.leave(`stream:${cameraId}`);
     logger.info(`📺 Client unsubscribed from stream:${cameraId}`);
+  });
+
+  // Pi camera frame via Socket.IO — zero RTT, no HTTP PUT overhead
+  socket.on("pi_frame", (payload: { camera_id: string; data: Buffer }) => {
+    if (!payload?.camera_id || !Buffer.isBuffer(payload.data)) return;
+    handlePiFrame(payload.camera_id, payload.data);
   });
 
   socket.on("subscribe_incidents", () => {

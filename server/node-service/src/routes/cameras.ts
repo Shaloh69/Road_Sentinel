@@ -213,4 +213,15 @@ router.get("/:id/stream", (req: Request, res: Response) => {
   });
 });
 
+// Called by server.ts Socket.IO handler when a Pi sends a frame via WebSocket
+export function handlePiFrame(cameraId: string, jpeg: Buffer): void {
+  const isFirst = !frameBuffer.has(cameraId);
+  frameBuffer.set(cameraId, jpeg);
+  getEmitter(cameraId).emit("frame", jpeg);
+  io.to(`stream:${cameraId}`).emit(`camera_frame:${cameraId}`, jpeg);
+  if (isFirst) logger.info(`📹 Camera ${cameraId} — Socket.IO stream live`);
+  setCameraOnline(cameraId, isFirst).catch(() => {});
+  resetFrameTimeout(cameraId);
+}
+
 export default router;

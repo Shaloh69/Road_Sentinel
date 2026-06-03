@@ -28,6 +28,7 @@ from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 import cv2
+import socketio as sio_lib
 
 logging.basicConfig(
     level=logging.INFO,
@@ -150,14 +151,24 @@ class NodeForwarder:
         session: aiohttp.ClientSession,
         confidence_threshold: float = 0.6,
     ):
-        self._base          = node_url.rstrip("/")
-        self._camera_id     = camera_id
-        self._session       = session
-        self._conf_thresh   = confidence_threshold
-        self._last_det      = 0.0
-        self._last_frame    = 0.0
+        self._base           = node_url.rstrip("/")
+        self._camera_id      = camera_id
+        self._session        = session
+        self._conf_thresh    = confidence_threshold
+        self._last_det       = 0.0
+        self._last_frame     = 0.0
         self._inc_last: dict[str, float] = {}
-        self._push_in_flight = 0  # concurrent frame PUTs in flight
+        self._push_in_flight = 0
+
+        # Socket.IO client — persistent WebSocket for low-latency frame streaming
+        self._sio = sio_lib.AsyncClient(
+            reconnection=True,
+            reconnection_attempts=0,
+            reconnection_delay=1,
+            reconnection_delay_max=5,
+            logger=False,
+            engineio_logger=False,
+        )
 
     async def handle(self, result: dict) -> None:
         detections = result.get("detections", [])
@@ -182,27 +193,53 @@ class NodeForwarder:
                 self._inc_last[inc_type] = now
                 await self._post_incident(inc)
 
-    async def _push_raw(self, jpeg_bytes: bytes) -> None:
-        """Fire-and-forget frame push — never blocks the capture loop.
-        Limits to 2 concurrent PUTs; drops the frame if both slots are busy.
-        This prevents old frames from queuing up over a slow Cloudflare tunnel."""
-        if self._push_in_flight >= 2:
-            return  # tunnel busy — drop frame, always show latest not oldest
-        asyncio.create_task(self._push_raw_task(jpeg_bytes))
+    async def connect_socketio(self) -> None:
+        """Connect persistent Socket.IO WebSocket for zero-RTT frame streaming."""
+        try:
+            await self._sio.connect(
+                self._base,
+                transports=["websocket"],
+                wait_timeout=8,
+            )
+            log.info("[%s] Socket.IO stream connected → %s", self._camera_id, self._base)
+        except Exception as exc:
+            log.warning("[%s] Socket.IO connect failed (%s) — HTTP fallback active",
+                        self._camera_id, exc)
 
-    async def _push_raw_task(self, jpeg_bytes: bytes) -> None:
+    async def disconnect_socketio(self) -> None:
+        try:
+            if self._sio.connected:
+                await self._sio.disconnect()
+        except Exception:
+            pass
+
+    async def _push_raw(self, jpeg_bytes: bytes) -> None:
+        """Push frame via Socket.IO (zero RTT) or HTTP PUT fallback."""
+        if self._sio.connected:
+            try:
+                await self._sio.emit("pi_frame", {
+                    "camera_id": self._camera_id,
+                    "data":      jpeg_bytes,
+                })
+                return
+            except Exception:
+                pass  # fall through to HTTP
+
+        # HTTP fallback — fire-and-forget, max 2 in-flight
+        if self._push_in_flight >= 2:
+            return
+        asyncio.create_task(self._push_http(jpeg_bytes))
+
+    async def _push_http(self, jpeg_bytes: bytes) -> None:
         self._push_in_flight += 1
         try:
             async with self._session.put(
                 f"{self._base}/api/cameras/{self._camera_id}/frame",
                 data=jpeg_bytes,
-                headers={
-                    "Content-Type": "image/jpeg",
-                    "Cache-Control": "no-store",
-                },
+                headers={"Content-Type": "image/jpeg", "Cache-Control": "no-store"},
                 timeout=aiohttp.ClientTimeout(total=2.0),
             ) as resp:
-                pass  # 204 No Content expected
+                pass
         except Exception:
             pass
         finally:
@@ -514,6 +551,7 @@ async def run(
                                           confidence_threshold=confidence)
                 log.info("[%s] Node forwarding → %s  ppm=%.1f  limit=%.0f  conf=%.2f",
                          camera_id, node_url, pixels_per_meter, speed_limit, confidence)
+                await forwarder.connect_socketio()
             else:
                 log.warning("[%s] --node not set — detections NOT saved to DB", camera_id)
 
@@ -656,6 +694,8 @@ async def run(
                     log.info("[%s] Reconnecting in %.0fs…", camera_id, RECONNECT_WAIT)
                     await asyncio.sleep(RECONNECT_WAIT)
 
+    if forwarder:
+        await forwarder.disconnect_socketio()
     log.info("[%s] Stopped. sent=%d errors=%d dropped=%d",
              camera_id, stats.sent, stats.errors, stats.dropped)
 
