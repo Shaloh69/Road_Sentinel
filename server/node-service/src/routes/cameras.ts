@@ -164,8 +164,10 @@ router.put(
     const isFirst = !frameBuffer.has(id);
     frameBuffer.set(id, jpeg);
     getEmitter(id).emit("frame", jpeg);
+    // Broadcast binary frame to WebSocket stream subscribers (low-latency path)
+    io.to(`stream:${id}`).emit(`camera_frame:${id}`, jpeg);
     if (isFirst)
-      logger.info(`📹 Camera ${id} — first frame received (MJPEG stream live)`);
+      logger.info(`📹 Camera ${id} — first frame received (MJPEG + WS stream live)`);
     setCameraOnline(id, isFirst).catch(() => {});
     resetFrameTimeout(id);
     res.status(204).end();

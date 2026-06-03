@@ -37,7 +37,7 @@ logging.basicConfig(
 log = logging.getLogger("cam_sender")
 
 # ── Config ────────────────────────────────────────────────────────────────────
-JPEG_QUALITY             = 75
+JPEG_QUALITY             = 60
 TARGET_FPS               = 30
 FRAME_INTERVAL           = 1.0 / TARGET_FPS
 RECONNECT_WAIT           = 3.0

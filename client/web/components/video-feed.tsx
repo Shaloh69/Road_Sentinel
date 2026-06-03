@@ -4,6 +4,8 @@ import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getSocket } from "@/lib/socket";
+
 interface BoundingBox {
   id: string;
   x: number;
@@ -32,14 +34,15 @@ export const VideoFeed = ({
   isLive = true,
   showBoundingBoxes = true,
   boundingBoxes = [],
-  videoUrl,
-  fps = 30,
-  latency = 45,
+  fps = 15,
+  latency = 0,
 }: VideoFeedProps) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [hasFrames, setHasFrames] = useState(false);
 
-  // Real-time FPS and frame-interval measured from MJPEG onLoad events.
-  // onLoad fires per frame in Chrome/Edge for MJPEG <img> streams.
+  // Real-time FPS and frame-interval measured from frame load events
+  const imgRef = useRef<HTMLImageElement>(null);
+  const blobUrlRef = useRef<string | null>(null);
   const frameTimestamps = useRef<number[]>([]);
   const lastFrameAt = useRef<number>(0);
 
@@ -47,10 +50,10 @@ export const VideoFeed = ({
   const [frameIntervalMs, setFrameIntervalMs] = useState<number | null>(null);
   const [lastFrameAge, setLastFrameAge] = useState<number>(0);
 
+  // Measure FPS and inter-frame interval on each frame display
   const handleLoad = useCallback(() => {
     const now = performance.now();
 
-    // Inter-frame interval ≈ streaming latency
     if (lastFrameAt.current > 0) {
       setFrameIntervalMs(Math.round(now - lastFrameAt.current));
     }
@@ -58,7 +61,6 @@ export const VideoFeed = ({
     lastFrameAt.current = now;
     setLastFrameAge(0);
 
-    // FPS: 3-second sliding window of frame timestamps
     frameTimestamps.current = [
       ...frameTimestamps.current.filter((t) => now - t < 3000),
       now,
@@ -73,7 +75,7 @@ export const VideoFeed = ({
     }
   }, []);
 
-  // Update "last frame age" every second to surface stale feeds
+  // Update stale-frame age every second
   useEffect(() => {
     const id = setInterval(() => {
       if (lastFrameAt.current > 0) {
@@ -85,6 +87,49 @@ export const VideoFeed = ({
 
     return () => clearInterval(id);
   }, []);
+
+  // WebSocket binary frame subscription
+  useEffect(() => {
+    if (!isLive) return;
+
+    const socket = getSocket();
+    const eventName = `camera_frame:${cameraId}`;
+
+    socket.emit("subscribe_stream", cameraId);
+
+    // Ping every 55s to prevent Cloudflare's 100s WebSocket timeout
+    const pingId = setInterval(() => socket.emit("ping"), 55_000);
+
+    const handleFrame = (data: ArrayBuffer | Uint8Array) => {
+      const blob = new Blob([data], { type: "image/jpeg" });
+      const url = URL.createObjectURL(blob);
+
+      if (imgRef.current) {
+        imgRef.current.src = url;
+      }
+
+      // Revoke previous blob URL to free memory
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+      }
+
+      blobUrlRef.current = url;
+      setHasFrames(true);
+    };
+
+    socket.on(eventName, handleFrame);
+
+    return () => {
+      socket.emit("unsubscribe_stream", cameraId);
+      socket.off(eventName, handleFrame);
+      clearInterval(pingId);
+
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, [cameraId, isLive]);
 
   const displayFps = liveFps ?? fps;
   const displayLatency = frameIntervalMs ?? latency;
@@ -129,7 +174,7 @@ export const VideoFeed = ({
               className={`text-xs font-mono ${
                 frameIntervalMs === null
                   ? "text-white/50"
-                  : frameIntervalMs < 100
+                  : frameIntervalMs < 200
                     ? "text-green-400"
                     : frameIntervalMs < 500
                       ? "text-yellow-400"
@@ -148,18 +193,19 @@ export const VideoFeed = ({
       </CardHeader>
       <CardBody className="p-0">
         <div className="relative aspect-video bg-black overflow-hidden">
-          {videoUrl && isLive ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              alt={cameraName}
-              className="absolute inset-0 w-full h-full object-cover"
-              decoding="async"
-              fetchPriority="high"
-              src={videoUrl}
-              onLoad={handleLoad}
-            />
-          ) : (
-            // Placeholder when offline or no URL configured
+          {/* WebSocket-driven frame display */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            ref={imgRef}
+            alt={cameraName}
+            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${hasFrames && isLive ? "opacity-100" : "opacity-0"}`}
+            decoding="async"
+            fetchPriority="high"
+            onLoad={handleLoad}
+          />
+
+          {/* Placeholder — shown while connecting or offline */}
+          {(!hasFrames || !isLive) && (
             <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-black/40 via-[#44174E]/30 to-[#862249]/30 backdrop-blur-sm">
               <div className="text-center">
                 <svg

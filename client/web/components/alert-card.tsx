@@ -20,7 +20,6 @@ const severityColors = {
   critical: "bg-red-500",
 };
 
-
 const typeIcons = {
   speeding: (
     <svg

@@ -136,6 +136,7 @@ export default function MonitorPage() {
           confidence: det.confidence,
           speed: det.speed ?? undefined,
         };
+
         setBoxes((prev) => ({ ...prev, [det.camera_id]: [box] }));
 
         // Auto-clear box after 3 s so stale boxes don't linger

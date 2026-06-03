@@ -122,6 +122,17 @@ io.on("connection", (socket) => {
     socket.leave(`camera:${cameraId}`);
   });
 
+  // WebSocket binary stream — browser subscribes to get JPEG frames directly
+  socket.on("subscribe_stream", (cameraId: string) => {
+    socket.join(`stream:${cameraId}`);
+    logger.info(`📺 Client subscribed to stream:${cameraId}`);
+  });
+
+  socket.on("unsubscribe_stream", (cameraId: string) => {
+    socket.leave(`stream:${cameraId}`);
+    logger.info(`📺 Client unsubscribed from stream:${cameraId}`);
+  });
+
   socket.on("subscribe_incidents", () => {
     socket.join("incidents");
     logger.info(`Client ${socket.id} subscribed to incidents`);
