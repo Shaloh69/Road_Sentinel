@@ -34,6 +34,7 @@ export const VideoFeed = ({
   isLive = true,
   showBoundingBoxes = true,
   boundingBoxes = [],
+  videoUrl,
   fps = 15,
   latency = 0,
 }: VideoFeedProps) => {
@@ -88,7 +89,9 @@ export const VideoFeed = ({
     return () => clearInterval(id);
   }, []);
 
-  // WebSocket binary frame subscription
+  // WebSocket binary frame subscription with MJPEG fallback
+  const [useMjpegFallback, setUseMjpegFallback] = useState(false);
+
   useEffect(() => {
     if (!isLive) return;
 
@@ -97,10 +100,19 @@ export const VideoFeed = ({
 
     socket.emit("subscribe_stream", cameraId);
 
+    // Fall back to MJPEG if no WebSocket frames arrive within 5s
+    const fallbackTimer = setTimeout(() => {
+      setUseMjpegFallback(true);
+      setHasFrames(true);
+    }, 5_000);
+
     // Ping every 55s to prevent Cloudflare's 100s WebSocket timeout
     const pingId = setInterval(() => socket.emit("ping"), 55_000);
 
     const handleFrame = (data: ArrayBuffer | Uint8Array) => {
+      clearTimeout(fallbackTimer);
+      setUseMjpegFallback(false);
+
       const blob = new Blob([data], { type: "image/jpeg" });
       const url = URL.createObjectURL(blob);
 
@@ -120,6 +132,7 @@ export const VideoFeed = ({
     socket.on(eventName, handleFrame);
 
     return () => {
+      clearTimeout(fallbackTimer);
       socket.emit("unsubscribe_stream", cameraId);
       socket.off(eventName, handleFrame);
       clearInterval(pingId);
@@ -193,16 +206,27 @@ export const VideoFeed = ({
       </CardHeader>
       <CardBody className="p-0">
         <div className="relative aspect-video bg-black overflow-hidden">
-          {/* WebSocket-driven frame display */}
+          {/* WebSocket binary frames (primary) */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             ref={imgRef}
             alt={cameraName}
-            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${hasFrames && isLive ? "opacity-100" : "opacity-0"}`}
+            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${hasFrames && isLive && !useMjpegFallback ? "opacity-100" : "opacity-0"}`}
             decoding="async"
             fetchPriority="high"
             onLoad={handleLoad}
           />
+
+          {/* MJPEG fallback — used when server not yet updated with WS support */}
+          {useMjpegFallback && isLive && videoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              alt={cameraName}
+              className="absolute inset-0 w-full h-full object-cover"
+              src={videoUrl}
+              onLoad={handleLoad}
+            />
+          )}
 
           {/* Placeholder — shown while connecting or offline */}
           {(!hasFrames || !isLive) && (
