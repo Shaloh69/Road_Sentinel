@@ -7,8 +7,17 @@ import { Input } from "@heroui/input";
 import { Slider } from "@heroui/slider";
 
 import { CameraStatus } from "@/components/camera-status";
+import {
+  CalibrationTool,
+  CalibrationGuide,
+} from "@/components/calibration-tool";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+
+interface HomographyPoints {
+  image_points: [number, number][];
+  real_points: [number, number][];
+}
 
 interface Camera {
   id: string;
@@ -21,6 +30,7 @@ interface Camera {
   speed_limit: number;
   detection_confidence: number;
   pixels_per_meter: number;
+  homography_points: HomographyPoints | null;
 }
 
 export default function CamerasPage() {
@@ -31,6 +41,8 @@ export default function CamerasPage() {
   const [formState, setFormState] = useState<Partial<Camera>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [calibrationOpen, setCalibrationOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const fetchCameras = useCallback(async () => {
     try {
@@ -107,12 +119,12 @@ export default function CamerasPage() {
   return (
     <div className="min-h-screen p-6">
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-white mb-2">
+        <h1 className="text-4xl font-heading font-bold text-fg mb-2">
           Camera Management
         </h1>
-        <p className="text-white/70">Configure and manage traffic cameras</p>
+        <p className="text-fg-muted">Configure and manage traffic cameras</p>
         {error && (
-          <p className="mt-2 text-sm text-red-400 bg-red-900/30 border border-red-500/30 px-3 py-2 rounded-lg">
+          <p className="mt-2 text-sm text-danger bg-danger/10 border border-danger/30 px-3 py-2 rounded-lg">
             ⚠ {error}
           </p>
         )}
@@ -121,14 +133,14 @@ export default function CamerasPage() {
       {/* Camera cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         {loading ? (
-          <div className="text-white/50 col-span-3 text-center py-8">
+          <div className="text-fg-muted/70 col-span-3 text-center py-8">
             Loading cameras…
           </div>
         ) : (
           cameras.map((cam) => (
             <button
               key={cam.id}
-              className={`cursor-pointer rounded-xl transition-all text-left w-full bg-transparent border-0 p-0 ${selected?.id === cam.id ? "ring-2 ring-white/60" : ""}`}
+              className={`cursor-pointer rounded-xl transition-all text-left w-full bg-transparent border-0 p-0 ${selected?.id === cam.id ? "ring-2 ring-brand/60" : ""}`}
               onClick={() => selectCamera(cam)}
             >
               <CameraStatus
@@ -143,9 +155,9 @@ export default function CamerasPage() {
             </button>
           ))
         )}
-        <Card className="bg-white/10 backdrop-blur-md hover:scale-105 transition-transform shadow-lg border-2 border-dashed border-white/30">
+        <Card className="bg-surface/80 backdrop-blur-md hover:scale-[1.02] transition-transform shadow-lg border-2 border-dashed border-border">
           <CardBody className="p-6 flex items-center justify-center">
-            <Button className="bg-white text-[#1B1931] font-semibold hover:bg-white/90 shadow-lg">
+            <Button className="font-semibold shadow-lg" color="primary">
               <svg
                 className="w-5 h-5 mr-2"
                 fill="none"
@@ -167,23 +179,23 @@ export default function CamerasPage() {
 
       {/* Configuration panel */}
       {selected && (
-        <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
-          <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
-            <h3 className="text-xl font-bold text-white">
+        <Card className="bg-surface/80 backdrop-blur-md border border-border shadow-xl">
+          <CardHeader className="bg-surface-2/60 backdrop-blur-sm px-4 py-3 border-b border-border">
+            <h3 className="text-xl font-heading font-bold text-fg">
               Camera Configuration — {selected.name}
             </h3>
           </CardHeader>
           <CardBody className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-4">
-                <h4 className="text-lg font-semibold text-white">
+                <h4 className="text-lg font-heading font-semibold text-fg">
                   Basic Settings
                 </h4>
                 <Input
                   classNames={{
-                    label: "text-white/80",
-                    input: "text-white",
-                    inputWrapper: "bg-white/10 border-white/20",
+                    label: "text-fg-muted",
+                    input: "text-fg",
+                    inputWrapper: "bg-surface-2 border-border",
                   }}
                   label="Camera Name"
                   value={formState.name ?? ""}
@@ -193,9 +205,9 @@ export default function CamerasPage() {
                 />
                 <Input
                   classNames={{
-                    label: "text-white/80",
-                    input: "text-white",
-                    inputWrapper: "bg-white/10 border-white/20",
+                    label: "text-fg-muted",
+                    input: "text-fg",
+                    inputWrapper: "bg-surface-2 border-border",
                   }}
                   label="Location"
                   value={formState.location ?? ""}
@@ -205,9 +217,9 @@ export default function CamerasPage() {
                 />
                 <Input
                   classNames={{
-                    label: "text-white/80",
-                    input: "text-white",
-                    inputWrapper: "bg-white/10 border-white/20",
+                    label: "text-fg-muted",
+                    input: "text-fg",
+                    inputWrapper: "bg-surface-2 border-border",
                   }}
                   label="RTSP URL"
                   type="password"
@@ -219,16 +231,16 @@ export default function CamerasPage() {
               </div>
 
               <div className="space-y-4">
-                <h4 className="text-lg font-semibold text-white">
+                <h4 className="text-lg font-heading font-semibold text-fg">
                   Detection Settings
                 </h4>
                 <Slider
                   className="max-w-md"
                   classNames={{
-                    label: "text-white/80",
-                    value: "text-white",
-                    track: "bg-white/20",
-                    filler: "bg-white/70",
+                    label: "text-fg-muted",
+                    value: "text-fg",
+                    track: "bg-surface-2",
+                    filler: "bg-brand",
                   }}
                   label="Detection Confidence Threshold"
                   maxValue={1}
@@ -245,10 +257,10 @@ export default function CamerasPage() {
                 <Slider
                   className="max-w-md"
                   classNames={{
-                    label: "text-white/80",
-                    value: "text-white",
-                    track: "bg-white/20",
-                    filler: "bg-white/70",
+                    label: "text-fg-muted",
+                    value: "text-fg",
+                    track: "bg-surface-2",
+                    filler: "bg-brand",
                   }}
                   label="Speed Limit (km/h)"
                   maxValue={120}
@@ -261,12 +273,16 @@ export default function CamerasPage() {
                 />
                 <Input
                   classNames={{
-                    label: "text-white/80",
-                    input: "text-white",
-                    inputWrapper: "bg-white/10 border-white/20",
-                    description: "text-white/70",
+                    label: "text-fg-muted",
+                    input: "text-fg",
+                    inputWrapper: "bg-surface-2 border-border",
+                    description: "text-fg-muted",
                   }}
-                  description="For speed calculation calibration"
+                  description={
+                    selected.homography_points
+                      ? "Fallback only — this camera is calibrated, so perspective-corrected speed is used instead"
+                      : "Flat estimate — calibrate this camera below for perspective-corrected speed"
+                  }
                   label="Pixels Per Meter (PPM)"
                   type="number"
                   value={String(formState.pixels_per_meter ?? 25.5)}
@@ -277,26 +293,38 @@ export default function CamerasPage() {
                     }))
                   }
                 />
+                <div
+                  className={`text-xs px-3 py-2 rounded-lg border ${
+                    selected.homography_points
+                      ? "text-success bg-success/10 border-success/30"
+                      : "text-fg-muted/70 bg-surface-2/40 border-border"
+                  }`}
+                >
+                  {selected.homography_points
+                    ? "✓ Calibrated — using perspective-corrected speed"
+                    : "Not calibrated — using flat Pixels Per Meter estimate"}
+                </div>
               </div>
             </div>
 
             {saveMsg && (
               <p
-                className={`mt-4 text-sm px-3 py-2 rounded-lg ${saveMsg.includes("success") || saveMsg.includes("Connected") ? "text-green-400 bg-green-900/30 border border-green-500/30" : "text-red-400 bg-red-900/30 border border-red-500/30"}`}
+                className={`mt-4 text-sm px-3 py-2 rounded-lg ${saveMsg.includes("success") || saveMsg.includes("Connected") ? "text-success bg-success/10 border border-success/30" : "text-danger bg-danger/10 border border-danger/30"}`}
               >
                 {saveMsg}
               </p>
             )}
 
-            <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-white/10">
+            <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-border">
               <Button
-                className="bg-white/20 backdrop-blur-md text-white font-semibold hover:bg-white/30 border border-white/20 shadow-lg"
+                className="bg-surface-2/80 backdrop-blur-md text-fg font-semibold hover:bg-surface-2 border border-border shadow-lg"
                 onClick={testConnection}
               >
                 Test Connection
               </Button>
               <Button
-                className="bg-white text-[#1B1931] font-semibold hover:bg-white/90 shadow-lg"
+                className="font-semibold shadow-lg"
+                color="primary"
                 isLoading={saving}
                 onClick={saveCamera}
               >
@@ -308,25 +336,52 @@ export default function CamerasPage() {
       )}
 
       {/* Calibration Tool */}
-      <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl mt-6">
-        <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
-          <h3 className="text-xl font-bold text-white">Camera Calibration</h3>
+      <Card className="bg-surface/80 backdrop-blur-md border border-border shadow-xl mt-6">
+        <CardHeader className="bg-surface-2/60 backdrop-blur-sm px-4 py-3 border-b border-border">
+          <h3 className="text-xl font-heading font-bold text-fg">
+            Camera Calibration
+          </h3>
         </CardHeader>
         <CardBody className="p-6">
-          <p className="text-white/80 mb-4">
+          <p className="text-fg-muted mb-4">
             Use this tool to calibrate camera perspective and set reference
-            points for accurate speed detection.
+            points for accurate, perspective-corrected speed detection.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Button className="bg-white/20 backdrop-blur-md text-white font-semibold hover:bg-white/30 border border-white/20 shadow-lg">
+            <Button
+              className="bg-surface-2/80 backdrop-blur-md text-fg font-semibold hover:bg-surface-2 border border-border shadow-lg"
+              isDisabled={!selected}
+              onClick={() => setCalibrationOpen(true)}
+            >
               Open Calibration Tool
             </Button>
-            <Button className="bg-white/20 backdrop-blur-md text-white font-semibold hover:bg-white/30 border border-white/20 shadow-lg">
+            <Button
+              className="bg-surface-2/80 backdrop-blur-md text-fg font-semibold hover:bg-surface-2 border border-border shadow-lg"
+              onClick={() => setGuideOpen(true)}
+            >
               View Calibration Guide
             </Button>
           </div>
         </CardBody>
       </Card>
+
+      {selected && (
+        <CalibrationTool
+          cameraId={selected.id}
+          cameraName={selected.name}
+          existing={selected.homography_points}
+          isOpen={calibrationOpen}
+          onClose={() => setCalibrationOpen(false)}
+          onSaved={() => {
+            setCalibrationOpen(false);
+            fetchCameras();
+          }}
+        />
+      )}
+      <CalibrationGuide
+        isOpen={guideOpen}
+        onClose={() => setGuideOpen(false)}
+      />
     </div>
   );
 }

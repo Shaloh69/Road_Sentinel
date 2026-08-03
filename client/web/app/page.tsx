@@ -3,12 +3,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "@heroui/link";
 import { Button } from "@heroui/button";
+import { addToast } from "@heroui/toast";
 
 import { StatCard } from "@/components/stat-card";
 import { VideoFeed } from "@/components/video-feed";
 import { AlertCard } from "@/components/alert-card";
 import { CameraStatus } from "@/components/camera-status";
 import { getSocket } from "@/lib/socket";
+import { playAlertSound } from "@/lib/settings";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -64,6 +66,7 @@ interface Incident {
   timestamp: string;
   status: string;
   confidence?: number;
+  metadata?: { is_heuristic?: boolean } | null;
 }
 
 export default function Home() {
@@ -111,11 +114,30 @@ export default function Home() {
   }, [fetchAll]);
 
   // WebSocket real-time
+  const hasDisconnectedOnce = useRef(false);
+
   useEffect(() => {
     const socket = getSocket();
 
-    socket.on("connect", () => setWsConnected(true));
-    socket.on("disconnect", () => setWsConnected(false));
+    socket.on("connect", () => {
+      setWsConnected(true);
+      if (hasDisconnectedOnce.current) {
+        addToast({
+          title: "Reconnected",
+          description: "Live updates restored",
+          color: "success",
+        });
+      }
+    });
+    socket.on("disconnect", () => {
+      setWsConnected(false);
+      hasDisconnectedOnce.current = true;
+      addToast({
+        title: "Connection lost",
+        description: "Falling back to 30s polling — retrying live updates",
+        color: "danger",
+      });
+    });
 
     socket.emit("subscribe_incidents");
 
@@ -128,6 +150,15 @@ export default function Home() {
         setSummary((prev) =>
           prev ? { ...prev, incidents_today: prev.incidents_today + 1 } : prev,
         );
+        addToast({
+          title: `${inc.severity.toUpperCase()} incident — ${inc.camera_name ?? inc.camera_id}`,
+          description: inc.title,
+          color: inc.severity === "critical" ? "danger" : "warning",
+          timeout: inc.severity === "critical" ? 0 : 6000,
+        });
+        if (inc.severity === "critical" || inc.severity === "high") {
+          playAlertSound();
+        }
       }
     });
 
@@ -167,17 +198,17 @@ export default function Home() {
     <div className="min-h-screen p-6">
       <div className="mb-8">
         <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-4xl font-bold text-white">Dashboard</h1>
+          <h1 className="text-4xl font-heading font-bold text-fg">Dashboard</h1>
           <div
-            className={`w-2 h-2 rounded-full ${wsConnected ? "bg-green-400 animate-pulse" : "bg-gray-500"}`}
+            className={`w-2 h-2 rounded-full ${wsConnected ? "bg-success animate-pulse" : "bg-fg-muted/50"}`}
             title={wsConnected ? "Real-time connected" : "Polling mode"}
           />
         </div>
-        <p className="text-white/70">
+        <p className="text-fg-muted">
           Real-time traffic monitoring — Barangay Busay, Cebu
         </p>
         {error && (
-          <p className="mt-2 text-sm text-red-400 bg-red-900/30 border border-red-500/30 px-3 py-2 rounded-lg">
+          <p className="mt-2 text-sm text-danger bg-danger/10 border border-danger/30 px-3 py-2 rounded-lg">
             ⚠ {error}
           </p>
         )}
@@ -266,9 +297,11 @@ export default function Home() {
       {/* Live Feeds */}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold text-white">Live Camera Feeds</h2>
+          <h2 className="text-2xl font-heading font-bold text-fg">
+            Live Camera Feeds
+          </h2>
           <Link href="/monitor">
-            <Button className="bg-white text-[#1B1931] font-semibold hover:bg-white/90 shadow-lg">
+            <Button className="font-semibold shadow-lg" color="primary">
               View All Feeds
             </Button>
           </Link>
@@ -308,7 +341,9 @@ export default function Home() {
       {/* Camera Status & Incidents */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1">
-          <h2 className="text-2xl font-bold text-white mb-4">Camera Status</h2>
+          <h2 className="text-2xl font-heading font-bold text-fg mb-4">
+            Camera Status
+          </h2>
           <div className="space-y-4">
             {cameras.length > 0 ? (
               cameras.map((cam) => (
@@ -350,16 +385,18 @@ export default function Home() {
 
         <div className="lg:col-span-2">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold text-white">Active Incidents</h2>
+            <h2 className="text-2xl font-heading font-bold text-fg">
+              Active Incidents
+            </h2>
             <Link href="/incidents">
-              <Button className="bg-white/20 backdrop-blur-md text-white font-semibold hover:bg-white/30 border border-white/20 shadow-lg">
+              <Button className="bg-surface-2/80 backdrop-blur-md text-fg font-semibold hover:bg-surface-2 border border-border shadow-lg">
                 View All
               </Button>
             </Link>
           </div>
           <div className="space-y-4">
             {incidents.length === 0 && !loading ? (
-              <div className="text-white/50 text-center py-8">
+              <div className="text-fg-muted text-center py-8">
                 No active incidents
               </div>
             ) : (
@@ -374,6 +411,7 @@ export default function Home() {
                       : {}
                   }
                   id={String(inc.id)}
+                  isHeuristic={inc.metadata?.is_heuristic ?? false}
                   severity={inc.severity}
                   timestamp={timeAgo(inc.timestamp)}
                   title={inc.title}

@@ -6,73 +6,88 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * "Night Watch" design tokens (Phase 3 revamp).
+ *
+ * A dark, near-black operations-monitoring base with amber as the single
+ * brand accent. Red is reserved exclusively for critical-incident severity
+ * so it never gets diluted into ordinary chrome — see DESIGN.md. These
+ * tokens are the single source of truth for color/type/motion across the
+ * app; no page should hardcode a hex value directly.
+ */
 @theme {
-  --font-sans: "font", sans-serif;
-  --font-mono: "monospace", monospace;
+  --font-sans: var(--font-sans-raw), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-heading-raw), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-raw), ui-monospace, "SFMono-Regular", monospace;
 
-  /* Road Sentinel Custom Colors */
-  --color-navy-dark: #1b1931;
-  --color-purple-deep: #44174e;
-  --color-purple-burgundy: #862249;
-  --color-mauve-rose: #a34054;
-  --color-peach-orange: #ed9e59;
-  --color-peach-light: #e8bcb8;
+  /* Night Watch palette */
+  --color-bg: #0b0e14;
+  --color-surface: #141922;
+  --color-surface-2: #1b212c;
+  --color-border: #232a38;
+  --color-brand: #f2b33d;
+  --color-brand-foreground: #12151c;
+  --color-success: #3ddc97;
+  --color-warning: #f2994a;
+  --color-danger: #e5484d;
+  --color-info: #5b9df5;
+  --color-fg: #e8eaed;
+  --color-fg-muted: #8a93a6;
 
-  /* Semantic color mappings */
-  --color-primary: var(--color-purple-burgundy);
-  --color-secondary: var(--color-purple-deep);
-  --color-accent: var(--color-peach-orange);
-  --color-background-dark: var(--color-navy-dark);
-  --color-background-light: var(--color-peach-light);
-  --color-text-light: var(--color-peach-light);
-  --color-text-dark: var(--color-navy-dark);
+  /* Motion easings — standard for UI state changes, emphasized for entrances */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
 
-  /* Animations */
-  --animate-blob: blob 7s infinite;
+  --animate-aurora: aurora 18s ease-in-out infinite;
 }
 
-/* Blob animation */
-@keyframes blob {
-  0% {
-    transform: translate(0px, 0px) scale(1);
-  }
-  33% {
-    transform: translate(30px, -50px) scale(1.1);
-  }
-  66% {
-    transform: translate(-20px, 20px) scale(0.9);
-  }
+/* Night Watch aurora — slow, subtle amber/info glow on the near-black base.
+   Much lower amplitude/opacity than a decorative background needs, since
+   this is a 24/7 live-view screen, not a marketing page. */
+@keyframes aurora {
+  0%,
   100% {
-    transform: translate(0px, 0px) scale(1);
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(4%, -6%) scale(1.08);
   }
 }
 
-/* Animation utilities */
-.animate-blob {
-  animation: blob 7s infinite;
+.animate-aurora {
+  animation: aurora 18s ease-in-out infinite;
 }
 
 .animation-delay-2000 {
   animation-delay: 2s;
 }
 
-.animation-delay-3000 {
-  animation-delay: 3s;
-}
-
 .animation-delay-4000 {
   animation-delay: 4s;
 }
 
-/* Grid pattern */
+@media (prefers-reduced-motion: reduce) {
+  .animate-aurora {
+    animation: none;
+  }
+}
+
+/* HUD-style technical grid overlay */
 .bg-grid-pattern {
   background-image:
-    linear-gradient(to right, rgba(237, 158, 89, 0.1) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(237, 158, 89, 0.1) 1px, transparent 1px);
+    linear-gradient(to right, rgba(242, 179, 61, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(242, 179, 61, 0.06) 1px, transparent 1px);
   background-size: 40px 40px;
 }
 
-/* Noise texture */
+/* Subtle noise texture to keep flat dark surfaces from banding */
 .bg-noise {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+/* Route-level page transitions (Framer Motion drives opacity/transform;
+   this just keeps the outgoing/incoming page from causing layout scroll
+   jumps while AnimatePresence swaps them). */
+.page-transition-container {
+  min-height: 100vh;
 }

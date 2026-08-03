@@ -148,21 +148,23 @@ export const VideoFeed = ({
   const displayLatency = frameIntervalMs ?? latency;
 
   return (
-    <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
-      <CardHeader className="flex justify-between items-center bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
+    <Card className="bg-surface/80 backdrop-blur-md border border-border shadow-xl">
+      <CardHeader className="flex justify-between items-center bg-surface-2/60 backdrop-blur-sm px-4 py-3 border-b border-border">
         <div className="flex items-center gap-3">
           <div
-            className={`w-3 h-3 rounded-full ${isLive ? "bg-green-400 animate-pulse shadow-lg shadow-green-400/50" : "bg-gray-400"}`}
+            className={`w-3 h-3 rounded-full ${isLive ? "bg-success animate-pulse shadow-lg shadow-success/50" : "bg-fg-muted/40"}`}
           />
           <div>
-            <h3 className="text-lg font-bold text-white">{cameraName}</h3>
-            <p className="text-xs text-white/70">ID: {cameraId}</p>
+            <h3 className="text-lg font-heading font-bold text-fg">
+              {cameraName}
+            </h3>
+            <p className="text-xs text-fg-muted font-mono">ID: {cameraId}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {isLive && (
             <Chip
-              className="bg-red-500 text-white text-xs font-semibold"
+              className="bg-danger text-white text-xs font-semibold"
               size="sm"
               variant="solid"
             >
@@ -173,12 +175,12 @@ export const VideoFeed = ({
             <span
               className={`text-xs font-mono font-semibold ${
                 liveFps === null
-                  ? "text-white/50"
+                  ? "text-fg-muted"
                   : liveFps >= 10
-                    ? "text-green-400"
+                    ? "text-success"
                     : liveFps >= 5
-                      ? "text-yellow-400"
-                      : "text-red-400"
+                      ? "text-warning"
+                      : "text-danger"
               }`}
             >
               {displayFps} FPS
@@ -186,18 +188,18 @@ export const VideoFeed = ({
             <span
               className={`text-xs font-mono ${
                 frameIntervalMs === null
-                  ? "text-white/50"
+                  ? "text-fg-muted"
                   : frameIntervalMs < 200
-                    ? "text-green-400"
+                    ? "text-success"
                     : frameIntervalMs < 500
-                      ? "text-yellow-400"
-                      : "text-red-400"
+                      ? "text-warning"
+                      : "text-danger"
               }`}
             >
               {displayLatency}ms
             </span>
             {lastFrameAge > 2 && (
-              <span className="text-xs text-red-400 font-mono">
+              <span className="text-xs text-danger font-mono">
                 {lastFrameAge}s ago
               </span>
             )}
@@ -230,10 +232,10 @@ export const VideoFeed = ({
 
           {/* Placeholder — shown while connecting or offline */}
           {(!hasFrames || !isLive) && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-black/40 via-[#44174E]/30 to-[#862249]/30 backdrop-blur-sm">
+            <div className="absolute inset-0 flex items-center justify-center bg-surface/90 backdrop-blur-sm">
               <div className="text-center">
                 <svg
-                  className="w-20 h-20 text-white mx-auto mb-4 opacity-50"
+                  className="w-20 h-20 text-fg-muted mx-auto mb-4 opacity-50"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -245,7 +247,7 @@ export const VideoFeed = ({
                     strokeWidth={1.5}
                   />
                 </svg>
-                <p className="text-[#E8BCB8] text-sm">
+                <p className="text-fg-muted text-sm">
                   {isLive ? "Connecting…" : "No Signal"}
                 </p>
               </div>
@@ -257,7 +259,7 @@ export const VideoFeed = ({
             boundingBoxes.map((box) => (
               <div
                 key={box.id}
-                className="absolute border-2 border-[#ED9E59] rounded"
+                className="absolute border-2 border-brand rounded"
                 style={{
                   left: `${box.x}%`,
                   top: `${box.y}%`,
@@ -265,7 +267,7 @@ export const VideoFeed = ({
                   height: `${box.height}%`,
                 }}
               >
-                <div className="absolute -top-6 left-0 bg-[#ED9E59] text-[#1B1931] px-2 py-0.5 rounded text-xs font-bold">
+                <div className="absolute -top-6 left-0 bg-brand text-brand-foreground px-2 py-0.5 rounded text-xs font-bold font-mono">
                   {box.label} {(box.confidence * 100).toFixed(0)}%
                   {box.speed && ` • ${box.speed} km/h`}
                 </div>
@@ -274,8 +276,8 @@ export const VideoFeed = ({
 
           {/* Detection count overlay */}
           {showBoundingBoxes && boundingBoxes.length > 0 && (
-            <div className="absolute top-4 left-4 bg-[#1B1931] bg-opacity-80 px-3 py-2 rounded-lg border border-[#ED9E59]">
-              <p className="text-[#ED9E59] text-sm font-bold">
+            <div className="absolute top-4 left-4 bg-surface/90 px-3 py-2 rounded-lg border border-brand">
+              <p className="text-brand text-sm font-bold">
                 {boundingBoxes.length} Vehicle
                 {boundingBoxes.length !== 1 ? "s" : ""} Detected
               </p>
@@ -284,11 +286,11 @@ export const VideoFeed = ({
 
           {/* Fullscreen toggle */}
           <button
-            className="absolute bottom-4 right-4 bg-[#1B1931] bg-opacity-80 p-2 rounded-lg hover:bg-opacity-100 transition-all border border-[#44174E] hover:border-[#ED9E59]"
+            className="absolute bottom-4 right-4 bg-surface/90 p-2 rounded-lg hover:bg-surface transition-colors duration-150 ease-standard border border-border hover:border-brand"
             onClick={() => setIsFullscreen(!isFullscreen)}
           >
             <svg
-              className="w-5 h-5 text-[#E8BCB8]"
+              className="w-5 h-5 text-fg-muted"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"

@@ -196,31 +196,31 @@ export default function MonitorPage() {
   return (
     <div className="min-h-screen p-6">
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-white mb-2">Live Monitoring</h1>
-        <p className="text-white/70">
+        <h1 className="text-4xl font-heading font-bold text-fg mb-2">
+          Live Monitoring
+        </h1>
+        <p className="text-fg-muted">
           Real-time MJPEG camera feeds with AI vehicle detection
         </p>
       </div>
 
       {/* Controls */}
-      <Card className="bg-white/10 backdrop-blur-md border border-white/20 mb-6 shadow-xl">
+      <Card className="bg-surface/80 backdrop-blur-md border border-border mb-6 shadow-xl">
         <CardBody className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-6">
               <Switch
-                classNames={{
-                  wrapper: "group-data-[selected=true]:bg-white/30",
-                }}
+                color="primary"
                 isSelected={showBoxes}
                 onValueChange={setShowBoxes}
               >
-                <span className="text-white/80">Bounding Boxes</span>
+                <span className="text-fg-muted">Bounding Boxes</span>
               </Switch>
               <Select
                 className="max-w-xs"
                 classNames={{
-                  label: "text-white/80",
-                  trigger: "bg-white/10 border-white/20 text-white",
+                  label: "text-fg-muted",
+                  trigger: "bg-surface-2 border-border text-fg",
                 }}
                 defaultSelectedKeys={["grid"]}
                 label="View"
@@ -230,15 +230,17 @@ export default function MonitorPage() {
                 <SelectItem key="single">Single</SelectItem>
               </Select>
             </div>
-            <div className="flex items-center gap-6 text-sm text-white/70">
+            <div className="flex items-center gap-6 text-sm text-fg-muted">
               <span>
                 Session detections:{" "}
-                <span className="text-white font-bold">{totalDetections}</span>
+                <span className="text-fg font-bold font-mono">
+                  {totalDetections}
+                </span>
               </span>
               {avgSpeedVal !== null && (
                 <span>
                   Avg speed:{" "}
-                  <span className="text-white font-bold">
+                  <span className="text-fg font-bold font-mono">
                     {avgSpeedVal} km/h
                   </span>
                 </span>
@@ -250,7 +252,9 @@ export default function MonitorPage() {
 
       {/* Camera Feeds */}
       {cameras.length === 0 ? (
-        <div className="text-white/50 text-center py-16">Loading cameras…</div>
+        <div className="text-fg-muted/70 text-center py-16">
+          Loading cameras…
+        </div>
       ) : (
         <div
           className={`grid gap-6 mb-6 ${viewMode === "grid" ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1 max-w-3xl mx-auto"}`}
@@ -272,46 +276,48 @@ export default function MonitorPage() {
       )}
 
       {/* Live Detection Log */}
-      <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
+      <Card className="bg-surface/80 backdrop-blur-md border border-border shadow-xl">
         <CardBody className="p-4">
-          <h3 className="text-xl font-bold text-white mb-4">
+          <h3 className="text-xl font-heading font-bold text-fg mb-4">
             Live Detection Log
-            <span className="ml-3 text-sm font-normal text-white/50">
+            <span className="ml-3 text-sm font-normal text-fg-muted/70">
               (real-time via WebSocket)
             </span>
           </h3>
           <div ref={logRef} className="space-y-2 max-h-72 overflow-y-auto pr-1">
             {log.length === 0 ? (
-              <p className="text-white/40 text-center py-8">
+              <p className="text-fg-muted/70 text-center py-8">
                 Waiting for detections — camera_sender must be running
               </p>
             ) : (
               log.map((entry) => (
                 <div
                   key={entry.key}
-                  className="flex justify-between items-center p-3 bg-white/10 rounded-lg border border-white/10"
+                  className="flex justify-between items-center p-3 bg-surface-2/60 rounded-lg border border-border"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse flex-shrink-0" />
-                    <span className="text-white/60 text-sm truncate max-w-[140px]">
+                    <div className="w-2 h-2 bg-success rounded-full animate-pulse flex-shrink-0" />
+                    <span className="text-fg-muted text-sm truncate max-w-[140px]">
                       {entry.camera_name}
                     </span>
-                    <span className="text-white font-semibold capitalize">
+                    <span className="text-fg font-semibold capitalize">
                       {entry.vehicle_type}
                     </span>
                   </div>
                   <div className="flex items-center gap-4 text-sm flex-shrink-0">
                     {entry.speed != null && (
                       <span
-                        className={`font-bold ${entry.speed > 60 ? "text-red-400" : "text-white"}`}
+                        className={`font-bold font-mono ${entry.speed > 60 ? "text-warning" : "text-fg"}`}
                       >
                         {entry.speed} km/h
                       </span>
                     )}
-                    <span className="text-white/60">
+                    <span className="text-fg-muted font-mono">
                       {(entry.confidence * 100).toFixed(0)}%
                     </span>
-                    <span className="text-white/40 text-xs">{entry.time}</span>
+                    <span className="text-fg-muted/70 text-xs font-mono">
+                      {entry.time}
+                    </span>
                   </div>
                 </div>
               ))

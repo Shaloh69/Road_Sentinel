@@ -30,6 +30,25 @@ export const Sidebar = () => {
       ),
     },
     {
+      label: "Public Status",
+      href: "/status",
+      icon: (
+        <svg
+          className="w-5 h-5"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+          />
+        </svg>
+      ),
+    },
+    {
       label: "Live Monitor",
       href: "/monitor",
       icon: (
@@ -193,47 +212,30 @@ export const Sidebar = () => {
         </svg>
       ),
     },
-    {
-      label: "Documentation",
-      href: "/docs",
-      icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-          />
-        </svg>
-      ),
-    },
   ];
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 bg-[#1B1931]/80 backdrop-blur-xl border-r border-white/10 shadow-2xl z-50 flex flex-col">
+    <aside className="fixed left-0 top-0 h-screen w-64 bg-surface/90 backdrop-blur-xl border-r border-border shadow-2xl z-50 flex flex-col">
       {/* Logo Section */}
-      <div className="p-6 border-b border-white/10">
+      <div className="p-6 border-b border-border">
         <NextLink className="flex items-center gap-3" href="/">
-          <div className="bg-gradient-to-br from-[#ED9E59] to-[#A34054] p-2 rounded-lg shadow-lg">
-            <Logo className="w-8 h-8 text-white" />
+          <div className="bg-brand p-2 rounded-lg shadow-lg shadow-brand/20">
+            <Logo className="w-8 h-8 text-brand-foreground" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">Road Sentinel</h1>
-            <p className="text-xs text-white/70">Traffic Monitoring</p>
+            <h1 className="text-xl font-heading font-bold text-fg tracking-tight">
+              Road Sentinel
+            </h1>
+            <p className="text-xs text-fg-muted">Traffic Monitoring</p>
           </div>
         </NextLink>
       </div>
 
       {/* System Status */}
-      <div className="px-6 py-4 border-b border-white/10">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 backdrop-blur-sm">
-          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse shadow-lg shadow-green-400/50" />
-          <span className="text-sm text-white font-medium">System Online</span>
+      <div className="px-6 py-4 border-b border-border">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-2">
+          <div className="w-2 h-2 bg-success rounded-full animate-pulse shadow-lg shadow-success/50" />
+          <span className="text-sm text-fg font-medium">System Online</span>
         </div>
       </div>
 
@@ -247,17 +249,19 @@ export const Sidebar = () => {
               <li key={item.href}>
                 <NextLink
                   className={`
-                    flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200
+                    flex items-center gap-3 px-4 py-3 rounded-lg transition-colors duration-150 ease-standard
                     ${
                       isActive
-                        ? "bg-white text-[#1B1931] shadow-lg font-semibold"
-                        : "text-white/80 hover:bg-white/10 hover:text-white"
+                        ? "bg-brand text-brand-foreground shadow-lg shadow-brand/10 font-semibold"
+                        : "text-fg-muted hover:bg-surface-2 hover:text-fg"
                     }
                   `}
                   href={item.href}
                 >
                   <span
-                    className={isActive ? "text-[#ED9E59]" : "text-[#ED9E59]"}
+                    className={
+                      isActive ? "text-brand-foreground" : "text-brand"
+                    }
                   >
                     {item.icon}
                   </span>
@@ -270,12 +274,12 @@ export const Sidebar = () => {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-white/10">
+      <div className="p-4 border-t border-border">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-sm text-white/80">Theme</span>
+          <span className="text-sm text-fg-muted">Theme</span>
           <ThemeSwitch />
         </div>
-        <div className="text-xs text-white/60 text-center">
+        <div className="text-xs text-fg-muted/70 text-center">
           <p>Barangay Busay, Cebu</p>
           <p className="mt-1">v1.0.0</p>
         </div>

@@ -6,6 +6,7 @@ import { Button } from "@heroui/button";
 
 import { AlertCard } from "@/components/alert-card";
 import { getSocket } from "@/lib/socket";
+import { playAlertSound } from "@/lib/settings";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -46,6 +47,7 @@ interface Incident {
   timestamp: string;
   status: "active" | "resolved" | "false_alarm" | "investigating";
   confidence?: number;
+  metadata?: { is_heuristic?: boolean } | null;
 }
 
 type FilterStatus =
@@ -99,6 +101,7 @@ export default function IncidentsPage() {
 
       if (inc.id != null && !incidentIds.current.has(inc.id)) {
         incidentIds.current.add(inc.id);
+        if (inc.severity === "critical") playAlertSound();
         // Only prepend if we're viewing "all" or "active" (new incidents start as active)
         if (filter === "all" || filter === "active") {
           setIncidents((prev) => [inc, ...prev]);
@@ -140,14 +143,14 @@ export default function IncidentsPage() {
   return (
     <div className="min-h-screen p-6">
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-white mb-2">
+        <h1 className="text-4xl font-heading font-bold text-fg mb-2">
           Incidents & Alerts
         </h1>
-        <p className="text-white/70">
+        <p className="text-fg-muted">
           Real-time incident monitoring and alert management
         </p>
         {error && (
-          <p className="mt-2 text-sm text-red-400 bg-red-900/30 border border-red-500/30 px-3 py-2 rounded-lg">
+          <p className="mt-2 text-sm text-danger bg-danger/10 border border-danger/30 px-3 py-2 rounded-lg">
             ⚠ {error}
           </p>
         )}
@@ -163,13 +166,13 @@ export default function IncidentsPage() {
         ].map((s) => (
           <Card
             key={s.label}
-            className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl"
+            className="bg-surface/80 backdrop-blur-md border border-border shadow-xl"
           >
             <CardBody className="p-4">
-              <p className="text-sm text-white/80 font-medium uppercase">
+              <p className="text-sm text-fg-muted font-medium uppercase">
                 {s.label}
               </p>
-              <p className="text-3xl font-bold text-white mt-1">
+              <p className="text-3xl font-heading font-bold text-fg mt-1">
                 {loading ? "—" : s.value}
               </p>
             </CardBody>
@@ -184,8 +187,8 @@ export default function IncidentsPage() {
             key={f}
             className={
               filter === f
-                ? "bg-white text-[#1B1931] font-semibold shadow-lg"
-                : "bg-white/20 text-white border border-white/20 hover:bg-white/30"
+                ? "bg-brand text-brand-foreground font-semibold shadow-lg"
+                : "bg-surface-2/60 text-fg border border-border hover:bg-surface-2"
             }
             size="sm"
             onClick={() => setFilter(f)}
@@ -198,11 +201,11 @@ export default function IncidentsPage() {
       {/* Incidents list */}
       <div className="space-y-4">
         {loading ? (
-          <div className="text-white/50 text-center py-12">
+          <div className="text-fg-muted/70 text-center py-12">
             Loading incidents…
           </div>
         ) : incidents.length === 0 ? (
-          <div className="text-white/50 text-center py-12">
+          <div className="text-fg-muted/70 text-center py-12">
             No incidents found
           </div>
         ) : (
@@ -217,6 +220,7 @@ export default function IncidentsPage() {
                     : {}
                 }
                 id={String(inc.id)}
+                isHeuristic={inc.metadata?.is_heuristic ?? false}
                 severity={inc.severity}
                 timestamp={timeAgo(inc.timestamp)}
                 title={inc.title}
@@ -225,21 +229,23 @@ export default function IncidentsPage() {
               {inc.status === "active" && (
                 <div className="flex gap-2 mt-1 ml-1">
                   <Button
-                    className="bg-green-600/80 text-white text-xs hover:bg-green-600"
+                    className="text-xs"
+                    color="success"
                     size="sm"
                     onClick={() => updateStatus(inc.id, "resolved")}
                   >
                     Resolve
                   </Button>
                   <Button
-                    className="bg-white/20 text-white text-xs hover:bg-white/30 border border-white/20"
+                    className="bg-surface-2/60 text-fg text-xs hover:bg-surface-2 border border-border"
                     size="sm"
                     onClick={() => updateStatus(inc.id, "false_alarm")}
                   >
                     False Alarm
                   </Button>
                   <Button
-                    className="bg-yellow-600/80 text-white text-xs hover:bg-yellow-600"
+                    className="text-xs"
+                    color="warning"
                     size="sm"
                     onClick={() => updateStatus(inc.id, "investigating")}
                   >

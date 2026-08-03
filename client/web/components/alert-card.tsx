@@ -11,13 +11,16 @@ interface AlertCardProps {
   cameraId: string;
   details?: Record<string, string | number>;
   imageUrl?: string;
+  isHeuristic?: boolean;
 }
 
-const severityColors = {
-  low: "bg-blue-500",
-  medium: "bg-yellow-500",
-  high: "bg-orange-500",
-  critical: "bg-red-500",
+// RAG-safe severity mapping: red is reserved for "critical" only, so it
+// never gets diluted into ordinary chrome elsewhere in the app.
+const severityColors: Record<AlertCardProps["severity"], string> = {
+  low: "bg-info text-white",
+  medium: "bg-brand text-brand-foreground",
+  high: "bg-warning text-brand-foreground",
+  critical: "bg-danger text-white",
 };
 
 const typeIcons = {
@@ -93,27 +96,42 @@ export const AlertCard = ({
   cameraId,
   details,
   imageUrl: _imageUrl,
+  isHeuristic = false,
 }: AlertCardProps) => {
   return (
-    <Card className="bg-white/10 backdrop-blur-md border-l-4 border-l-white/30 hover:border-l-white transition-all shadow-lg hover:bg-white/15">
+    <Card className="bg-surface/80 backdrop-blur-md border-l-4 border-l-border hover:border-l-brand transition-colors duration-150 ease-standard shadow-lg hover:bg-surface-2/80">
       <CardBody className="p-4">
         <div className="flex gap-4">
           {/* Alert Icon */}
           <div
             className={`${severityColors[severity]} p-3 rounded-lg h-fit shadow-lg`}
           >
-            <div className="text-white">{typeIcons[type]}</div>
+            {typeIcons[type]}
           </div>
 
           {/* Alert Content */}
           <div className="flex-1">
             <div className="flex justify-between items-start mb-2">
               <div>
-                <h3 className="text-lg font-bold text-white">{title}</h3>
-                <p className="text-sm text-white/80 mt-1">{description}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-lg font-heading font-bold text-fg">
+                    {title}
+                  </h3>
+                  {isHeuristic && (
+                    <Chip
+                      className="bg-surface-2 text-fg-muted text-[10px] border border-border"
+                      size="sm"
+                      title="No trained crash/incident model is deployed yet — this came from a brightness-based heuristic placeholder, not a real detection."
+                      variant="flat"
+                    >
+                      ESTIMATED — no model trained
+                    </Chip>
+                  )}
+                </div>
+                <p className="text-sm text-fg-muted mt-1">{description}</p>
               </div>
               <Chip
-                className={`${severityColors[severity]} text-white text-xs font-semibold uppercase`}
+                className={`${severityColors[severity]} text-xs font-semibold uppercase`}
                 size="sm"
                 variant="solid"
               >
@@ -123,13 +141,13 @@ export const AlertCard = ({
 
             {/* Details */}
             {details && (
-              <div className="grid grid-cols-2 gap-2 mt-3 p-3 bg-white/5 rounded-lg backdrop-blur-sm">
+              <div className="grid grid-cols-2 gap-2 mt-3 p-3 bg-surface-2/60 rounded-lg backdrop-blur-sm">
                 {Object.entries(details).map(([key, value]) => (
                   <div key={key} className="flex justify-between">
-                    <span className="text-xs text-white/60 capitalize">
+                    <span className="text-xs text-fg-muted capitalize">
                       {key}:
                     </span>
-                    <span className="text-xs text-white font-semibold">
+                    <span className="text-xs text-fg font-semibold font-mono">
                       {value}
                     </span>
                   </div>
@@ -138,8 +156,8 @@ export const AlertCard = ({
             )}
 
             {/* Footer */}
-            <div className="flex justify-between items-center mt-3 pt-3 border-t border-white/10">
-              <div className="flex items-center gap-2 text-xs text-white/70">
+            <div className="flex justify-between items-center mt-3 pt-3 border-t border-border">
+              <div className="flex items-center gap-2 text-xs text-fg-muted">
                 <svg
                   className="w-4 h-4"
                   fill="none"
@@ -155,7 +173,7 @@ export const AlertCard = ({
                 </svg>
                 <span>{cameraId}</span>
               </div>
-              <div className="flex items-center gap-2 text-xs text-[#E8BCB8]">
+              <div className="flex items-center gap-2 text-xs text-fg-muted font-mono">
                 <svg
                   className="w-4 h-4"
                   fill="none"

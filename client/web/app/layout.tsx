@@ -5,9 +5,10 @@ import clsx from "clsx";
 import { Providers } from "./providers";
 
 import { siteConfig } from "@/config/site";
-import { fontSans } from "@/config/fonts";
+import { fontHeading, fontMono, fontSans } from "@/config/fonts";
 import { Sidebar } from "@/components/sidebar";
 import { AnimatedBackground } from "@/components/animated-background";
+import { PageTransition } from "@/components/page-transition";
 
 export const metadata: Metadata = {
   title: {
@@ -22,8 +23,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "white" },
-    { media: "(prefers-color-scheme: dark)", color: "black" },
+    { media: "(prefers-color-scheme: light)", color: "#f4f5f7" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b0e14" },
   ],
 };
 
@@ -39,13 +40,17 @@ export default function RootLayout({
         className={clsx(
           "min-h-screen text-foreground font-sans antialiased",
           fontSans.variable,
+          fontHeading.variable,
+          fontMono.variable,
         )}
       >
         <Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>
           <AnimatedBackground />
           <Sidebar />
           <div className="ml-64 min-h-screen relative">
-            <main className="w-full">{children}</main>
+            <main className="w-full">
+              <PageTransition>{children}</PageTransition>
+            </main>
           </div>
         </Providers>
       </body>

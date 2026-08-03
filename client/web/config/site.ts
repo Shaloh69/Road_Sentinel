@@ -63,13 +63,8 @@ export const siteConfig = {
       label: "Settings",
       href: "/settings",
     },
-    {
-      label: "Documentation",
-      href: "/docs",
-    },
   ],
   links: {
     github: "https://github.com/Shaloh69/Road_Sentinel",
-    docs: "/docs",
   },
 };

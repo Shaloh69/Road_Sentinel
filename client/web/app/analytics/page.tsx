@@ -7,6 +7,7 @@ import { Button } from "@heroui/button";
 import { Progress } from "@heroui/progress";
 
 import { StatCard } from "@/components/stat-card";
+import { downloadCsv, printPdfReport } from "@/lib/export";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -142,27 +143,83 @@ export default function AnalyticsPage() {
 
   const maxHourly = Math.max(...hourly.map((r) => r.total_vehicles), 1);
 
+  const exportCsv = () => {
+    downloadCsv(
+      `road-sentinel-analytics-${timeRange}-${new Date().toISOString().slice(0, 10)}`,
+      [
+        "hour",
+        "total_vehicles",
+        "avg_speed_kmh",
+        "car",
+        "truck",
+        "bus",
+        "motorcycle",
+        "bicycle",
+      ],
+      hourly.map((r) => [
+        new Date(r.hour_timestamp).toISOString(),
+        r.total_vehicles,
+        r.avg_speed ?? "",
+        r.car_count,
+        r.truck_count,
+        r.bus_count,
+        r.motorcycle_count,
+        r.bicycle_count,
+      ]),
+    );
+  };
+
+  const exportPdf = () => {
+    printPdfReport(`Analytics — ${timeRange}`, [
+      {
+        heading: "Summary",
+        rows: [
+          ["Total vehicles", summary?.vehicles_today ?? 0],
+          [
+            "Average speed",
+            summary?.average_speed ? `${summary.average_speed} km/h` : "N/A",
+          ],
+          ["Peak hour", peakLabel],
+          ["Incidents today", summary?.incidents_today ?? 0],
+        ],
+      },
+      {
+        heading: "Vehicle Types",
+        rows: vehicleTypes.map((v) => [
+          v.type,
+          `${v.count.toLocaleString()} (${v.percentage}%)`,
+        ]),
+      },
+      {
+        heading: "Speed Distribution",
+        rows: speeds.map((s) => [speedBucketLabel(s.speed_bucket), s.count]),
+      },
+    ]);
+  };
+
   return (
     <div className="min-h-screen p-6">
       <div className="mb-6">
-        <h1 className="text-4xl font-bold text-white mb-2">Analytics</h1>
-        <p className="text-white/70">Traffic statistics and trends analysis</p>
+        <h1 className="text-4xl font-heading font-bold text-fg mb-2">
+          Analytics
+        </h1>
+        <p className="text-fg-muted">Traffic statistics and trends analysis</p>
         {error && (
-          <p className="mt-2 text-sm text-red-400 bg-red-900/30 border border-red-500/30 px-3 py-2 rounded-lg">
+          <p className="mt-2 text-sm text-danger bg-danger/10 border border-danger/30 px-3 py-2 rounded-lg">
             ⚠ {error}
           </p>
         )}
       </div>
 
       {/* Time Range + Export */}
-      <Card className="bg-white/10 backdrop-blur-md border border-white/20 mb-6 shadow-xl">
+      <Card className="bg-surface/80 backdrop-blur-md border border-border mb-6 shadow-xl">
         <CardBody className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <Select
               className="max-w-xs"
               classNames={{
-                label: "text-white/80",
-                trigger: "bg-white/10 border-white/20 text-white",
+                label: "text-fg-muted",
+                trigger: "bg-surface-2 border-border text-fg",
               }}
               defaultSelectedKeys={["today"]}
               label="Time Range"
@@ -174,10 +231,19 @@ export default function AnalyticsPage() {
               <SelectItem key="year">This Year</SelectItem>
             </Select>
             <div className="flex gap-2">
-              <Button className="bg-white/20 backdrop-blur-md text-white font-semibold hover:bg-white/30 border border-white/20 shadow-lg">
+              <Button
+                className="bg-surface-2/80 backdrop-blur-md text-fg font-semibold hover:bg-surface-2 border border-border shadow-lg"
+                isDisabled={loading || hourly.length === 0}
+                onClick={exportPdf}
+              >
                 Export PDF
               </Button>
-              <Button className="bg-white text-[#1B1931] font-semibold hover:bg-white/90 shadow-lg">
+              <Button
+                className="font-semibold shadow-lg"
+                color="primary"
+                isDisabled={loading || hourly.length === 0}
+                onClick={exportCsv}
+              >
                 Export CSV
               </Button>
             </div>
@@ -220,36 +286,36 @@ export default function AnalyticsPage() {
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Vehicle Types */}
-        <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
-          <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
-            <h3 className="text-xl font-bold text-white">
+        <Card className="bg-surface/80 backdrop-blur-md border border-border shadow-xl">
+          <CardHeader className="bg-surface-2/60 backdrop-blur-sm px-4 py-3 border-b border-border">
+            <h3 className="text-xl font-heading font-bold text-fg">
               Vehicle Types Distribution
             </h3>
           </CardHeader>
           <CardBody className="p-6">
             {loading ? (
-              <div className="text-white/50 text-center py-8">Loading…</div>
+              <div className="text-fg-muted/70 text-center py-8">Loading…</div>
             ) : (
               <div className="space-y-4">
                 {vehicleTypes.map((v, i) => (
                   <div key={i} className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-white/80 font-medium">
+                      <span className="text-fg-muted font-medium">
                         {v.type}
                       </span>
-                      <span className="text-white font-bold">
+                      <span className="text-fg font-bold font-mono">
                         {v.count.toLocaleString()}
                       </span>
                     </div>
                     <Progress
                       className="h-3"
                       classNames={{
-                        indicator: "bg-white/70",
-                        track: "bg-white/20",
+                        indicator: "bg-brand",
+                        track: "bg-surface-2",
                       }}
                       value={v.percentage}
                     />
-                    <span className="text-xs text-white/70">
+                    <span className="text-xs text-fg-muted font-mono">
                       {v.percentage}%
                     </span>
                   </div>
@@ -260,31 +326,36 @@ export default function AnalyticsPage() {
         </Card>
 
         {/* Speed Distribution */}
-        <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
-          <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
-            <h3 className="text-xl font-bold text-white">Speed Distribution</h3>
+        <Card className="bg-surface/80 backdrop-blur-md border border-border shadow-xl">
+          <CardHeader className="bg-surface-2/60 backdrop-blur-sm px-4 py-3 border-b border-border">
+            <h3 className="text-xl font-heading font-bold text-fg">
+              Speed Distribution
+            </h3>
           </CardHeader>
           <CardBody className="p-6">
             {loading ? (
-              <div className="text-white/50 text-center py-8">Loading…</div>
+              <div className="text-fg-muted/70 text-center py-8">Loading…</div>
             ) : speeds.length === 0 ? (
-              <div className="text-white/50 text-center py-8">
+              <div className="text-fg-muted/70 text-center py-8">
                 No speed data yet
               </div>
             ) : (
               <div className="space-y-4">
                 {speeds.map((s, i) => {
                   const pct = Math.round((s.count / speedTotal) * 100);
+                  // Speed buckets escalate success → info → brand → warning →
+                  // danger; danger is only hit by the top (90+ km/h) bucket,
+                  // keeping red reserved for genuinely severe readings.
                   const color =
                     s.speed_bucket < 30
-                      ? "bg-green-500"
+                      ? "bg-success"
                       : s.speed_bucket < 50
-                        ? "bg-blue-500"
+                        ? "bg-info"
                         : s.speed_bucket < 70
-                          ? "bg-yellow-500"
+                          ? "bg-brand"
                           : s.speed_bucket < 90
-                            ? "bg-orange-500"
-                            : "bg-red-500";
+                            ? "bg-warning"
+                            : "bg-danger";
 
                   return (
                     <div key={i} className="flex items-center gap-3">
@@ -292,10 +363,10 @@ export default function AnalyticsPage() {
                         className={`w-4 h-4 rounded-full flex-shrink-0 ${color}`}
                       />
                       <div className="flex-1 flex justify-between items-center">
-                        <span className="text-white/80">
+                        <span className="text-fg-muted">
                           {speedBucketLabel(s.speed_bucket)}
                         </span>
-                        <span className="text-white font-bold">
+                        <span className="text-fg font-bold font-mono">
                           {s.count} ({pct}%)
                         </span>
                       </div>
@@ -309,15 +380,17 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Hourly Traffic */}
-      <Card className="bg-white/10 backdrop-blur-md border border-white/20 shadow-xl">
-        <CardHeader className="bg-white/10 backdrop-blur-sm px-4 py-3 border-b border-white/10">
-          <h3 className="text-xl font-bold text-white">Hourly Traffic Flow</h3>
+      <Card className="bg-surface/80 backdrop-blur-md border border-border shadow-xl">
+        <CardHeader className="bg-surface-2/60 backdrop-blur-sm px-4 py-3 border-b border-border">
+          <h3 className="text-xl font-heading font-bold text-fg">
+            Hourly Traffic Flow
+          </h3>
         </CardHeader>
         <CardBody className="p-6">
           {loading ? (
-            <div className="text-white/50 text-center py-12">Loading…</div>
+            <div className="text-fg-muted/70 text-center py-12">Loading…</div>
           ) : hourly.length === 0 ? (
-            <div className="text-white/50 text-center py-12">
+            <div className="text-fg-muted/70 text-center py-12">
               No hourly data yet
             </div>
           ) : (
@@ -339,15 +412,17 @@ export default function AnalyticsPage() {
                       style={{ height: "200px" }}
                     >
                       <div
-                        className="w-full bg-gradient-to-t from-white/70 to-white/40 rounded-t-lg hover:from-white/80 hover:to-white/50 transition-all cursor-pointer"
+                        className="w-full bg-gradient-to-t from-brand/70 to-brand/40 rounded-t-lg hover:from-brand/80 hover:to-brand/50 transition-all cursor-pointer"
                         style={{ height: `${heightPct}%` }}
                       >
-                        <span className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-white text-xs font-bold">
+                        <span className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-fg text-xs font-bold font-mono">
                           {row.total_vehicles}
                         </span>
                       </div>
                     </div>
-                    <span className="text-xs text-white/80">{label}</span>
+                    <span className="text-xs text-fg-muted font-mono">
+                      {label}
+                    </span>
                   </div>
                 );
               })}
