@@ -3,6 +3,7 @@ import { query } from "../config/database";
 import { logger } from "../config/logger";
 import { Incident, ApiResponse } from "../types";
 import { io } from "../server";
+import { notifyIncident } from "../services/alert.service";
 
 const router = Router();
 
@@ -113,6 +114,9 @@ router.post("/", async (req: Request, res: Response) => {
     logger.warn(
       `${sevEmoji} INCIDENT [${inc.camera_id}] ${inc.severity?.toUpperCase()} — ${inc.incident_type}: "${inc.title}"`,
     );
+
+    // Fire-and-forget — a slow/broken webhook must never delay the API response.
+    void notifyIncident(saved);
 
     res
       .status(201)

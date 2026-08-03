@@ -106,4 +106,67 @@ router.get("/speed", async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/analytics/violations?date=YYYY-MM-DD&camera_id=
+// Speed violations by hour-of-day bucket (0-23) — built for thesis write-up
+// figures (Phase 2 new feature): "when during the day do speed violations
+// happen" is a more useful chart for a blind-curve safety thesis than a
+// flat speed histogram alone.
+router.get("/violations", async (req: Request, res: Response) => {
+  try {
+    const { date, camera_id } = req.query as Record<string, string>;
+    const day = date || new Date().toISOString().slice(0, 10);
+
+    let sql = `
+      SELECT
+        HOUR(d.timestamp) AS hour,
+        COUNT(*) AS violations,
+        ROUND(AVG(d.speed), 1) AS avg_speed,
+        ROUND(MAX(d.speed), 1) AS max_speed,
+        c.speed_limit AS speed_limit
+      FROM detections d
+      JOIN cameras c ON d.camera_id = c.id
+      WHERE DATE(d.timestamp) = ?
+        AND d.speed IS NOT NULL
+        AND d.speed > c.speed_limit
+    `;
+    const params: (string | number)[] = [day];
+
+    if (camera_id) {
+      sql += " AND d.camera_id = ?";
+      params.push(camera_id);
+    }
+
+    sql += " GROUP BY HOUR(d.timestamp), c.speed_limit ORDER BY hour ASC";
+
+    const rows = await query<
+      {
+        hour: number;
+        violations: number;
+        avg_speed: number;
+        max_speed: number;
+        speed_limit: number;
+      }[]
+    >(sql, params);
+
+    // Fill in all 24 hours (0 violations for hours with no rows) so charts
+    // don't have to special-case missing buckets.
+    const byHour = new Map(rows.map((r) => [r.hour, r]));
+    const filled = Array.from({ length: 24 }, (_, hour) => {
+      const r = byHour.get(hour);
+      return {
+        hour,
+        violations: r?.violations ?? 0,
+        avg_speed: r?.avg_speed ?? null,
+        max_speed: r?.max_speed ?? null,
+      };
+    });
+
+    res.json({ success: true, data: filled, date: day });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch speed violations" });
+  }
+});
+
 export default router;

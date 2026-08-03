@@ -17,18 +17,29 @@ Usage:
 
 import argparse
 import asyncio
+import json
 import logging
+import os
 import signal
 import socket
 import threading
 import time
+import uuid
 from collections import deque
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 import cv2
 import socketio as sio_lib
+
+try:
+    from onvif import ONVIFCamera  # onvif-zeep — optional, only needed for --ir-auto
+    _ONVIF_OK = True
+except ImportError:
+    _ONVIF_OK = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,6 +75,48 @@ INCIDENT_TITLES = {
     "congestion":      "Traffic Congestion",
     "illegal_parking": "Illegal Parking",
 }
+
+
+# ── Adaptive detection sampling (Phase 2) ─────────────────────────────────────
+# Throttles AI-service calls based on recent scene activity instead of a fixed
+# rate, to cut AI-service/network load while the road is empty — the common
+# case for most of the day at a low-traffic blind curve. Never affects the
+# live-view frame push (that stays at full rate regardless — see ai_task/
+# frame_push_loop in run()), and always samples every eligible frame while a
+# vehicle has been seen recently, so speed-tracking continuity is unaffected.
+class AdaptiveSampler:
+    ACTIVE_WINDOW_SECS = 5.0     # sample every frame if a vehicle was seen this recently
+    IDLE_TIERS = [               # (idle_secs_threshold, sample_every_n_frames)
+        (30.0, 3),
+        (120.0, 6),
+        (float("inf"), 10),
+    ]
+
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self._last_vehicle_at = time.monotonic()
+        self._frames_since_ai = 0
+
+    def note_result(self, result: dict) -> None:
+        if result.get("detections"):
+            self._last_vehicle_at = time.monotonic()
+
+    def should_sample(self) -> bool:
+        """Call once per eligible (not-ai_busy) frame; returns whether this frame should go to AI."""
+        self._frames_since_ai += 1
+        if not self.enabled:
+            return True
+
+        idle = time.monotonic() - self._last_vehicle_at
+        if idle < self.ACTIVE_WINDOW_SECS:
+            sample_every_n = 1
+        else:
+            sample_every_n = next(n for threshold, n in self.IDLE_TIERS if idle < threshold)
+
+        if self._frames_since_ai >= sample_every_n:
+            self._frames_since_ai = 0
+            return True
+        return False
 
 # WS-Discovery Probe XML
 _ONVIF_PROBE = (
@@ -279,6 +332,10 @@ class NodeForwarder:
             "description":   inc.get("description", ""),
             "confidence":    inc.get("confidence"),
             "status":        "active",
+            # is_heuristic: True means the incident model isn't trained yet and
+            # this came from IncidentDetector's brightness-variance placeholder,
+            # not a real detection — surfaced so the client can label it as such.
+            "metadata":      {"is_heuristic": bool(inc.get("is_heuristic", False))},
         }
         try:
             async with self._session.post(
@@ -293,6 +350,175 @@ class NodeForwarder:
                     log.debug("[%s] Incident POST %d", self._camera_id, resp.status)
         except Exception as exc:
             log.debug("[%s] Incident forward error: %s", self._camera_id, exc)
+
+
+# ── Recording (Phase 2 — opt-in via --record) ─────────────────────────────────
+# Segments the RTSP stream into fixed-length local video files, uploads each
+# finished segment to the AI service's local media storage, and registers it
+# with Node's `recordings` table. Rotation/upload/POST all happen off the
+# capture loop (fire-and-forget tasks, same pattern as ai_task/frame push)
+# so recording never throttles the live capture rate. No-op when disabled.
+
+class Recorder:
+    def __init__(
+        self,
+        camera_id: str,
+        ai_url: str,
+        node_url: Optional[str],
+        ai_session: aiohttp.ClientSession,
+        node_session: Optional[aiohttp.ClientSession],
+        record_dir: str,
+        segment_secs: float,
+        fps: int,
+    ):
+        self._camera_id    = camera_id
+        self._ai_url       = ai_url.rstrip("/")
+        self._node_url     = node_url.rstrip("/") if node_url else None
+        self._ai_session   = ai_session
+        self._node_session = node_session
+        self._segment_secs = segment_secs
+        self._fps          = fps
+        self._dir           = Path(record_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+        self._writer: Optional[cv2.VideoWriter] = None
+        self._path: Optional[Path] = None
+        self._start_time: Optional[datetime] = None
+        self._frame_size: Optional[tuple] = None
+        self._vehicle_count = 0
+        self._incident_count = 0
+        self._frames_with_vehicle: set = set()  # dedupe within a segment, approx
+
+    def note_result(self, result: dict) -> None:
+        """Called from ai_task with each AI response — accumulates counts for the segment."""
+        if result.get("detections"):
+            self._vehicle_count += 1  # frames-with-a-vehicle, not unique vehicles (no cross-frame ID here)
+        if result.get("incidents"):
+            self._incident_count += len(result["incidents"])
+
+    def add_frame(self, frame) -> None:
+        if self._writer is None:
+            self._start_segment(frame)
+        if self._writer is not None:
+            try:
+                self._writer.write(frame)
+            except Exception as exc:
+                log.warning("[%s] Recording write failed: %s", self._camera_id, exc)
+
+    def _start_segment(self, frame) -> None:
+        h, w = frame.shape[:2]
+        self._frame_size = (w, h)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self._path = self._dir / f"{self._camera_id}_{ts}.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        self._writer = cv2.VideoWriter(str(self._path), fourcc, self._fps, (w, h))
+        self._start_time = datetime.now(timezone.utc)
+        self._vehicle_count = 0
+        self._incident_count = 0
+        log.info("[%s] Recording segment started: %s", self._camera_id, self._path.name)
+
+    async def maybe_rotate(self) -> None:
+        if self._writer is None or self._start_time is None:
+            return
+        elapsed = (datetime.now(timezone.utc) - self._start_time).total_seconds()
+        if elapsed >= self._segment_secs:
+            await self._finish_segment()
+
+    async def close(self) -> None:
+        if self._writer is not None:
+            await self._finish_segment()
+
+    async def _finish_segment(self) -> None:
+        writer, path, start_time = self._writer, self._path, self._start_time
+        vehicle_count, incident_count = self._vehicle_count, self._incident_count
+        w, h = self._frame_size or (0, 0)
+        self._writer = None
+        self._path = None
+        self._start_time = None
+
+        if writer is None or path is None or start_time is None:
+            return
+        writer.release()
+        end_time = datetime.now(timezone.utc)
+        duration = (end_time - start_time).total_seconds()
+
+        # Upload + register happen as a background task — never blocks the caller
+        # (rotation is checked once per captured frame in the main loop).
+        asyncio.create_task(self._upload_and_register(
+            path, start_time, end_time, duration, w, h, vehicle_count, incident_count
+        ))
+
+    async def _upload_and_register(
+        self, path: Path, start_time: datetime, end_time: datetime,
+        duration: float, w: int, h: int, vehicle_count: int, incident_count: int,
+    ) -> None:
+        recording_id = str(uuid.uuid4())
+        try:
+            file_size_mb = path.stat().st_size / (1024 * 1024)
+        except OSError:
+            file_size_mb = None
+
+        video_url = None
+        try:
+            with open(path, "rb") as f:
+                data = aiohttp.FormData()
+                data.add_field("file", f, filename=path.name, content_type="video/mp4")
+                data.add_field(
+                    "path",
+                    f"recordings/{self._camera_id}/{recording_id}.mp4",
+                )
+                async with self._ai_session.post(
+                    f"{self._ai_url}/api/storage/upload",
+                    data=data,
+                    timeout=aiohttp.ClientTimeout(total=60.0),
+                ) as resp:
+                    if resp.status == 200:
+                        payload = await resp.json()
+                        video_url = payload.get("url")
+                    else:
+                        log.warning("[%s] Recording upload failed (status %d)",
+                                    self._camera_id, resp.status)
+        except Exception as exc:
+            log.warning("[%s] Recording upload error: %s", self._camera_id, exc)
+
+        if self._node_url and self._node_session:
+            try:
+                body = {
+                    "id": recording_id,
+                    "camera_id": self._camera_id,
+                    "start_time": start_time.isoformat(),
+                    "end_time": end_time.isoformat(),
+                    "duration_seconds": round(duration),
+                    "video_url": video_url,
+                    "file_size_mb": round(file_size_mb, 2) if file_size_mb else None,
+                    "format": "mp4",
+                    "resolution": f"{w}x{h}" if w and h else None,
+                    "fps": self._fps,
+                    "status": "completed" if video_url else "failed",
+                    "vehicle_count": vehicle_count,
+                    "incident_count": incident_count,
+                }
+                async with self._node_session.post(
+                    f"{self._node_url}/api/recordings",
+                    json=body,
+                    timeout=aiohttp.ClientTimeout(total=NODE_TIMEOUT),
+                ) as resp:
+                    if resp.status not in (200, 201):
+                        log.warning("[%s] Recording metadata POST failed (status %d)",
+                                    self._camera_id, resp.status)
+                    else:
+                        log.info("[%s] Recording registered: %s (%.0fs, %d vehicle frames, %d incidents)",
+                                  self._camera_id, path.name, duration, vehicle_count, incident_count)
+            except Exception as exc:
+                log.warning("[%s] Recording metadata POST error: %s", self._camera_id, exc)
+
+        # Local file is only a staging area — remove it once uploaded (or if
+        # upload failed, still remove it rather than filling up the Pi's SD card;
+        # the segment is lost in that case, same as a dropped detection would be).
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 # ── Camera IP Auto-Discovery ──────────────────────────────────────────────────
@@ -456,6 +682,78 @@ def discover_camera_ip(original_rtsp: str, camera_id: str) -> Optional[str]:
     return None
 
 
+async def persist_discovered_rtsp_url(
+    session: aiohttp.ClientSession, node_url: str, camera_id: str, new_url: str
+) -> None:
+    """
+    Save a newly auto-discovered RTSP URL back to Node so seed.ts's hardcoded
+    default stops being the thing that matters — the DB becomes the source of
+    truth for "where is this camera right now" instead of a static config
+    value that drifts whenever DHCP reassigns the camera's IP.
+    Best-effort: failure here just means the next restart re-discovers.
+    """
+    try:
+        async with session.put(
+            f"{node_url.rstrip('/')}/api/cameras/{camera_id}",
+            json={"rtsp_url": new_url},
+            timeout=aiohttp.ClientTimeout(total=NODE_TIMEOUT),
+        ) as resp:
+            if resp.status == 200:
+                log.info("[%s] Persisted discovered RTSP URL to Node: %s", camera_id, new_url)
+            else:
+                log.warning("[%s] Failed to persist discovered RTSP URL (status %d)",
+                            camera_id, resp.status)
+    except Exception as exc:
+        log.warning("[%s] Failed to persist discovered RTSP URL: %s", camera_id, exc)
+
+
+# ── Night-vision / IR auto-switching (ONVIF) ──────────────────────────────────
+# Brings the legacy camera_reboot_autostart_setup.sh's set_ir_auto_all.py
+# behavior (which never made it into this repo — only referenced from that
+# script) into the production camera_sender.py path. Opt-in via --ir-auto:
+# untested against real camera hardware (no ONVIF access in this environment),
+# so it's strictly best-effort — any failure just logs a warning and the main
+# capture/detect/forward pipeline continues unaffected.
+
+def set_ir_auto(host: str, port: int, user: str, password: str, camera_id: str) -> bool:
+    """
+    Set the camera's IR-cut filter to AUTO (day/night auto-switching) via the
+    ONVIF Imaging service. Synchronous/blocking (zeep SOAP calls) — call this
+    from a thread executor, not directly on the event loop.
+    Returns True on success.
+    """
+    if not _ONVIF_OK:
+        log.warning("[%s] --ir-auto requested but onvif-zeep is not installed "
+                    "(pip install onvif-zeep) — skipping IR auto-switch", camera_id)
+        return False
+    try:
+        cam = ONVIFCamera(host, port, user, password)
+        media = cam.create_media_service()
+        profiles = media.GetProfiles()
+        if not profiles:
+            log.warning("[%s] ONVIF: no media profiles returned — skipping IR auto-switch", camera_id)
+            return False
+        video_source_token = profiles[0].VideoSourceConfiguration.SourceToken
+
+        imaging = cam.create_imaging_service()
+        settings = imaging.GetImagingSettings({"VideoSourceToken": video_source_token})
+        if hasattr(settings, "IrCutFilter"):
+            settings.IrCutFilter = "AUTO"
+            imaging.SetImagingSettings({
+                "VideoSourceToken": video_source_token,
+                "ImagingSettings": settings,
+                "ForcePersistence": True,
+            })
+            log.info("[%s] ONVIF: IR-cut filter set to AUTO", camera_id)
+            return True
+        log.warning("[%s] ONVIF: camera does not expose IrCutFilter setting", camera_id)
+        return False
+    except Exception as exc:
+        log.warning("[%s] ONVIF IR auto-switch failed (non-fatal, continuing): %s",
+                    camera_id, exc)
+        return False
+
+
 # ── Frame capture (synchronous — runs in thread) ─────────────────────────────
 def open_capture(rtsp_url: str) -> cv2.VideoCapture:
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
@@ -483,6 +781,7 @@ async def post_frame(
     pixels_per_meter: float = 0.0,
     speed_limit: float = 0.0,
     confidence_threshold: Optional[float] = None,
+    homography_points: Optional[dict] = None,
 ) -> dict:
     data = aiohttp.FormData()
     data.add_field("camera_id", camera_id)
@@ -493,6 +792,10 @@ async def post_frame(
         data.add_field("speed_limit", str(speed_limit))
     if confidence_threshold is not None:
         data.add_field("confidence_threshold", str(confidence_threshold))
+    if homography_points:
+        # Perspective-corrected speed — takes priority over pixels_per_meter
+        # in the AI service when present (see traffic_detector.py).
+        data.add_field("homography_points", json.dumps(homography_points))
     async with session.post(
         f"{ai_url}/api/detect",
         data=data,
@@ -520,9 +823,24 @@ async def run(
     pixels_per_meter: float,
     speed_limit: float,
     confidence: float,
+    ir_auto: bool = False,
+    onvif_port: int = 80,
+    onvif_user: str = "",
+    onvif_pass: str = "",
+    record: bool = False,
+    record_dir: str = "~/roadsentinel/recordings",
+    record_segment_secs: float = 300.0,
+    adaptive_sampling: bool = True,
 ):
     stats    = Stats(camera_id)
     shutdown = asyncio.Event()
+
+    if ir_auto:
+        onvif_host = urlparse(rtsp_url).hostname or ""
+        if onvif_host:
+            await asyncio.get_event_loop().run_in_executor(
+                None, set_ir_auto, onvif_host, onvif_port, onvif_user, onvif_pass, camera_id
+            )
 
     def _handle_signal(*_):
         log.info("[%s] Shutdown signal received", camera_id)
@@ -538,6 +856,7 @@ async def run(
     async with aiohttp.ClientSession(connector=ai_connector) as ai_session:
         async with aiohttp.ClientSession(connector=node_connector) as node_session:
             forwarder: Optional[NodeForwarder] = None
+            homography_points: Optional[dict] = None
             if node_url:
                 cam_cfg = await fetch_camera_config(node_session, node_url, camera_id)
                 if cam_cfg.get("pixels_per_meter"):
@@ -546,6 +865,10 @@ async def run(
                     speed_limit = float(cam_cfg["speed_limit"])
                 if cam_cfg.get("detection_confidence"):
                     confidence = float(cam_cfg["detection_confidence"])
+                if cam_cfg.get("homography_points"):
+                    homography_points = cam_cfg["homography_points"]
+                    log.info("[%s] Perspective calibration found — using homography-corrected speed",
+                              camera_id)
 
                 forwarder = NodeForwarder(node_url, camera_id, node_session,
                                           confidence_threshold=confidence)
@@ -554,6 +877,21 @@ async def run(
                 await forwarder.connect_socketio()
             else:
                 log.warning("[%s] --node not set — detections NOT saved to DB", camera_id)
+
+            recorder: Optional[Recorder] = None
+            if record:
+                recorder = Recorder(
+                    camera_id=camera_id,
+                    ai_url=ai_url,
+                    node_url=node_url,
+                    ai_session=ai_session,
+                    node_session=node_session if node_url else None,
+                    record_dir=os.path.expanduser(record_dir),
+                    segment_secs=record_segment_secs,
+                    fps=TARGET_FPS,
+                )
+                log.info("[%s] Recording enabled → %s (%.0fs segments)",
+                         camera_id, os.path.expanduser(record_dir), record_segment_secs)
 
             # Sequential frame push loop — one PUT at a time so frames always
             # arrive at Node in the order they were captured (no revert glitch).
@@ -599,6 +937,10 @@ async def run(
                                      camera_id, rtsp_url, new_url)
                             rtsp_url = new_url
                             consecutive_failures = 0
+                            if node_url:
+                                await persist_discovered_rtsp_url(
+                                    node_session, node_url, camera_id, new_url
+                                )
                         else:
                             log.warning("[%s] Discovery found nothing — retrying original URL",
                                         camera_id)
@@ -614,6 +956,7 @@ async def run(
                 # AI runs as a fire-and-forget background task so it never
                 # blocks the frame-read loop. Only one AI request at a time.
                 ai_busy = False
+                sampler = AdaptiveSampler(enabled=adaptive_sampling)
 
                 async def ai_task(jpeg_bytes: bytes):
                     nonlocal ai_busy
@@ -623,8 +966,12 @@ async def run(
                             pixels_per_meter=pixels_per_meter,
                             speed_limit=speed_limit,
                             confidence_threshold=confidence,
+                            homography_points=homography_points,
                         )
                         stats.record_send(True)
+                        sampler.note_result(result)
+                        if recorder:
+                            recorder.note_result(result)
                         if forwarder:
                             await forwarder.handle(result)
                         else:
@@ -645,6 +992,10 @@ async def run(
                         if not ret or frame is None:
                             log.warning("[%s] Frame read failed — reconnecting", camera_id)
                             break
+
+                        if recorder:
+                            recorder.add_frame(frame)
+                            await recorder.maybe_rotate()
 
                         try:
                             jpeg = await asyncio.get_event_loop().run_in_executor(
@@ -670,8 +1021,10 @@ async def run(
                                 except asyncio.QueueFull:
                                     pass
 
-                        # Send to AI only if previous request finished
-                        if not ai_busy:
+                        # Send to AI only if the previous request finished AND the
+                        # adaptive sampler says this frame is due (always true while
+                        # a vehicle was seen recently; throttled during idle stretches).
+                        if not ai_busy and sampler.should_sample():
                             ai_busy = True
                             asyncio.create_task(ai_task(jpeg))
                         else:
@@ -689,11 +1042,17 @@ async def run(
                 finally:
                     cap.release()
                     log.info("[%s] Camera released", camera_id)
+                    if recorder:
+                        # Finalize whatever was captured this session rather than
+                        # losing it or leaving a writer open across a reconnect gap.
+                        await recorder.close()
 
                 if not shutdown.is_set():
                     log.info("[%s] Reconnecting in %.0fs…", camera_id, RECONNECT_WAIT)
                     await asyncio.sleep(RECONNECT_WAIT)
 
+    if recorder:
+        await recorder.close()
     if forwarder:
         await forwarder.disconnect_socketio()
     log.info("[%s] Stopped. sent=%d errors=%d dropped=%d",
@@ -750,6 +1109,31 @@ scan to locate the camera's new DHCP IP, then switches the RTSP URL silently.
                         help="Speed limit km/h for speeding detection (default: 60, overridden by DB)")
     parser.add_argument("--confidence", type=float, default=0.6,
                         help="Min incident confidence to forward (default: 0.6, overridden by DB)")
+    parser.add_argument("--ir-auto", action="store_true",
+                        help="Set the camera's IR-cut filter to AUTO (day/night switching) via "
+                             "ONVIF once at startup. Requires `pip install onvif-zeep`. Best-effort — "
+                             "untested against real camera hardware; failures are logged and non-fatal.")
+    parser.add_argument("--onvif-port", type=int, default=80,
+                        help="ONVIF service port (default: 80; host is taken from --rtsp)")
+    parser.add_argument("--onvif-user", default="",
+                        help="ONVIF username, if the camera requires auth")
+    parser.add_argument("--onvif-pass", default="",
+                        help="ONVIF password, if the camera requires auth")
+    parser.add_argument("--record", action="store_true",
+                        help="Record local video segments and upload each finished segment to "
+                             "the AI service's storage, registering it with Node's recordings "
+                             "table. Off by default — untested against real camera hardware.")
+    parser.add_argument("--record-dir", default="~/roadsentinel/recordings",
+                        help="Local staging directory for in-progress segments (default: "
+                             "~/roadsentinel/recordings) — deleted after each segment uploads")
+    parser.add_argument("--record-segment-secs", type=float, default=300.0,
+                        help="Recording segment length in seconds (default: 300 = 5 min)")
+    parser.add_argument("--no-adaptive-sampling", action="store_true",
+                        help="Disable adaptive AI sampling — always sample every eligible frame "
+                             "regardless of recent activity (default: adaptive sampling is ON, "
+                             "throttling AI calls during idle/no-vehicle stretches to cut load; "
+                             "never affects the live-view frame rate, and always samples at full "
+                             "rate while a vehicle has been seen recently)")
     args = parser.parse_args()
 
     TARGET_FPS     = args.fps
@@ -776,6 +1160,14 @@ scan to locate the camera's new DHCP IP, then switches the RTSP URL silently.
         pixels_per_meter = args.ppm,
         speed_limit      = args.speed_limit,
         confidence       = args.confidence,
+        ir_auto          = args.ir_auto,
+        onvif_port       = args.onvif_port,
+        onvif_user       = args.onvif_user,
+        onvif_pass       = args.onvif_pass,
+        record               = args.record,
+        record_dir           = args.record_dir,
+        record_segment_secs  = args.record_segment_secs,
+        adaptive_sampling    = not args.no_adaptive_sampling,
     ))
 
 
