@@ -223,6 +223,38 @@ None of these are marked done. Given the "keep going" instruction, proceeding to
 
 ---
 
+## Phase 5 — Commit, push, and final documentation — ✅ COMMITTED, ⛔ NOT PUSHED (by design)
+
+**Committed locally, 5 logically-grouped commits** (`git log --oneline` from oldest to newest):
+
+1. `docs: ground-truth codebase audit + revamp planning/tracking docs` — `documentation.md`, `Summarization.md`, the master plan doc.
+2. `feat(server): JWT admin auth, CORS allowlist, homography speed, and correctness fixes (Phases 0-1)` — all server/hardware-side Phase 0 security fixes + Phase 1 correctness fixes.
+3. `feat(server): recordings, adaptive sampling, IR auto-switch, webhook alerts, public status, Pi 4 LED parity (Phase 2)` — all Phase 2 feature-completion work.
+4. `feat(client): complete design overhaul — "Night Watch" design system (Phase 3)` — the entire `client/web` tree.
+5. `docs: fresh top-to-bottom README pass + supplementary doc-drift fixes (Phase 5)` — final README rewrite + remaining doc-drift files.
+
+**Grouping note for honesty**: a handful of files (`server.ts`, `camera_sender.py`, `setup_pi4.sh`/`setup_pi5.sh`, `main.py`, `admin/page.tsx`, `calibration-tool.tsx`, `export.ts`, `settings.ts`) were substantively touched across more than one phase. Splitting a single file's history into separate phase-accurate commits would require risky hunk-level surgery (`git add -p`) reconstructed from a compacted conversation memory — not worth the risk of producing a broken intermediate commit. Each file landed in the commit for its most substantial/most recent change, with commit bodies noting where earlier-phase work rides along. The full accurate phase-by-phase narrative lives in this document, not in git archaeology.
+
+**Verified before every commit**: `tsc --noEmit` clean (both `client/web` and `server/node-service`), `eslint` clean, `prettier` clean, full `next build` succeeds. `.gitignore` re-confirmed to exclude `.env`, all `*.pt` model weights, `datasets/downloaded|processed`, and `node_modules`/`venv` — no secrets in any of these 5 commits (double-checked `git status --short` for stray `.env` files before every commit; none appeared, confirming `.gitignore` is doing its job).
+
+### ⛔ Not pushing to `origin/main` — per your own standing rule
+
+Phase 4's audit did not pass cleanly:
+- The Aiven MySQL hostname is **NXDOMAIN** — genuinely gone from DNS, not just unreachable. Everything DB-dependent runs in degraded mode. This needs your attention on the Aiven dashboard before it's meaningful to call the backend "working."
+- Raspberry Pi hardware checks (both LED matrices, both camera streams, sustained FPS, Camera B auto-discovery-in-practice) are entirely unverified — no Tailscale reach to either Pi yet.
+- `irm-pc` SSH access is still blocked (my public key was provided earlier for you to add to `authorized_keys` — unknown if done).
+
+Per your master plan's own explicit rule ("Never push to origin/main with a failing or unverified Phase 4 audit — fix and re-verify first"), I'm stopping here rather than pushing. Everything is committed locally on `main` and ready to push the moment you say so — either after resolving the blockers above, or if you'd rather push now and treat the remaining hardware verification as a follow-up pass, just say so and I will.
+
+### What's needed from you to unblock the rest
+
+1. **Aiven**: check the dashboard — does that MySQL service still exist? If it was deleted, either restore it or point `DB_HOST`/credentials at a replacement (self-hosted per Phase 0.5, or a new managed instance).
+2. **`irm-pc` SSH**: add the public key I provided earlier in this session to `authorized_keys` so Phase 0.5's remaining Tailscale/Cloudflare Tunnel setup can proceed.
+3. **Tailscale on both Pis**: needed before any of Phase 4's hardware checks can run for real.
+4. Once those are in place, say the word and I'll re-run Phase 4's hardware-dependent checks and push if everything's clean.
+
+---
+
 ## Phase 4 — Functional audit & hardware verification — not started
 Expect this to be **partially blocked** by the same access gaps as Phase 0.5 (can't verify LED fixes or live camera FPS without reaching the Pis; can't do a full API audit against a production DB without resolving the Aiven question). Will do everything reachable and mark the rest clearly rather than claim a clean pass that isn't real.
 
