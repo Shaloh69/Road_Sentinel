@@ -1,7 +1,7 @@
 import express, { Application, Request, Response, NextFunction } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { Server } from "socket.io";
+import { Server, Socket } from "socket.io";
 import http from "http";
 import { spawn } from "child_process";
 import os from "os";
@@ -11,12 +11,16 @@ import { initializeStorageBuckets } from "./config/supabase";
 import { aiService } from "./services/ai.service";
 import { runMigrations } from "./database/migrate";
 import { seedCameras } from "./database/seed";
+import { adminNamespaceAuth } from "./middleware/auth";
 
 // Routes
 import cameraRoutes, { handlePiFrame } from "./routes/cameras";
 import detectionRoutes from "./routes/detections";
 import incidentRoutes from "./routes/incidents";
 import analyticsRoutes from "./routes/analytics";
+import authRoutes from "./routes/auth";
+import recordingRoutes from "./routes/recordings";
+import publicStatusRoutes from "./routes/public-status";
 
 // Load environment variables
 dotenv.config();
@@ -26,16 +30,41 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || "0.0.0.0";
 
+// ── CORS allowlist ────────────────────────────────────────────────────────────
+// CORS_ORIGIN is a comma-separated list of allowed origins, e.g.
+//   CORS_ORIGIN=http://localhost:3000,https://your-tunnel.trycloudflare.com
+// Falls back to localhost:3000 (dev) if unset, rather than allowing "*".
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  // Same-origin / non-browser requests (curl, server-to-server) send no Origin header.
+  if (!origin) return true;
+  return allowedOrigins.includes(origin);
+}
+
+const corsOptionsDelegate = (
+  req: Request,
+  callback: (err: Error | null, options?: { origin: boolean }) => void,
+) => {
+  const origin = req.header("Origin");
+  callback(null, { origin: isAllowedOrigin(origin) });
+};
+
 // Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: (origin, callback) => {
+      callback(null, isAllowedOrigin(origin));
+    },
     methods: ["GET", "POST"],
   },
 });
 
 // Middleware
-app.use(cors({ origin: "*" }));
+app.use(cors(corsOptionsDelegate));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
@@ -72,18 +101,17 @@ app.get("/api/status", async (req: Request, res: Response) => {
 
 // ── API routes ─────────────────────────────────────────────────────────────
 
+app.use("/api/auth", authRoutes);
 app.use("/api/cameras", cameraRoutes);
 app.use("/api/detections", detectionRoutes);
 app.use("/api/incidents", incidentRoutes);
 app.use("/api/analytics", analyticsRoutes);
+app.use("/api/recordings", recordingRoutes);
+app.use("/api/public/status", publicStatusRoutes);
 
-// ── Socket.IO ──────────────────────────────────────────────────────────────
-
-// Track running server-side terminal processes per socket
-const terminalProcesses = new Map<string, ReturnType<typeof spawn>>();
-
-// Track connected Pi agents: piId (e.g. 'pi4') → socket.id
-const piAgents = new Map<string, string>();
+// ── Socket.IO — default namespace (public: camera streams, incidents feed) ───
+// Nothing here executes a command or reaches admin/Pi-control surfaces.
+// That is exclusively handled by the authenticated `/admin` namespace below.
 
 io.on("connection", (socket) => {
   logger.info(
@@ -91,21 +119,6 @@ io.on("connection", (socket) => {
   );
 
   socket.on("disconnect", () => {
-    // Kill any server-side process this socket owned
-    const proc = terminalProcesses.get(socket.id);
-    if (proc) {
-      proc.kill();
-      terminalProcesses.delete(socket.id);
-    }
-    // If this was a Pi agent, notify admins it went offline
-    for (const [piId, sid] of piAgents.entries()) {
-      if (sid === socket.id) {
-        piAgents.delete(piId);
-        io.to("admin").emit("pi_status", { piId, online: false });
-        logger.warn(`🔴 Pi agent OFFLINE: ${piId}`);
-        break;
-      }
-    }
     logger.info(
       `🔌 WebSocket client disconnected: ${socket.id}  (total: ${io.engine.clientsCount})`,
     );
@@ -147,29 +160,71 @@ io.on("connection", (socket) => {
   socket.on("unsubscribe_incidents", () => {
     socket.leave("incidents");
   });
+});
 
-  // ── Admin terminal ────────────────────────────────────────────────────────
+// ── Socket.IO — `/admin` namespace (authenticated: terminal + Pi relay) ──────
+// Every connection here must present either a valid short-lived admin JWT
+// (browser admin-terminal sessions, issued by POST /api/auth/login) or the
+// static PI_AGENT_TOKEN (Raspberry Pi `pi_agent.py` service connections).
+// adminNamespaceAuth rejects the connection outright on failure — none of
+// the event handlers below ever run for an unauthenticated socket.
 
-  socket.on("subscribe_admin", () => {
-    socket.join("admin");
-    logger.info(`🖥️  Admin terminal session opened: ${socket.id}`);
-    // Send current Pi agent status snapshot to this new admin client
+const adminIo = io.of("/admin");
+adminIo.use(adminNamespaceAuth);
+
+// Track running server-side terminal processes per socket
+const terminalProcesses = new Map<string, ReturnType<typeof spawn>>();
+
+// Track connected Pi agents: piId (e.g. 'pi4') → socket.id
+const piAgents = new Map<string, string>();
+
+function isAdminUser(socket: Socket): boolean {
+  return socket.data.role === "admin";
+}
+
+function isPiAgent(socket: Socket): boolean {
+  return socket.data.role === "pi-agent";
+}
+
+adminIo.on("connection", (socket) => {
+  logger.info(
+    `🔐 Admin namespace connection: ${socket.id}  role=${socket.data.role}`,
+  );
+
+  if (isAdminUser(socket)) {
+    // Send current Pi agent status snapshot to this new admin session
     const snapshot: Record<string, boolean> = {};
     for (const [piId] of piAgents.entries()) {
       snapshot[piId] = true;
     }
     socket.emit("pi_status_all", snapshot);
+  }
+
+  socket.on("disconnect", () => {
+    // Kill any server-side process this socket owned
+    const proc = terminalProcesses.get(socket.id);
+    if (proc) {
+      proc.kill();
+      terminalProcesses.delete(socket.id);
+    }
+    // If this was a Pi agent, notify admins it went offline
+    for (const [piId, sid] of piAgents.entries()) {
+      if (sid === socket.id) {
+        piAgents.delete(piId);
+        adminIo.emit("pi_status", { piId, online: false });
+        logger.warn(`🔴 Pi agent OFFLINE: ${piId}`);
+        break;
+      }
+    }
+    logger.info(`🔐 Admin namespace disconnect: ${socket.id}`);
   });
 
-  socket.on("unsubscribe_admin", () => {
-    socket.leave("admin");
-  });
-
-  // ── Pi agent ─────────────────────────────────────────────────────────────
+  // ── Pi agent registration/output relay (pi-agent role only) ──────────────
 
   socket.on("pi_register", (piId: string) => {
+    if (!isPiAgent(socket)) return;
     piAgents.set(piId, socket.id);
-    io.to("admin").emit("pi_status", { piId, online: true });
+    adminIo.emit("pi_status", { piId, online: true });
     logger.info(`🟢 Pi agent ONLINE: ${piId}  socket=${socket.id}`);
   });
 
@@ -177,14 +232,16 @@ io.on("connection", (socket) => {
   socket.on(
     "pi_output",
     (payload: { type: string; data: string; requesterId: string }) => {
+      if (!isPiAgent(socket)) return;
       const { type, data, requesterId } = payload;
-      io.to(requesterId).emit("terminal_output", { type, data });
+      adminIo.to(requesterId).emit("terminal_output", { type, data });
     },
   );
 
-  // ── Terminal command (target: 'server' | 'pi4' | 'pi5') ──────────────────
+  // ── Terminal command (admin role only; target: 'server' | 'pi4' | 'pi5') ──
 
   socket.on("terminal_command", (data: { command: string; target: string }) => {
+    if (!isAdminUser(socket)) return;
     const { command, target } = data;
     if (!command?.trim()) return;
 
@@ -199,7 +256,7 @@ io.on("connection", (socket) => {
         socket.emit("terminal_output", { type: "exit", data: "" });
         return;
       }
-      io.to(piSocketId).emit("pi_command", {
+      adminIo.to(piSocketId).emit("pi_command", {
         command,
         requesterId: socket.id,
       });
@@ -258,9 +315,10 @@ io.on("connection", (socket) => {
   });
 
   socket.on("terminal_kill", (target: string) => {
+    if (!isAdminUser(socket)) return;
     if (target !== "server") {
       const piSocketId = piAgents.get(target);
-      if (piSocketId) io.to(piSocketId).emit("pi_kill");
+      if (piSocketId) adminIo.to(piSocketId).emit("pi_kill");
       socket.emit("terminal_output", { type: "stderr", data: "\n^C\n" });
       return;
     }
@@ -334,7 +392,9 @@ async function startServer() {
     server.listen(PORT, () => {
       logger.info(`🚀 Server running on http://${HOST}:${PORT}`);
       logger.info(`📊 Environment: ${process.env.NODE_ENV || "development"}`);
-      logger.info(`🔌 WebSocket server ready`);
+      logger.info(
+        `🔌 WebSocket server ready (admin namespace: /admin, authenticated)`,
+      );
       logger.info(`💾 Database: ${dbConnected ? "Connected" : "Disconnected"}`);
       logger.info(`🤖 AI Service: ${aiHealthy ? "Connected" : "Disconnected"}`);
     });

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
 Road Sentinel — Pi Agent
-Connects to the Node service via Socket.IO and relays terminal commands.
-The admin page sends commands here; output streams back in real-time.
+Connects to the Node service's authenticated /admin Socket.IO namespace and
+relays terminal commands. The admin page sends commands here; output streams
+back in real-time.
 
 Usage:
-    python3 pi_agent.py --node http://192.168.8.50:3001 --id pi4
+    python3 pi_agent.py --node http://192.168.8.50:3001 --id pi4 --token <PI_AGENT_TOKEN>
+    # or set PI_AGENT_TOKEN in the environment instead of --token
 
 No inbound ports needed on the Pi — the Pi initiates the outbound connection.
+PI_AGENT_TOKEN must match the value configured in server/node-service/.env —
+the /admin namespace rejects the connection outright without it.
 """
 
 import argparse
@@ -22,6 +26,8 @@ import time
 import socketio
 
 # ── Globals ────────────────────────────────────────────────────────────────────
+
+NAMESPACE = "/admin"
 
 sio = socketio.Client(
     reconnection=True,
@@ -38,25 +44,25 @@ pi_id: str = "pi4"
 requester_id: str = ""
 
 
-# ── Socket events ──────────────────────────────────────────────────────────────
+# ── Socket events (all scoped to the authenticated /admin namespace) ───────────
 
-@sio.event
+@sio.event(namespace=NAMESPACE)
 def connect():
-    print(f"[pi_agent] Connected to Node service — registering as '{pi_id}'")
-    sio.emit("pi_register", pi_id)
+    print(f"[pi_agent] Connected to Node service /admin — registering as '{pi_id}'")
+    sio.emit("pi_register", pi_id, namespace=NAMESPACE)
 
 
-@sio.event
+@sio.event(namespace=NAMESPACE)
 def disconnect():
     print("[pi_agent] Disconnected from Node service — will reconnect...")
 
 
-@sio.event
+@sio.event(namespace=NAMESPACE)
 def connect_error(data):
-    print(f"[pi_agent] Connection error: {data}")
+    print(f"[pi_agent] Connection error (check PI_AGENT_TOKEN matches the server's): {data}")
 
 
-@sio.on("pi_command")
+@sio.on("pi_command", namespace=NAMESPACE)
 def on_command(data: dict):
     global current_proc, requester_id
     command = data.get("command", "").strip()
@@ -99,7 +105,7 @@ def on_command(data: dict):
                             "type": kind,
                             "data": chunk.decode("utf-8", errors="replace"),
                             "requesterId": req_id,
-                        })
+                        }, namespace=NAMESPACE)
                     else:
                         open_fds.discard(fd)
 
@@ -111,7 +117,7 @@ def on_command(data: dict):
                 "type": "stderr",
                 "data": f"\n[pi_agent error: {exc}]\n",
                 "requesterId": req_id,
-            })
+            }, namespace=NAMESPACE)
             exit_code = -1
 
         finally:
@@ -122,13 +128,13 @@ def on_command(data: dict):
             "type": "exit",
             "data": f"\n[Process exited with code {exit_code}]\n",
             "requesterId": req_id,
-        })
+        }, namespace=NAMESPACE)
         print(f"[pi_agent] Command finished (exit {exit_code}): {command}")
 
     threading.Thread(target=run, daemon=True).start()
 
 
-@sio.on("pi_kill")
+@sio.on("pi_kill", namespace=NAMESPACE)
 def on_kill():
     global current_proc
     with current_proc_lock:
@@ -157,16 +163,33 @@ def main():
         default=os.environ.get("PI_ID", "pi4"),
         help="Pi identifier shown in admin terminal (e.g. pi4, pi5)",
     )
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("PI_AGENT_TOKEN", ""),
+        help="Shared secret matching PI_AGENT_TOKEN in server/node-service/.env "
+             "(required — the /admin namespace rejects connections without it)",
+    )
     args = parser.parse_args()
 
     pi_id = args.id
     node_url = args.node
 
-    print(f"[pi_agent] Starting — id={pi_id}  node={node_url}")
+    if not args.token:
+        print("[pi_agent] ERROR: no token provided. Set PI_AGENT_TOKEN in the "
+              "environment or pass --token — it must match the Node service's "
+              "PI_AGENT_TOKEN.")
+        sys.exit(1)
+
+    print(f"[pi_agent] Starting — id={pi_id}  node={node_url}  namespace={NAMESPACE}")
 
     while True:
         try:
-            sio.connect(node_url, transports=["websocket", "polling"])
+            sio.connect(
+                node_url,
+                transports=["websocket", "polling"],
+                namespaces=[NAMESPACE],
+                auth={"token": args.token},
+            )
             sio.wait()
         except Exception as exc:
             print(f"[pi_agent] Fatal error: {exc} — retrying in 10s")

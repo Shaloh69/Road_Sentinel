@@ -44,8 +44,11 @@ except ImportError:
 
 
 # Dataset paths (relative to project root)
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-DATASETS_DIR = PROJECT_ROOT  / "Road_Sentinel" / "datasets" / "processed"
+# train.py lives at <repo_root>/training/train.py — resolve up two levels,
+# not against an assumed sibling folder name (that broke on any checkout not
+# literally named "Road_Sentinel", e.g. a "RoadSentinel" clone).
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATASETS_DIR = PROJECT_ROOT / "datasets" / "processed"
 
 DATASETS = {
     "vehicle": {

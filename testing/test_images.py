@@ -2,6 +2,10 @@
 """
 Image Testing Script for Road Sentinel AI Service
 Tests the AI service with your own traffic images
+
+Scope: exercises the *deployed* AI service over HTTP (POST /api/detect) —
+use this to verify the running server. For testing a specific local .pt
+weights file directly (no server needed), use training/validate.py instead.
 """
 
 import cv2

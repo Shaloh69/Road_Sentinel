@@ -3,12 +3,17 @@
 # Installs: Camera B (CAM-B-002) + HUB75 128×32 LED matrix display
 #
 # Usage:
-#   bash setup_pi5.sh [NODE_URL] [CAM_B_RTSP] [AI_URL]
+#   PI_AGENT_TOKEN=<token> bash setup_pi5.sh [NODE_URL] [CAM_B_RTSP] [AI_URL]
 #
 # Defaults:
-#   NODE_URL   = http://192.168.8.50:3001
-#   CAM_B_RTSP = rtsp://192.168.8.108:554/cam/realmonitor?channel=1&subtype=1
-#   AI_URL     = http://192.168.8.50:8000
+#   NODE_URL      = http://192.168.8.50:3001
+#   CAM_B_RTSP    = rtsp://192.168.8.108:554/cam/realmonitor?channel=1&subtype=1
+#                   (provisional — Camera B's IP is DHCP-assigned, not static;
+#                    camera_sender.py's auto-discovery will persist the real
+#                    IP back to Node once it finds it, see camera_sender.py)
+#   PI_AGENT_TOKEN = REQUIRED, no default. Must match server/node-service/.env's
+#                    PI_AGENT_TOKEN exactly — the /admin namespace rejects the
+#                    Pi agent's connection otherwise.
 #
 # Pi 5 LED note: uses led-image-viewer (coprocessor mode, no --led-rp1-rio).
 #   RIO mode (--led-rp1-rio=1) causes rapid GPIO de-sync — do NOT use it.
@@ -22,6 +27,13 @@ CAM_B_RTSP="${2:-rtsp://192.168.8.108:554/cam/realmonitor?channel=1&subtype=1}"
 AI_URL="${3:-http://192.168.8.50:8000}"
 CAMERA_ID="CAM-B-002"
 HOSTNAME="pi5-sentinel"
+
+if [ -z "${PI_AGENT_TOKEN:-}" ]; then
+    echo "ERROR: PI_AGENT_TOKEN is not set."
+    echo "  Copy the PI_AGENT_TOKEN value from server/node-service/.env, then run:"
+    echo "  PI_AGENT_TOKEN=<that-value> bash setup_pi5.sh"
+    exit 1
+fi
 
 VENV="$HOME/venvs/cam_venv"
 SCRIPTS_DIR="$HOME/roadsentinel"
@@ -187,6 +199,7 @@ StartLimitBurst=10
 Type=simple
 User=${USER}
 WorkingDirectory=${SCRIPTS_DIR}
+Environment=PI_AGENT_TOKEN=${PI_AGENT_TOKEN}
 ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/pi_agent.py \\
     --node ${NODE_URL} \\
     --id   pi5

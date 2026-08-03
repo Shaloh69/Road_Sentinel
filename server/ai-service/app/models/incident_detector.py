@@ -103,7 +103,8 @@ class IncidentDetector:
                         'type': class_name,
                         'severity': severity,
                         'confidence': round(conf, 3),
-                        'description': self._generate_description(class_name, conf)
+                        'description': self._generate_description(class_name, conf),
+                        'is_heuristic': False,
                     }
 
                     incidents.append(incident)
@@ -150,7 +151,8 @@ class IncidentDetector:
                     'type': 'congestion',
                     'severity': 'low',
                     'confidence': 0.6,
-                    'description': 'Potential traffic congestion detected (heuristic)'
+                    'description': 'Potential traffic congestion detected (heuristic)',
+                    'is_heuristic': True,
                 })
 
             logger.debug(f"Heuristic detection found {len(incidents)} potential incidents")

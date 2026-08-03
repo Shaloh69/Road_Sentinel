@@ -15,10 +15,16 @@ const MIGRATIONS: string[] = [
     pixels_per_meter     FLOAT        NOT NULL DEFAULT 8.0,
     speed_limit          FLOAT        NOT NULL DEFAULT 60.0,
     detection_confidence FLOAT        NOT NULL DEFAULT 0.5,
+    homography_points    JSON         NULL COMMENT 'Phase 1: {image_points:[[x,y]x4], real_points:[[x,y]x4] in meters} from the Calibration Tool. NULL = uncalibrated, falls back to pixels_per_meter.',
     created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+  // Idempotent add-column for cameras created before homography_points existed
+  // (CREATE TABLE IF NOT EXISTS above is a no-op on an already-existing table).
+  `ALTER TABLE cameras ADD COLUMN IF NOT EXISTS homography_points JSON NULL
+    COMMENT 'Phase 1: {image_points:[[x,y]x4], real_points:[[x,y]x4] in meters} from the Calibration Tool. NULL = uncalibrated, falls back to pixels_per_meter.'`,
 
   // ── detections ───────────────────────────────────────────────────────────────
   `CREATE TABLE IF NOT EXISTS detections (
@@ -86,6 +92,34 @@ const MIGRATIONS: string[] = [
     UNIQUE KEY uq_cam_hour (camera_id, hour_timestamp),
     INDEX idx_ana_cam_hour (camera_id, hour_timestamp),
     CONSTRAINT fk_ana_camera FOREIGN KEY (camera_id)
+      REFERENCES cameras(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+  // ── recordings (Phase 2) ────────────────────────────────────────────────────
+  // Populated by raspi_scripts/camera/camera_sender.py --record (opt-in,
+  // untested against real camera hardware as of Phase 2).
+  `CREATE TABLE IF NOT EXISTS recordings (
+    id                VARCHAR(36)     NOT NULL,
+    camera_id         VARCHAR(50)     NOT NULL,
+    start_time        TIMESTAMP       NOT NULL,
+    end_time          TIMESTAMP       NULL,
+    duration_seconds  INT,
+    video_url         VARCHAR(1000),
+    thumbnail_url     VARCHAR(1000),
+    file_size_mb       FLOAT,
+    format            VARCHAR(20)     NOT NULL DEFAULT 'mp4',
+    resolution        VARCHAR(20),
+    fps               INT,
+    status            ENUM('recording','completed','failed','deleted') NOT NULL DEFAULT 'recording',
+    error_message     TEXT,
+    vehicle_count     INT             NOT NULL DEFAULT 0,
+    incident_count    INT             NOT NULL DEFAULT 0,
+    created_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    INDEX idx_rec_cam_time (camera_id, start_time),
+    INDEX idx_rec_status   (status),
+    CONSTRAINT fk_rec_camera FOREIGN KEY (camera_id)
       REFERENCES cameras(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];

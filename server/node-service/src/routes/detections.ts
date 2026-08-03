@@ -6,13 +6,14 @@ import { io } from "../server";
 
 const router = Router();
 
-// GET /api/detections?camera_id=&limit=&since=
+// GET /api/detections?camera_id=&limit=&since=&until=
 router.get("/", async (req: Request, res: Response) => {
   try {
     const {
       camera_id,
       limit = "100",
       since,
+      until,
     } = req.query as Record<string, string>;
 
     let sql = "SELECT * FROM detections WHERE 1=1";
@@ -25,6 +26,10 @@ router.get("/", async (req: Request, res: Response) => {
     if (since) {
       sql += " AND timestamp >= ?";
       params.push(since);
+    }
+    if (until) {
+      sql += " AND timestamp < ?";
+      params.push(until);
     }
 
     const limitNum = Math.min(parseInt(limit, 10) || 100, 1000);

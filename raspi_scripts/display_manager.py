@@ -400,6 +400,12 @@ class LedImageViewerBackend(DisplayBackend):
             f.write(f"P6\n{WIDTH} {HEIGHT}\n255\n".encode())
             f.write(data)
 
+    # Phase 0 fix: garbage-on-update symptom is most plausibly the RP1
+    # coprocessor's state not having fully released between the old process's
+    # exit and the new process's own init claiming the panel — a settle gap
+    # gives it time to do so before the next process starts driving GPIO.
+    _RESTART_SETTLE_SECS = 0.03
+
     def _restart(self, reason: str = "blink") -> None:
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()          # SIGTERM → hzeller clears panel cleanly
@@ -411,6 +417,7 @@ class LedImageViewerBackend(DisplayBackend):
                     self._proc.wait(timeout=0.1)
                 except subprocess.TimeoutExpired:
                     pass
+            time.sleep(self._RESTART_SETTLE_SECS)
         cmd = [self._viewer] + self._flags + ["-l", "-1", "-w", "99999", self._ppm]
         self._proc = subprocess.Popen(cmd)
         self._last_restart_t = time.monotonic()
@@ -632,8 +639,23 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        # RGBMatrixBackend disabled: SetImage mirrors display on chained panels.
-        # TODO: fix pixel mapping before re-enabling.
+        pi5_backend = getattr(args, "pi5_backend", "viewer")
+        if pi5_backend == "rgbmatrix":
+            # RGBMatrixBackend already implements correct offscreen-canvas +
+            # SwapOnVSync double buffering (audited in Phase 0 — no violation
+            # found). It's NOT the default here because it has a separate,
+            # unverified-on-hardware bug: SetImage mirrors output on chained
+            # panels (this display is 2x 64x32 panels chained to 128x32).
+            # Opt in explicitly with --pi5-backend rgbmatrix to test on real
+            # hardware — see display_manager.py:636 area / documentation.md.
+            log.warning(
+                "Pi 5 forced to RGBMatrixBackend — known unresolved bug: "
+                "SetImage may mirror output on chained panels. Testing only."
+            )
+            return RGBMatrixBackend(
+                cols  = args.cols,
+                chain = args.chain if args.chain > 0 else 2,
+            )
         log.info("Detected Raspberry Pi 5 → led-image-viewer backend (SwapOnVSync)")
         return LedImageViewerBackend(
             viewer_path = os.path.expanduser(
@@ -1252,8 +1274,15 @@ Examples:
                         help=f"ledcat binary path (Pi 4, default: {LEDCAT_DEFAULT})")
     parser.add_argument("--viewer",         default=None,
                         help=f"led-image-viewer binary path (Pi 5, default: {LED_IMAGE_VIEWER_DEFAULT})")
-    parser.add_argument("--slowdown",       type=int, default=4,
-                        help="GPIO slowdown (Pi 4, default: 4)")
+    parser.add_argument("--slowdown",       type=int, default=6,
+                        help="GPIO slowdown (Pi 4, default: 6 — raised from 4 in "
+                             "Phase 0; Pi 4's faster CPU can outpace the panel's "
+                             "shift registers at low slowdown, causing intermittent "
+                             "scrambled/garbled output that gets worse under load. "
+                             "If still garbled, raise further; see "
+                             "raspi_scripts/lcd_pi4/fix_gpio_timing.sh for the other "
+                             "known Pi 4 GPIO-timing conflicts to check on hardware "
+                             "(snd_bcm2835, 1-Wire overlay, panel logic-chip voltage)")
     parser.add_argument("--cols",           type=int, default=64,
                         help="Columns per panel (Pi 4, default: 64)")
     parser.add_argument("--chain",          type=int, default=0,
@@ -1274,6 +1303,13 @@ Examples:
                         help="PioMatter pinout (Pi 5, default: active3 = ₱149 adapter)")
     parser.add_argument("--addr-lines",     type=int, default=4,
                         help="Address lines (Pi 5, default: 4 for 32-row panels)")
+    parser.add_argument("--pi5-backend",    default="viewer",
+                        choices=["viewer", "rgbmatrix"],
+                        help="Pi 5 display backend (default: viewer = led-image-viewer "
+                             "subprocess, restart-based. 'rgbmatrix' = hzeller Python "
+                             "bindings with true double buffering, but has a known "
+                             "unresolved chained-panel mirroring bug — test only, see "
+                             "documentation.md and ROAD_SENTINEL_REVAMP_MASTER.md §2)")
 
     args = parser.parse_args()
 

@@ -1,4 +1,15 @@
 // Camera types
+
+// Perspective calibration from the Cameras page Calibration Tool. Four
+// image-space pixel coordinates mapped to their real-world coordinates (in
+// meters, on the road plane) — same convention as
+// inference/camera_calibration.py's calibrate_perspective(): top-left,
+// top-right, bottom-right, bottom-left of a measured rectangle.
+export interface HomographyPoints {
+  image_points: [number, number][];
+  real_points: [number, number][];
+}
+
 export interface Camera {
   id: string;
   name: string;
@@ -10,6 +21,7 @@ export interface Camera {
   pixels_per_meter: number;
   speed_limit: number;
   detection_confidence: number;
+  homography_points: HomographyPoints | null;
   created_at: Date;
   updated_at: Date;
 }

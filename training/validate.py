@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """
 Test trained vehicle detection model on videos/images
+
+Scope (Phase 1 consolidation note — three scripts do superficially similar
+"run a detector and draw boxes" things; each is authoritative for a
+different case, not merged, since they need different things loaded):
+  - THIS script: loads a local .pt weights file directly via ultralytics,
+    no server involved. Use to sanity-check a freshly trained/exported model.
+  - testing/test_video.py, testing/test_images.py: exercise the *deployed*
+    AI service over HTTP (POST /api/detect). Use to verify the running
+    server, not a specific weights file.
+  - inference/speed_detection.py: standalone offline speed-tracking
+    prototype (pixels-per-meter only, no homography, no server) — useful
+    for a quick local speed estimate without either of the above running.
 """
 
 from ultralytics import YOLO

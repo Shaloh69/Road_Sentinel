@@ -1,4 +1,13 @@
 # complete_speed_detector.py
+#
+# Scope: standalone offline speed-tracking prototype — loads the stock
+# yolov8n.pt COCO model directly, no server, no homography (flat
+# pixels-per-meter only). Useful for a quick local test against a video file
+# without the AI service running. The production path (deployed AI service)
+# uses server/ai-service/app/models/traffic_detector.py instead, which
+# supports the same homography-corrected speed this file's sibling
+# (formerly camera_calibration.py, since removed as redundant) prototyped —
+# see TrafficDetector._get_homography_matrix().
 from ultralytics import YOLO
 import cv2
 import numpy as np

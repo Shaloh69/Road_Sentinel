@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import os
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 import logging
@@ -22,6 +23,19 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Root of the ai-service package (server/ai-service/) — used to resolve
+# relative model paths regardless of the process's current working directory
+# (e.g. `python -m app.main` from a different cwd, or a systemd WorkingDirectory
+# that isn't server/ai-service/). Absolute paths in .env are passed through as-is.
+AI_SERVICE_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_model_path(raw_path: str) -> str:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = (AI_SERVICE_ROOT / path).resolve()
+    return str(path)
 
 # ── Local PC storage ───────────────────────────────────────────────────────────
 # Files are saved here and served publicly via Cloudflare tunnel.
@@ -62,11 +76,16 @@ def get_traffic_detector() -> TrafficDetector:
     """Get or create traffic detector instance"""
     global traffic_detector
     if traffic_detector is None:
-        logger.info("Initializing traffic detector...")
+        model_path = _resolve_model_path(os.getenv('TRAFFIC_MODEL_PATH', './models/traffic.pt'))
+        logger.info(f"Initializing traffic detector — model_path={model_path}")
         traffic_detector = TrafficDetector(
-            model_path=os.getenv('TRAFFIC_MODEL_PATH', './models/traffic.pt'),
+            model_path=model_path,
             device=os.getenv('DEVICE', 'cuda'),
-            confidence=float(os.getenv('CONFIDENCE_THRESHOLD', '0.75'))
+            confidence=float(os.getenv('CONFIDENCE_THRESHOLD', '0.5'))
+        )
+        logger.info(
+            f"Traffic detector ready — custom_model={traffic_detector.is_custom_model} "
+            f"(False means it silently fell back to stock yolov8n.pt — check model_path above)"
         )
     return traffic_detector
 
@@ -75,12 +94,19 @@ def get_incident_detector() -> IncidentDetector:
     """Get or create incident detector instance"""
     global incident_detector
     if incident_detector is None:
-        logger.info("Initializing incident detector...")
+        model_path = _resolve_model_path(os.getenv('INCIDENT_MODEL_PATH', './models/incident.pt'))
+        logger.info(f"Initializing incident detector — model_path={model_path}")
         incident_detector = IncidentDetector(
-            model_path=os.getenv('INCIDENT_MODEL_PATH', './models/incident.pt'),
+            model_path=model_path,
             device=os.getenv('DEVICE', 'cuda'),
-            confidence=float(os.getenv('CONFIDENCE_THRESHOLD', '0.75'))
+            confidence=float(os.getenv('CONFIDENCE_THRESHOLD', '0.5'))
         )
+        if incident_detector.model is None:
+            logger.warning(
+                "No incident model loaded — running heuristic fallback "
+                "(brightness-variance placeholder, not a real detector). "
+                "Train training/train.py --dataset accident to replace this."
+            )
     return incident_detector
 
 
@@ -110,10 +136,14 @@ async def detect_all(
     confidence_threshold: Optional[float] = Form(None),
     pixels_per_meter: float = Form(0.0),
     speed_limit: float = Form(0.0),
+    homography_points: Optional[str] = Form(None),
 ):
     """
     Detect both traffic and incidents in an image.
-    When pixels_per_meter > 0, per-camera IoU tracking is used to estimate speed.
+    When homography_points is provided (JSON string: {"image_points":[[x,y]x4],
+    "real_points":[[x,y]x4]}), perspective-corrected speed is used — accurate
+    regardless of where in frame the vehicle is tracked. Otherwise, when
+    pixels_per_meter > 0, the simpler raw-pixel-distance estimate is used.
     When speed_limit > 0, speeding incidents are generated automatically.
     """
     try:
@@ -124,13 +154,21 @@ async def detect_all(
         traffic_det  = get_traffic_detector()
         incident_det = get_incident_detector()
 
-        conf = confidence_threshold if confidence_threshold else float(os.getenv('CONFIDENCE_THRESHOLD', '0.75'))
+        conf = confidence_threshold if confidence_threshold else float(os.getenv('CONFIDENCE_THRESHOLD', '0.5'))
+
+        homography = None
+        if homography_points:
+            try:
+                homography = json.loads(homography_points)
+            except (TypeError, ValueError) as exc:
+                logger.warning(f"Ignoring malformed homography_points for {camera_id}: {exc}")
 
         # Traffic detections — with optional speed estimation
         traffic_results = traffic_det.detect(
             image_bytes, conf,
             camera_id=camera_id,
             pixels_per_meter=pixels_per_meter,
+            homography_points=homography,
         )
 
         # Incident detections from incident model
@@ -150,6 +188,7 @@ async def detect_all(
                         "confidence":  det.get("confidence", 0.8),
                         "description": f"{cls} at {spd:.0f} km/h (limit {speed_limit:.0f} km/h)",
                         "speed":       spd,
+                        "is_heuristic": False,  # derived from real tracked speed, not a guess
                     })
 
         processing_time = (time.time() - start_time) * 1000
@@ -190,7 +229,7 @@ async def detect_traffic(
         detector = get_traffic_detector()
 
         # Override confidence if provided
-        conf = confidence_threshold if confidence_threshold else float(os.getenv('CONFIDENCE_THRESHOLD', '0.75'))
+        conf = confidence_threshold if confidence_threshold else float(os.getenv('CONFIDENCE_THRESHOLD', '0.5'))
 
         # Run detection
         results = detector.detect(image_bytes, conf)
@@ -231,7 +270,7 @@ async def detect_incidents(
         detector = get_incident_detector()
 
         # Override confidence if provided
-        conf = confidence_threshold if confidence_threshold else float(os.getenv('CONFIDENCE_THRESHOLD', '0.75'))
+        conf = confidence_threshold if confidence_threshold else float(os.getenv('CONFIDENCE_THRESHOLD', '0.5'))
 
         # Run detection
         results = detector.detect(image_bytes, conf)
@@ -329,7 +368,7 @@ async def get_stats():
             "device": os.getenv('DEVICE', 'cuda')
         },
         "configuration": {
-            "confidence_threshold": float(os.getenv('CONFIDENCE_THRESHOLD', '0.75')),
+            "confidence_threshold": float(os.getenv('CONFIDENCE_THRESHOLD', '0.5')),
             "iou_threshold": float(os.getenv('IOU_THRESHOLD', '0.45'))
         }
     }

@@ -8,9 +8,9 @@ import { io } from "../server";
 const router = Router();
 
 // ── In-memory MJPEG frame buffer ──────────────────────────────────────────────
-const frameBuffer  = new Map<string, Buffer>();
+const frameBuffer = new Map<string, Buffer>();
 const frameEmitters = new Map<string, EventEmitter>();
-const frameTimers  = new Map<string, ReturnType<typeof setTimeout>>();
+const frameTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const FRAME_TIMEOUT_MS = 15_000; // mark offline if no frame for 15s
 
@@ -24,17 +24,31 @@ function getEmitter(cameraId: string): EventEmitter {
 }
 
 async function setCameraOnline(cameraId: string, isFirst: boolean) {
-  await query("UPDATE cameras SET status = 'online', updated_at = NOW() WHERE id = ?", [cameraId]);
+  await query(
+    "UPDATE cameras SET status = 'online', updated_at = NOW() WHERE id = ?",
+    [cameraId],
+  );
   if (isFirst) {
-    io.emit("camera_status", { type: "camera_status", data: { camera_id: cameraId, status: "online" } });
+    io.emit("camera_status", {
+      type: "camera_status",
+      data: { camera_id: cameraId, status: "online" },
+    });
     logger.info(`🟢 Camera ${cameraId} — status changed to ONLINE`);
   }
 }
 
 async function setCameraOffline(cameraId: string) {
-  await query("UPDATE cameras SET status = 'offline', updated_at = NOW() WHERE id = ?", [cameraId]);
-  io.emit("camera_status", { type: "camera_status", data: { camera_id: cameraId, status: "offline" } });
-  logger.warn(`🔴 Camera ${cameraId} — status changed to OFFLINE (no frames for ${FRAME_TIMEOUT_MS / 1000}s)`);
+  await query(
+    "UPDATE cameras SET status = 'offline', updated_at = NOW() WHERE id = ?",
+    [cameraId],
+  );
+  io.emit("camera_status", {
+    type: "camera_status",
+    data: { camera_id: cameraId, status: "offline" },
+  });
+  logger.warn(
+    `🔴 Camera ${cameraId} — status changed to OFFLINE (no frames for ${FRAME_TIMEOUT_MS / 1000}s)`,
+  );
 }
 
 function resetFrameTimeout(cameraId: string) {
@@ -42,7 +56,10 @@ function resetFrameTimeout(cameraId: string) {
   if (existing) clearTimeout(existing);
   frameTimers.set(
     cameraId,
-    setTimeout(() => setCameraOffline(cameraId).catch(() => {}), FRAME_TIMEOUT_MS),
+    setTimeout(
+      () => setCameraOffline(cameraId).catch(() => {}),
+      FRAME_TIMEOUT_MS,
+    ),
   );
 }
 
@@ -84,8 +101,14 @@ router.put("/:id", async (req: Request, res: Response) => {
     speed_limit,
     detection_confidence,
     pixels_per_meter,
-  } = req.body;
+    homography_points, // HomographyPoints | null | undefined — undefined = leave untouched
+  } = req.body as Partial<Camera>;
   try {
+    // homography_points needs its own assignment (not COALESCE) so a client
+    // can explicitly clear calibration by sending `homography_points: null` —
+    // COALESCE would treat that the same as "not provided" and never clear it.
+    const setHomography = "homography_points" in req.body;
+
     await query(
       `UPDATE cameras SET
         name                 = COALESCE(?, name),
@@ -94,6 +117,7 @@ router.put("/:id", async (req: Request, res: Response) => {
         speed_limit          = COALESCE(?, speed_limit),
         detection_confidence = COALESCE(?, detection_confidence),
         pixels_per_meter     = COALESCE(?, pixels_per_meter),
+        homography_points    = ${setHomography ? "?" : "homography_points"},
         updated_at           = NOW()
        WHERE id = ?`,
       [
@@ -103,6 +127,9 @@ router.put("/:id", async (req: Request, res: Response) => {
         speed_limit ?? null,
         detection_confidence ?? null,
         pixels_per_meter ?? null,
+        ...(setHomography
+          ? [homography_points ? JSON.stringify(homography_points) : null]
+          : []),
         req.params.id,
       ],
     );
@@ -167,7 +194,9 @@ router.put(
     // Broadcast binary frame to WebSocket stream subscribers (low-latency path)
     io.to(`stream:${id}`).emit(`camera_frame:${id}`, jpeg);
     if (isFirst)
-      logger.info(`📹 Camera ${id} — first frame received (MJPEG + WS stream live)`);
+      logger.info(
+        `📹 Camera ${id} — first frame received (MJPEG + WS stream live)`,
+      );
     setCameraOnline(id, isFirst).catch(() => {});
     resetFrameTimeout(id);
     res.status(204).end();

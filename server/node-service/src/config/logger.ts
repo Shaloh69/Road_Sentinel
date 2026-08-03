@@ -1,10 +1,19 @@
 import winston from "winston";
 import dotenv from "dotenv";
+import path from "path";
 
 dotenv.config();
 
 const logLevel = process.env.LOG_LEVEL || "info";
 const isProd = process.env.NODE_ENV === "production";
+
+// LOG_FILE names the combined log; the error log sits alongside it with an
+// "error." prefix (e.g. LOG_FILE=./logs/app.log -> ./logs/error.app.log).
+const combinedLogFile = process.env.LOG_FILE || "logs/combined.log";
+const errorLogFile = path.join(
+  path.dirname(combinedLogFile),
+  `error.${path.basename(combinedLogFile)}`,
+);
 
 // Safe JSON stringify — handles circular references from axios errors etc.
 function safeStringify(obj: unknown): string {
@@ -60,14 +69,14 @@ if (!isProd) {
   transports.push(
     new winston.transports.Console({ format: consoleFormat }),
     new winston.transports.File({
-      filename: "logs/error.log",
+      filename: errorLogFile,
       level: "error",
       maxsize: 5242880,
       maxFiles: 5,
       format: fileFormat,
     }),
     new winston.transports.File({
-      filename: "logs/combined.log",
+      filename: combinedLogFile,
       maxsize: 5242880,
       maxFiles: 5,
       format: fileFormat,

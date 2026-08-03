@@ -35,6 +35,11 @@ class TrafficDetector:
         self._trackers: Dict[str, Dict[str, dict]] = {}  # per-camera tracking state
         self._next_id: Dict[str, int] = {}
 
+        # Per-camera homography cache: camera_id -> (raw_points_dict, 3x3 matrix).
+        # Recomputed only when the stored calibration for that camera changes,
+        # so a normal detect() call is just a cache lookup, not a re-solve.
+        self._homography_cache: Dict[str, tuple] = {}
+
         try:
             # Load YOLOv8 model
             self.model = YOLO(model_path)
@@ -121,11 +126,112 @@ class TrafficDetector:
                 self._next_id[camera_id] = int(new_id) + 1
                 tracks[new_id] = {'bbox': det['bbox'], 'time': now, 'class': det['class']}
 
+    # ── Homography (perspective-corrected) speed ──────────────────────────────
+    # Raw pixel-distance speed (_update_tracks above) is systematically wrong
+    # depending on where in frame a vehicle is tracked: perspective distortion
+    # means a vehicle far from the camera covers fewer pixels per real meter
+    # than one close to the camera. When a camera has been calibrated (4 image
+    # points mapped to their real-world road-plane coordinates via the
+    # Cameras page Calibration Tool — same convention as
+    # inference/camera_calibration.py's calibrate_perspective()), transform
+    # tracked points into real-world meters first, then measure distance there.
+
+    def _get_homography_matrix(self, camera_id: str, homography_points: dict):
+        """Return a cached (or freshly solved) 3x3 perspective transform, or
+        None if homography_points is missing/malformed."""
+        image_points = homography_points.get('image_points')
+        real_points  = homography_points.get('real_points')
+        if not image_points or not real_points or len(image_points) != 4 or len(real_points) != 4:
+            logger.warning(f"[{camera_id}] homography_points must have exactly 4 "
+                            f"image_points and 4 real_points — ignoring")
+            return None
+
+        cached = self._homography_cache.get(camera_id)
+        if cached and cached[0] == homography_points:
+            return cached[1]
+
+        try:
+            src = np.array(image_points, dtype=np.float32)
+            dst = np.array(real_points, dtype=np.float32)
+            matrix = cv2.getPerspectiveTransform(src, dst)
+        except Exception as exc:
+            logger.error(f"[{camera_id}] Failed to solve homography: {exc}")
+            return None
+
+        self._homography_cache[camera_id] = (homography_points, matrix)
+        logger.info(f"[{camera_id}] Homography (re)computed from calibration points")
+        return matrix
+
+    @staticmethod
+    def _bbox_center(bbox: dict) -> tuple:
+        return (bbox['x'] + bbox['width'] / 2, bbox['y'] + bbox['height'] / 2)
+
+    @staticmethod
+    def _transform_point(matrix: np.ndarray, point: tuple) -> tuple:
+        """Map an (x, y) image-pixel point to real-world (x, y) meters."""
+        pt = np.array([[[point[0], point[1]]]], dtype=np.float32)
+        out = cv2.perspectiveTransform(pt, matrix)
+        return float(out[0][0][0]), float(out[0][0][1])
+
+    def _homography_speed(self, matrix: np.ndarray, prev_bbox: dict,
+                           curr_bbox: dict, dt: float) -> Optional[float]:
+        if dt <= 0:
+            return None
+        prev_real = self._transform_point(matrix, self._bbox_center(prev_bbox))
+        curr_real = self._transform_point(matrix, self._bbox_center(curr_bbox))
+        distance_m = math.sqrt(
+            (curr_real[0] - prev_real[0]) ** 2 + (curr_real[1] - prev_real[1]) ** 2
+        )
+        return round((distance_m / dt) * 3.6, 1)  # km/h
+
+    def _update_tracks_homography(self, camera_id: str, detections: list,
+                                   matrix: np.ndarray) -> None:
+        """Same IoU-matching/track-lifecycle logic as _update_tracks, but speed
+        is computed from homography-transformed (real-world meter) coordinates
+        instead of raw pixel distance / pixels_per_meter."""
+        now    = time.time()
+        tracks = self._trackers.setdefault(camera_id, {})
+
+        stale = [tid for tid, t in tracks.items() if now - t['time'] > self.TRACK_TTL]
+        for tid in stale:
+            del tracks[tid]
+
+        matched: set[str] = set()
+        for det in detections:
+            best_id, best_iou = None, self.IOU_THRESH
+            for tid, track in tracks.items():
+                if tid in matched:
+                    continue
+                iou = self._iou(det['bbox'], track['bbox'])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_id  = tid
+
+            if best_id:
+                track = tracks[best_id]
+                dt    = now - track['time']
+                spd   = self._homography_speed(matrix, track['bbox'], det['bbox'], dt)
+                if spd is not None:
+                    det['speed'] = spd
+                    det['speed_source'] = 'homography'
+                track['bbox'] = det['bbox']
+                track['time'] = now
+                matched.add(best_id)
+            else:
+                new_id = str(self._next_id.get(camera_id, 0))
+                self._next_id[camera_id] = int(new_id) + 1
+                tracks[new_id] = {'bbox': det['bbox'], 'time': now, 'class': det['class']}
+
     def detect(self, image_bytes: bytes, confidence: float = None,
-               camera_id: str = "default", pixels_per_meter: float = 0.0) -> List[Dict[str, Any]]:
+               camera_id: str = "default", pixels_per_meter: float = 0.0,
+               homography_points: Optional[dict] = None) -> List[Dict[str, Any]]:
         """
-        Detect vehicles in image. When pixels_per_meter > 0, speed is estimated
-        via per-camera IoU tracking and attached to each detection as 'speed' (km/h).
+        Detect vehicles in image. Speed is attached to each detection as
+        'speed' (km/h) when either calibration is available:
+          - homography_points (preferred, perspective-corrected): a dict with
+            'image_points' and 'real_points', each 4 [x, y] pairs — see
+            _get_homography_matrix() above.
+          - pixels_per_meter > 0 (fallback, simpler): raw pixel-distance / ppm.
         """
         try:
             # Use provided confidence or default
@@ -196,9 +302,17 @@ class TrafficDetector:
 
             logger.debug(f"Detected {len(detections)} vehicles")
 
-            # Speed estimation via per-camera IoU tracker
-            if pixels_per_meter > 0 and detections:
-                self._update_tracks(camera_id, detections, pixels_per_meter)
+            # Speed estimation via per-camera IoU tracker — homography (if
+            # calibrated) takes priority over the simpler pixels_per_meter estimate.
+            if detections:
+                matrix = (
+                    self._get_homography_matrix(camera_id, homography_points)
+                    if homography_points else None
+                )
+                if matrix is not None:
+                    self._update_tracks_homography(camera_id, detections, matrix)
+                elif pixels_per_meter > 0:
+                    self._update_tracks(camera_id, detections, pixels_per_meter)
 
             return detections
 

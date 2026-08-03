@@ -13,6 +13,13 @@ interface CameraRow {
   detection_confidence: number;
 }
 
+// Camera B's IP is DHCP-assigned, not static — .108 is provisional (matches
+// setup_pi5.sh and camera_reboot_autostart_setup.sh as of Phase 0; it previously
+// disagreed with those two, defaulting to .102 here). Treat this default as a
+// fallback only: it's used once, on first-ever seed (ON DUPLICATE KEY UPDATE
+// below is a no-op), so it never overwrites an IP camera_sender.py's
+// auto-discovery has since persisted via PUT /api/cameras/:id. That
+// discovery path — not this hardcoded value — is the real fix for IP drift.
 const DEFAULT_CAMERAS: CameraRow[] = [
   {
     id: "CAM-A-001",
@@ -31,7 +38,7 @@ const DEFAULT_CAMERAS: CameraRow[] = [
     name: "Camera B",
     location: "Busay Blind Curve — Exit",
     rtsp_url:
-      process.env.CAM_B_RTSP ?? "rtsp://192.168.8.102:554/cam/realmonitor",
+      process.env.CAM_B_RTSP ?? "rtsp://192.168.8.108:554/cam/realmonitor",
     fps: 15,
     resolution: "640x480",
     pixels_per_meter: 8.0,
