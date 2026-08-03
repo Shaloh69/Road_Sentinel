@@ -1,268 +1,134 @@
-# YOLOv8 Training Pipeline
+# YOLO26 Training Pipeline
 
-This folder contains scripts for training custom YOLOv8 models for vehicle detection, speed measurement, and crash detection.
-
-## 📊 Dataset Options (Choose One)
-
-### ⭐ **RECOMMENDED: Roboflow Universe** (Easiest!)
-- ✅ Already in YOLO format (no conversion needed!)
-- ✅ 50,000+ datasets available
-- ✅ Traffic surveillance, night vision, overhead camera datasets
-- ✅ Setup time: 5 minutes
-- ✅ Training time: 3-4 hours
-- 📖 **See:** [YOLO_NATIVE_DATASETS.md](YOLO_NATIVE_DATASETS.md)
-
-### Option 2: AI City Challenge (Best for Overhead Cameras)
-- 🎯 Perfect for traffic surveillance and angled cameras
-- 🎯 Includes speed estimation ground truth
-- ⚠️ Requires conversion script (30-60 min setup)
-- 📖 **See:** [OVERHEAD_CAMERA_GUIDE.md](OVERHEAD_CAMERA_GUIDE.md)
-
-### Option 3: COCO Dataset (General Object Detection)
-- 🎯 General purpose, includes vehicles
-- ⚠️ Also includes pizzas, dogs, etc. (80 classes)
-- ⚠️ Not specialized for traffic surveillance
-- 📖 Covered in this README below
+Scripts for training vehicle-detection and crash/incident-detection models for Road Sentinel from your own merged Busay datasets. (This replaces an earlier version of this file that documented `train_vehicle_detector.py` and `quick_train.py` — neither exists in this repo. The real trainer is `train.py`. See `documentation.md §15` for the full drift history.)
 
 ## Setup
 
-### 1. Create Virtual Environment (Recommended)
-
 ```bash
-# Navigate to this folder
-cd scripts/training
-
-# Create virtual environment
+cd training
 python3 -m venv venv_training
-
-# Activate virtual environment
-# On Linux/Mac:
-source venv_training/bin/activate
-# On Windows:
-# venv_training\Scripts\activate
+source venv_training/bin/activate   # Windows: venv_training\Scripts\activate
 ```
 
-### 2. Install PyTorch with GPU Support (If you have NVIDIA GPU)
-
-⚠️ **IMPORTANT:** Python 3.8-3.12 required (NOT 3.13+)
+⚠️ **Python 3.9–3.12 required (NOT 3.13+)** — PyTorch/CUDA wheels lag behind.
 
 ```bash
-# For CUDA 12.1+ (RTX 30/40 series - RECOMMENDED)
+# GPU (RTX 30/40 series — recommended)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# For CUDA 11.8 (older GPUs)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-# For CPU only
+# CPU only
 pip install torch torchvision torchaudio
-```
 
-### 3. Install Other Dependencies
-
-```bash
-# Install all training dependencies
 pip install -r requirements.txt
+python -c "from ultralytics import YOLO; import torch; print('Setup OK')"
 ```
 
-### 4. Verify Installation
+## Dataset
+
+Built from your own Roboflow exports, merged via `run_merge_busay.py` — not an auto-downloaded generic dataset. Place raw exports in `../datasets/downloaded/`, then:
 
 ```bash
-# Check all dependencies
-python -c "from ultralytics import YOLO; import torch; print('✅ Setup complete!')"
-
-# Check GPU availability
-python -c "import torch; print('GPU Available:', torch.cuda.is_available())"
+python run_merge_busay.py
 ```
 
-## Usage
+This produces `../datasets/processed/busay_vehicle_detection/` (merged Traffic Surveillance + Day/Night) and `../datasets/processed/busay_accident_detection/` (Accident Detection, prepared but not merged with anything else).
 
-### 🚀 Quick Start with Roboflow (RECOMMENDED)
+See `DATASET_STRATEGY_GUIDE.md` for merge-vs-single-dataset guidance and `YOLO_NATIVE_DATASETS.md` for the Roboflow Universe path.
 
-**Fastest way to train for your Busay project!**
-
-1. **Get FREE API key:**
-   - Go to: https://roboflow.com
-   - Sign up (free)
-   - Settings → API → Copy key
-
-2. **Browse datasets:**
-   - Go to: https://universe.roboflow.com
-   - Search for: "traffic surveillance overhead"
-   - Find dataset with 5,000+ images
-
-3. **Download and train:**
-   ```bash
-   # Run the download guide
-   python download_roboflow_datasets.py
-
-   # Follow the instructions, then train:
-   from roboflow import Roboflow
-   from ultralytics import YOLO
-
-   # Download dataset (already in YOLO format!)
-   rf = Roboflow(api_key='YOUR_API_KEY')
-   project = rf.workspace('workspace-name').project('project-name')
-   dataset = project.version(1).download('yolov8')
-
-   # Train immediately - no conversion needed!
-   model = YOLO('yolov8n.pt')
-   model.train(data=f'{dataset.location}/data.yaml', epochs=100, batch=4)
-   ```
-
-**Total time:** 5 min setup + 3-4 hours training = ✅ Production ready in one day!
-
-📖 **Full guide:** [YOLO_NATIVE_DATASETS.md](YOLO_NATIVE_DATASETS.md)
-
----
-
-### Quick Start with COCO (Alternative)
+## Training — `train.py`
 
 ```bash
-# Activate environment
-source venv_training/bin/activate
-
-# Run quick training (simplest method)
-python quick_train.py
+python train.py --dataset {vehicle,accident,both} --model-size {n,s,m,l,x} [--epochs N] [--batch N] [--imgsz N] [--resume]
 ```
 
-This will:
-- Auto-download COCO dataset (~20GB)
-- Auto-download YOLOv8 weights
-- Start training immediately
-- Save results to `runs/vehicle_speed/quick_v1/`
-
-### Advanced Training
+| Argument | Default | Notes |
+|----------|---------|-------|
+| `--dataset` | *(required)* | `vehicle`, `accident`, or `both` (trains sequentially) |
+| `--model-size` | `s` | YOLO26 nano → xlarge |
+| `--epochs` | 100 | |
+| `--batch` | auto | Auto-picked from detected GPU VRAM if omitted |
+| `--resume` | off | Resume from last checkpoint |
+| `--export` | — | `onnx` / `torchscript` / `engine`, after training |
 
 ```bash
-# Train with custom parameters
-python train_vehicle_detector.py --model n --epochs 100 --batch 16
+# Vehicle detection
+python train.py --dataset vehicle --model-size n --epochs 100
 
-# Available options:
-#   --model {n,s,m,l,x}  - Model size (n=nano, fastest)
-#   --epochs INT         - Number of training epochs
-#   --batch INT          - Batch size (reduce if out of memory)
-#   --imgsz INT          - Input image size
-#   --project STR        - Project name
-#   --name STR           - Experiment name
+# Accident/crash detection (dataset ready; not yet run on this checkout)
+python train.py --dataset accident --model-size n --epochs 100
+
+# Both, one after another
+python train.py --dataset both --model-size s --epochs 100
 ```
 
-### Test Trained Model
+**Output:** `../models/runs/<dataset>/<dataset>_yolo26<size>_<timestamp>/weights/{best,last,epochN}.pt`
+
+## Testing a Trained Model
+
+`validate.py` (name is a bit misleading — it runs `model.predict()` for a visual/console check, not `model.val()` for metrics):
 
 ```bash
-# Test on a video
-python train_vehicle_detector.py \
-  --test \
-  --model-path runs/vehicle_speed/coco_v1/weights/best.pt \
-  --source your_video.mp4
+python validate.py --model ../models/runs/vehicle/vehicle_yolo26n_<timestamp>/weights/best.pt --source your_video.mp4
 ```
+
+To exercise the deployed AI service instead (HTTP, not a direct model load), use `../testing/test_video.py` / `test_images.py` / `test_ai.py`.
+
+## Deploying a Trained Model
+
+There's no `models/production/` symlink step. Point the AI service at your weight file directly:
+
+```bash
+cd ../server/ai-service
+# .env: TRAFFIC_MODEL_PATH=../../models/runs/vehicle/vehicle_yolo26n_<timestamp>/weights/best.pt
+python -m app.main
+```
+
+Check the startup log for `custom_model=True` — `False` means it fell back to stock `yolov8n.pt` (usually a bad/missing path).
 
 ## Files
 
-- `train_vehicle_detector.py` - Full training pipeline with options
-- `quick_train.py` - Simplified one-command training
-- `requirements.txt` - Python dependencies for training
-- `README.md` - This file
+| File | Purpose |
+|------|---------|
+| `train.py` | Trainer (YOLO26, dataset/model-size driven CLI above) |
+| `validate.py` | Predict/test a local `.pt` against a video/image/folder |
+| `run_merge_busay.py` | Interactive dataset-merge wrapper — run first |
+| `merge_busay_datasets.py` | Merge logic (`run_merge_busay.py` calls into this) |
+| `analyze_datasets.py` | Compare available datasets (image counts, classes) |
+| `convert_aicity_track1_to_yolo.py` / `convert_aicity_track4_to_yolo.py` | AI City Challenge → YOLO format converters |
+| `download_roboflow_datasets.py` | Roboflow SDK download helper |
+| `download_test_video.py` | Pulls a few stock traffic videos for manual testing |
 
-## Training Options
+## Model Sizes
 
-### Model Sizes
+| Model | Size | Speed | Accuracy |
+|-------|------|-------|----------|
+| YOLO26n | Nano | Fastest | Good — real-time |
+| YOLO26s | Small | Fast | Better |
+| YOLO26m | Medium | Moderate | Best for 8GB VRAM |
+| YOLO26l/x | Large/XL | Slow | Not recommended under 8GB VRAM |
 
-| Model | Size | Speed | Accuracy | Use Case |
-|-------|------|-------|----------|----------|
-| YOLOv8n | Nano | Fastest | Good | Real-time, mobile |
-| YOLOv8s | Small | Fast | Better | Balanced performance |
-| YOLOv8m | Medium | Moderate | Best | High accuracy |
-| YOLOv8l | Large | Slow | Excellent | Research, offline |
-| YOLOv8x | XLarge | Slowest | Best | Maximum accuracy |
-
-### Training Time Estimates (100 epochs, YOLOv8n)
+## Training Time Estimates (100 epochs, nano)
 
 | Hardware | Time |
 |----------|------|
 | RTX 4090 | 4-6 hours |
 | RTX 3080 | 6-10 hours |
 | RTX 3060 Ti | 10-15 hours |
-| GTX 1660 Ti | 15-24 hours |
-| CPU only | 5-7 days ⚠️ |
-
-### Batch Size Guidelines
-
-| GPU VRAM | Recommended Batch |
-|----------|------------------|
-| 12GB+ | 16-32 |
-| 8GB | 16 |
-| 6GB | 8 |
-| 4GB | 4 |
-| CPU | 2-4 |
-
-## Dataset
-
-### COCO 2017
-- **Auto-downloads** on first training run
-- **Size:** ~20GB
-- **Images:** 330,000+ with annotations
-- **Vehicle classes:** bicycle, car, motorcycle, bus, truck
-- **Storage needed:** ~30GB total (dataset + outputs)
-
-## Output Structure
-
-After training:
-```
-runs/vehicle_speed/your_experiment/
-├── weights/
-│   ├── best.pt          ← Use this for deployment!
-│   └── last.pt          ← Last checkpoint
-├── results.png          ← Training curves
-├── confusion_matrix.png ← Performance metrics
-└── ...
-```
+| CPU only | Days — use a cloud GPU instead |
 
 ## Troubleshooting
 
-### CUDA Out of Memory
+**CUDA Out of Memory**
 ```bash
-# Reduce batch size
-python train_vehicle_detector.py --batch 4
-
-# Or use smaller model
-python train_vehicle_detector.py --model n --batch 8
+python train.py --dataset vehicle --model-size n --batch 4
 ```
 
-### Slow Training (CPU)
-- Consider using free GPU: Google Colab, Kaggle
-- Reduce epochs for testing: `--epochs 50`
-- Use pre-trained model without fine-tuning
+**Dataset not found** — run `python run_merge_busay.py` first; confirm `../datasets/processed/<name>/data.yaml` exists.
 
-### Dataset Won't Download
-- Check internet connection
-- Ensure ~30GB free space
-- Download will resume if interrupted
-
-## Virtual Environment Management
-
-```bash
-# Activate environment
-source venv_training/bin/activate  # Linux/Mac
-# venv_training\Scripts\activate   # Windows
-
-# Deactivate when done
-deactivate
-
-# Remove environment (if needed)
-rm -rf venv_training
-```
-
-## Notes
-
-- **First run:** Will download COCO dataset (~20GB)
-- **GPU recommended:** CPU training is very slow
-- **Storage:** Ensure 30GB+ free space
-- **RAM:** 8GB minimum, 16GB+ recommended
-- **Results:** Saved in `runs/` folder (auto-created)
+**Import error on `ultralytics`** — `pip install ultralytics>=8.3.0` (YOLO26 needs a recent version).
 
 ## Next Steps
 
 1. Train a model with this folder's environment
-2. Copy `best.pt` to `../download/` folder
-3. Update `auto_download_coco.py` to use your trained model
-4. Run speed detection with custom-trained model
+2. Point `server/ai-service/.env`'s `TRAFFIC_MODEL_PATH`/`INCIDENT_MODEL_PATH` at the resulting `best.pt`
+3. Restart the AI service and confirm `custom_model=True` in its startup log
+4. Calibrate cameras for perspective-corrected speed via the web client's Cameras → Calibration Tool

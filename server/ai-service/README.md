@@ -227,22 +227,23 @@ python -m app.main
 
 ### Available Test Scripts
 
-The AI service includes multiple test scripts for different use cases:
+**All test scripts live in the top-level `testing/` folder, not here** — an earlier version of this doc claimed they lived in `server/ai-service/`, and also referenced `test_visual_pro.py`/`test_visual_optimal.py`, which don't exist anywhere in this repo. Run them from `testing/`; they talk to whichever AI service `AI_SERVICE_URL` (default `http://localhost:8000`) points at, so the service in this folder just needs to be running.
 
-| Script | Purpose | Use Case |
-|--------|---------|----------|
-| `test_camera.py` | **Camera testing** | Auto-detect cameras, live testing with YOLO26 |
-| `test_visual.py` | **Visual GUI testing** | Real-time video/camera with GUI, statistics |
-| `test_visual_pro.py` | **Advanced tracking** | DeepSORT tracking, vehicle counting |
-| `test_video.py` | **Video file testing** | Process video files frame-by-frame |
-| `test_images.py` | **Image testing** | Test on single images or folders |
-| `test_ai.py` | **Quick API test** | Simple API endpoint test |
+| Script | Purpose |
+|--------|---------|
+| `testing/test_camera.py` | Camera testing — auto-detect cameras, live overlay with optional AI |
+| `testing/test_visual.py` | Real-time GUI with statistics (video file or live camera) |
+| `testing/test_video.py` | Process a video file frame-by-frame against `/api/detect` |
+| `testing/test_images.py` | Test on single images or folders |
+| `testing/test_ai.py` | Quick API smoke test (health, stats, `/api/detect*`) |
 
-### 1. Test Camera (NEW!) 🎥
+### 1. Test Camera 🎥
 
-**Auto-detect and connect to any available camera with optional YOLO26 detection.**
+**Auto-detect and connect to any available camera with optional detection.**
 
 ```bash
+cd ../../testing
+
 # List all available cameras
 python test_camera.py --list
 
@@ -271,19 +272,10 @@ See [CAMERA_TEST_GUIDE.md](../../CAMERA_TEST_GUIDE.md) for detailed documentatio
 
 ### 2. Quick Test (Sample Image)
 
-Open a **new terminal** (keep the service running), activate venv, and run:
-
-```powershell
-# Windows
-cd C:\Projects\Thesis\2026\RoadSentinel\server\ai-service
-.\venv\Scripts\Activate.ps1
-python test_ai.py
-```
+Open a **new terminal** (keep the service running) and run, from the repo root:
 
 ```bash
-# Linux/macOS
-cd /home/user/Road_Sentinel/server/ai-service
-source venv/bin/activate
+cd testing
 python test_ai.py
 ```
 
@@ -320,12 +312,6 @@ python test_visual.py path/to/video.mp4
 
 # Test with live camera
 python test_visual.py 0  # Camera index 0
-```
-
-**For advanced tracking with vehicle counting:**
-
-```bash
-python test_visual_pro.py path/to/video.mp4
 ```
 
 ### 5. Test with Images
@@ -459,28 +445,20 @@ For CPU inference, set `DEVICE=cpu` in `.env` (10-20x slower).
 ## Project Structure
 
 ```
-app/
-├── models/
-│   ├── traffic_detector.py      # YOLOv8 traffic detection
-│   └── incident_detector.py     # YOLOv8 incident detection
-└── main.py                       # FastAPI application
+server/ai-service/
+├── app/
+│   ├── models/
+│   │   ├── traffic_detector.py   # Detection + homography/pixels-per-meter speed
+│   │   └── incident_detector.py  # Incident detection (heuristic fallback until a real model is trained)
+│   └── main.py                    # FastAPI application, model-path resolution, isHeuristic flagging
+├── models/                        # Not committed — point .env's TRAFFIC_MODEL_PATH/
+│                                   # INCIDENT_MODEL_PATH here, or at models/runs/ at the repo root
+├── .env / .env.example
+├── requirements.txt / requirements-cpu.txt
+└── README.md, TESTING.md, CLOUDFLARE_SELF_HOSTING.md
 
-models/                           # Model weights directory
-├── traffic.pt                    # Traffic detection weights
-└── incident.pt                   # Incident detection weights
-
-# Test Scripts
-test_camera.py                    # Camera testing with auto-detection ⭐ NEW
-test_visual.py                    # Real-time visual testing with GUI
-test_visual_pro.py                # Advanced tracking with DeepSORT
-test_visual_optimal.py            # Performance-optimized visual testing
-test_video.py                     # Video file testing
-test_images.py                    # Image batch testing
-test_ai.py                        # Quick API test
-
-# Documentation
-TESTING.md                        # Complete testing guide
-README.md                         # This file
+# Test scripts (top-level testing/, not here — see the note above)
+testing/test_camera.py, test_visual.py, test_video.py, test_images.py, test_ai.py
 ```
 
 ---
