@@ -120,15 +120,35 @@ Opens a Cloudflare quick tunnel for each of the three services and prints the as
 
 ## Wiring up the tunnel URLs
 
-Quick-tunnel URLs change on every restart, so after each `tunnel.bat` run:
+Quick-tunnel URLs are regenerated **every time cloudflared restarts** — including on reboot. After any tunnel restart, just run:
 
-1. `client\web\.env.local` → `NEXT_PUBLIC_API_URL=https://<node-url>.trycloudflare.com`
-2. `server\node-service\.env` → `CORS_ORIGIN=https://<client-url>.trycloudflare.com`
-3. `server\node-service\.env` → `AI_SERVICE_URL=https://<ai-url>.trycloudflare.com`
+```bat
+powershell -ExecutionPolicy Bypass -File rewire_tunnels.ps1
+```
 
-Restart the Node service and client afterward so they pick up the changes.
+It reads the current URLs out of `.tunnels\*.log`, updates the client's `NEXT_PUBLIC_API_URL` and Node's `CORS_ORIGIN`, restarts both services, verifies the CORS header actually comes back, and prints your URLs.
 
-> If you get tired of re-wiring these, a **named** Cloudflare tunnel with a real domain gives you a fixed URL. Quick tunnels were chosen deliberately here (no account or domain required) with this tradeoff accepted.
+### Two traps this script exists to avoid
+
+**1. "Cannot reach the API" in the browser while `curl` returns 200.**
+If Node's `CORS_ORIGIN` doesn't name the client's *current* tunnel origin, responses come back without an `Access-Control-Allow-Origin` header. `curl` doesn't care and shows a healthy `200`; a browser blocks the request entirely. So the API looks fine from the command line while the dashboard appears completely broken. To check for it directly:
+
+```bat
+curl -s -i -H "Origin: <client-url>" <node-url>/api/analytics/summary
+```
+
+If there's no `Access-Control-Allow-Origin` line in the response, that's the problem.
+
+**2. `Stop-ScheduledTask` doesn't actually stop Node.**
+The task launches `npm`, which spawns `nodemon`, which spawns `node`. Stopping the task leaves that child chain alive holding the **old** environment — so an edited `.env` silently has no effect and the symptom above persists through what looks like a restart. The node processes have to be killed explicitly:
+
+```powershell
+Get-Process node | Stop-Process -Force
+```
+
+> `AI_SERVICE_URL` deliberately stays on `http://localhost:8000`. Node and the AI service run on the same machine, so routing that hop out through Cloudflare and back would add latency for nothing. The AI tunnel exists only for external testing.
+
+> If re-wiring after every restart gets tedious, a **named** Cloudflare tunnel with a real domain gives a fixed URL. Quick tunnels were chosen deliberately here (no account or domain needed), with this tradeoff accepted.
 
 ## Setting up the Raspberry Pis
 
