@@ -5,234 +5,99 @@ Backend services for the Road Sentinel traffic monitoring system.
 ## Architecture
 
 ```
-┌─────────────────┐
-│  Raspberry Pi   │  Camera + RTSP Streaming
-└────────┬────────┘
-         │ RTSP Stream (rtsp://ip:8554/camera1)
+┌──────────────────┐
+│  Raspberry Pi     │  camera_sender.py: RTSP capture, pushes frames to
+│  (Camera A or B)  │  the AI service and streams to Node over Socket.IO
+└────────┬──────────┘
+         │ POST /api/detect (+homography) · Socket.IO pi_frame
+         ▼
+┌──────────────────────────────────────────────┐      ┌─────────────────────┐
+│         Node.js Service (:3001)               │◄────►│  MySQL (self-hosted,│
+│  - Express REST API                            │      │  local-only)        │
+│  - JWT auth + authenticated /admin namespace   │      └─────────────────────┘
+│  - Socket.IO (public ns + /admin ns)           │
+│  - Webhook alerts on critical incidents        │
+└────────┬───────────────────────────────────────┘
+         │ HTTP API calls
          ▼
 ┌──────────────────────────────────────────────┐
-│         Node.js Main Service                 │
-│  - Express.js REST API                       │
-│  - RTSP Stream Management                    │
-│  - MySQL Database (Aiven)                    │
-│  - Supabase Storage (Images/Videos)          │
-│  - WebSocket (Real-time updates)             │
-└────────┬─────────────────────────────────────┘
-         │ HTTP API Calls
-         ▼
-┌──────────────────────────────────────────────┐
-│      Python AI Microservice                  │
-│  - FastAPI                                   │
-│  - YOLOv8 Traffic Detection                  │
-│  - YOLOv8 Incident Detection                 │
-│  - GPU Accelerated Inference                 │
+│      Python AI Service (:8000)                │
+│  - FastAPI                                     │
+│  - YOLO26 vehicle detection & tracking         │
+│  - Heuristic incident detection (no trained    │
+│    crash model yet — clearly labeled as such)  │
+│  - Homography-corrected speed estimation       │
+│  - Local disk media storage                    │
 └──────────────────────────────────────────────┘
 ```
 
 ## Services
 
-### 1. Node.js Service (`node-service/`)
+### 1. Node service (`node-service/`)
 
-Main backend service handling:
-- RTSP video stream processing
-- Database operations (MySQL on Aiven)
-- File storage (Supabase Storage)
-- WebSocket real-time updates
-- RESTful API for frontend
-
-**Tech Stack:**
-- Node.js + Express + TypeScript
-- MySQL (Aiven Cloud)
-- Supabase Storage
-- Socket.IO
+Express + TypeScript + Socket.IO. REST API, MySQL persistence, JWT admin auth, real-time updates, admin terminal (relays shell commands to itself or either Raspberry Pi over an authenticated Socket.IO namespace — no SSH or open ports needed on the Pis), webhook alerting.
 
 [View Node Service README](./node-service/README.md)
 
-### 2. Python AI Service (`ai-service/`)
+### 2. Python AI service (`ai-service/`)
 
-AI/ML microservice for:
-- Vehicle detection and classification
-- Speed estimation
-- Incident detection (crashes, violations)
-- Real-time inference
-
-**Tech Stack:**
-- Python + FastAPI
-- YOLOv8 (Ultralytics)
-- PyTorch
-- OpenCV
+FastAPI. Vehicle detection/classification/tracking, homography-corrected speed estimation, incident detection (heuristic until a crash model is trained), local media storage.
 
 [View AI Service README](./ai-service/README.md)
 
-## Database Schema
+## Database
 
-MySQL schema is located in `database/mysql_schema.sql`
+MySQL, self-hosted and local-only — bound to `localhost`, never exposed publicly (not even through Tailscale). For local development, `docker-compose.yml` at the repo root brings up a MySQL 8.0 container plus Adminer (a web DB browser at `http://localhost:8080`); in production it runs the same way directly on `irm-pc`. Aiven was used earlier and dropped entirely in Phase 0.5 after its hostname went NXDOMAIN — there's no migration path from it, just a fresh schema.
 
-**Tables:**
-- `cameras` - Camera configuration and metadata
-- `detections` - Vehicle detection records
-- `incidents` - Traffic incidents and alerts
-- `analytics_hourly` - Aggregated hourly statistics
-- `recordings` - Video recording metadata
+Schema is defined in `database/mysql_schema.sql` (a generated reference) and applied by `node-service/src/database/migrate.ts`, which is the **authoritative** source and idempotent — safe to run against a database that already has some or all of the tables.
 
-## Quick Start
+**Tables:** `cameras`, `detections`, `incidents`, `hourly_analytics`, `recordings`.
 
-### Prerequisites
+## Quick start
 
-- **Node.js** 18+ (for node-service)
-- **Python** 3.10+ (for ai-service)
-- **MySQL** (Aiven Cloud account)
-- **Supabase** account for storage
-- **NVIDIA GPU** (optional, for faster AI inference)
+The easiest path is `start.bat` at the repo root (Windows) — brings up local MySQL, both services, and the client together, with sensible local-dev defaults.
 
-### 1. Setup MySQL Database
+To run the services individually:
 
 ```bash
-# Connect to your Aiven MySQL instance and run the schema
-mysql -h your-host.aivencloud.com -u avnadmin -p road_sentinel < database/mysql_schema.sql
-```
+# MySQL (local Docker, from repo root)
+docker compose up -d
 
-### 2. Setup Node.js Service
-
-```bash
+# Node service
 cd node-service
 npm install
-cp .env.example .env
-# Edit .env with your credentials
-npm run dev
-```
+cp .env.example .env   # see docker-compose.yml for the matching local DB credentials
+npm run dev             # http://localhost:3001
 
-### 3. Setup Python AI Service
-
-```bash
+# AI service
 cd ai-service
-pip install -r requirements.txt
-cp .env.example .env
-# Place your YOLOv8 models in models/ directory
-python -m app.main
+python -m venv venv && venv/Scripts/activate   # or source venv/bin/activate on Linux/macOS
+pip install -r requirements.txt   # or requirements-cpu.txt on CPU-only machines
+cp .env.example .env   # set TRAFFIC_MODEL_PATH to your trained weight
+python -m app.main      # http://localhost:8000
 ```
 
-### 4. Verify Services
+Verify: `GET http://localhost:3001/health` and `GET http://localhost:8000/health`.
 
-- Node Service: http://localhost:3001/health
-- AI Service: http://localhost:8000/health
+## Data flow
 
-## Environment Variables
+1. Each Raspberry Pi's `camera_sender.py` captures its RTSP stream and POSTs frames to the AI service for inference (`/api/detect`), while separately streaming raw frames to the Node service over Socket.IO (`pi_frame`) for the live dashboard view.
+2. The AI service returns detections (and, once a crash model exists, real incidents — currently heuristic) to the Pi script, which forwards them to Node.
+3. Node stores results in MySQL and broadcasts them over Socket.IO to connected dashboard clients.
+4. Critical incidents optionally fire a webhook (`ALERT_WEBHOOK_URL`).
+5. The dashboard (`client/web`) and the public `/status` page both read live state from Node's REST API and WebSocket events.
 
-### Node Service
+## Security notes
 
-```env
-# Database
-DB_HOST=your-aiven-host.aivencloud.com
-DB_USER=avnadmin
-DB_PASSWORD=your-password
-DB_NAME=road_sentinel
-
-# Supabase
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-key
-
-# AI Service
-AI_SERVICE_URL=http://localhost:8000
-```
-
-### AI Service
-
-```env
-TRAFFIC_MODEL_PATH=./models/traffic.pt
-INCIDENT_MODEL_PATH=./models/incident.pt
-DEVICE=cuda  # or 'cpu'
-```
-
-## Data Flow
-
-1. **Raspberry Pi** streams video via RTSP
-2. **Node Service** pulls RTSP stream, extracts frames
-3. **Node Service** sends frames to **AI Service** for inference
-4. **AI Service** returns detections and incidents
-5. **Node Service** stores results in MySQL and Supabase
-6. **Node Service** broadcasts updates via WebSocket to frontend
-7. **Frontend** displays live detections and statistics
-
-## API Endpoints
-
-### Node Service (Port 3001)
-
-- `GET /health` - Health check
-- `GET /api/status` - System status
-- `GET /api/cameras` - List cameras
-- `GET /api/detections` - Get detections
-- `GET /api/incidents` - Get incidents
-- `GET /api/analytics/hourly` - Hourly statistics
-
-### AI Service (Port 8000)
-
-- `GET /health` - Health check
-- `POST /api/detect` - Combined detection
-- `POST /api/detect/traffic` - Traffic only
-- `POST /api/detect/incidents` - Incidents only
-
-## WebSocket Events
-
-**Client → Server:**
-- `subscribe_camera` - Subscribe to camera updates
-- `unsubscribe_camera` - Unsubscribe
-
-**Server → Client:**
-- `detection` - New vehicle detection
-- `incident` - New incident
-- `camera_status` - Camera status update
-
-## Docker Deployment (Coming Soon)
-
-```bash
-docker-compose up -d
-```
-
-## Production Considerations
-
-1. **Scaling**: Use multiple AI service instances for handling multiple cameras
-2. **Load Balancing**: Nginx reverse proxy for Node service
-3. **Monitoring**: Prometheus + Grafana for metrics
-4. **Logging**: Centralized logging (ELK stack)
-5. **Security**:
-   - Use SSL/TLS for all connections
-   - Secure RTSP streams
-   - Implement API authentication
-   - Enable Supabase Row Level Security
-
-## Performance Optimization
-
-- **Frame Processing Rate**: Process 1-5 FPS instead of 30 FPS
-- **Batch Processing**: Process multiple frames together
-- **Model Optimization**: Use YOLOv8n (nano) for faster inference
-- **Caching**: Cache analytics data
-- **Database Indexing**: Proper indexes on timestamp columns
+- JWT-authenticated admin actions (login rate-limited); a separate, non-authenticated public Socket.IO namespace exposes only read-only live status.
+- CORS is an explicit allowlist, not a wildcard.
+- MySQL is never exposed outside `localhost`.
+- Raspberry Pi agents authenticate with a shared `PI_AGENT_TOKEN`, not SSH/open ports.
 
 ## Troubleshooting
 
-### Node Service won't connect to MySQL
-- Check Aiven firewall rules
-- Verify SSL certificate
-- Check credentials in .env
+**Node service can't connect to MySQL** — check `DB_HOST`/`DB_PORT`/credentials in `node-service/.env`; if using the local Docker container, confirm it's running (`docker compose ps`) and healthy.
 
-### AI Service slow inference
-- Ensure CUDA is properly installed
-- Check GPU availability
-- Consider using smaller YOLOv8 model (v8n instead of v8x)
+**AI service falls back to the stock model** — check `TRAFFIC_MODEL_PATH` in `ai-service/.env` (resolves relative to `server/ai-service/`) and the startup log line `Traffic detector ready — custom_model=...`.
 
-### RTSP stream fails
-- Verify Raspberry Pi IP and port
-- Check network connectivity
-- Ensure MediaMTX is running on Raspberry Pi
-
-## Contributing
-
-1. Create feature branch
-2. Make changes
-3. Test thoroughly
-4. Submit pull request
-
-## License
-
-MIT
+**RTSP stream fails on a Pi** — `camera_sender.py` has ONVIF/subnet-scan auto-discovery that persists a working IP back to Node; a hardcoded IP going stale is expected occasionally since Camera B's address is DHCP-assigned, not static.

@@ -66,6 +66,29 @@ All 9 items done. Static verification (tsc/eslint/py_compile all clean) plus a *
 
 ---
 
+### Phase 0.5 — REVISITED (2026-08-04): mostly unblocked
+
+Re-checked everything above rather than trusting the stale table. What actually changed:
+
+| Item | Was | Now |
+|---|---|---|
+| Tailscale on both Pis | ⛔ not in tailnet | ✅ **both online and reachable** — `road-sentinel-pi4` at `100.98.53.95` (ping 38-154ms) and `road-sentinel-pi5` at `100.94.18.9` (ping 6-113ms), both verified live, not assumed from the status listing |
+| Server PC | `irm-pc`, SSH-blocked | ✅ **`irm-pc` at `100.120.27.110`**, pingable (109-551ms). This supersedes `irm-pc` as the deployment target throughout |
+| Aiven MySQL | ⛔ NXDOMAIN, unresolved question | ✅ **dropped entirely** per your decision — no recovery attempted, no `mysqldump`, credentials stripped from the repo. Replaced with a fresh local MySQL (below) |
+| MySQL | ⛔ nothing usable | ✅ **local Docker MySQL 8.0 working**, schema initialized from `migrate.ts` against a genuinely empty database — see the migration-bug find below |
+| `cloudflared` | not installed | ✅ installed (`winget install Cloudflare.cloudflared`, v2026.8.2); `tunnel.bat` added to launch quick tunnels for all three services |
+| Tailscale **SSH** to the Pis | n/a | ⛔ **still blocked** — `ssh pi@100.98.53.95` returns `tailnet policy does not permit you to SSH as user "pi"` (also tried `dumporshemjoshua`, `shem`, `admin`, `ubuntu`, `root`). This is a **tailnet ACL setting**, not a Pi-side problem — needs an `ssh` rule in the Tailscale admin console's Access Controls. Network reachability itself is fine, so services on the Pis are reachable by IP:port regardless |
+
+**Real bug found and fixed while standing up the fresh database** — this is the kind of thing that only surfaces against a genuinely empty DB: `migrate.ts` used `ALTER TABLE cameras ADD COLUMN IF NOT EXISTS homography_points ...`, but **MySQL has no `ADD COLUMN IF NOT EXISTS` clause** (that's MariaDB/Postgres syntax). Verified directly against real MySQL 8.0.46 — it's a hard parse error (`ER_PARSE_ERROR 1064`), not a silently-ignored no-op. Every migration run against a fresh database was failing at that statement and taking the whole server down with it. Fixed by dropping the unsupported clause and catching `ER_DUP_FIELDNAME`/`ER_DUP_KEYNAME` in `runMigrations()` instead, which preserves idempotency the way MySQL actually supports it. Confirmed working: fresh DB → `MySQL database connected successfully` → `Database migrations applied successfully` → `Camera seed complete (CAM-A-001, CAM-B-002)`.
+
+**Storage location (your instruction):** MySQL data is a bind mount at `./.data/mysql` rather than a Docker named volume, so the database files live on **D:** alongside the repo instead of inside Docker Desktop's VHDX on C:. Checked actual free space first: C: has ~27 GB free (95% used), D: ~30 GB free (87% used) — and detections/recordings only grow, so this matters. Both `.data/` and `.tunnels/` are gitignored. MySQL's port binding was also tightened to `127.0.0.1:3307` (was `0.0.0.0`), so it's genuinely localhost-only — never exposed through Tailscale or the tunnel, per the plan's security requirement.
+
+**Cloudflare quick tunnels** (`tunnel.bat`): opens one quick tunnel each for the Node API, AI service, and client. Deliberately does **not** tunnel MySQL. Note the real tradeoff, since it affects how you use them: quick-tunnel URLs are randomly regenerated on every restart, so they're fine for public/browser access from outside the tailnet but a poor fit for Pi→server traffic. The Pi setup scripts therefore default to the **Tailscale** address (`100.120.27.110`), which is stable — you can still override with a tunnel URL as the first argument if you want.
+
+**Admin-terminal decision, revisited:** now that Tailscale actually reaches both Pis, the in-app terminals are no longer the *only* path. Still keeping them — they're already built, authenticated, and don't require the tailnet ACL fix that plain SSH does. Reasonable to revisit once Tailscale SSH is permitted.
+
+---
+
 ## Phase 1 — Functionality correctness pass — ✅ COMPLETE
 
 Full lint/typecheck sweep clean (`tsc --noEmit` on both `client/web` and `server/node-service`, `prettier --write`, `eslint --fix`, `python -m py_compile` on every changed `.py` file) before closing this phase.

@@ -28,8 +28,8 @@ Pi 5 backend (fallback, if Python bindings not installed):
   RIO mode (--led-rp1-rio=1) causes state machine de-sync → do NOT use it.
 
 Install:
-  Pi 4:  bash raspi_scripts/lcd_pi4/install.sh
-  Pi 5:  bash raspi_scripts/lcd/install.sh
+  Pi 4:  bash raspi_scripts/setup_pi4.sh
+  Pi 5:  bash raspi_scripts/setup_pi5.sh
 
 Run:
   sudo python3 display_manager.py           # Pi 4 or Pi 5 (sudo needed)
@@ -647,7 +647,7 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
             # unverified-on-hardware bug: SetImage mirrors output on chained
             # panels (this display is 2x 64x32 panels chained to 128x32).
             # Opt in explicitly with --pi5-backend rgbmatrix to test on real
-            # hardware — see display_manager.py:636 area / documentation.md.
+            # hardware — see display_manager.py:636 area / docs/documentation.md.
             log.warning(
                 "Pi 5 forced to RGBMatrixBackend — known unresolved bug: "
                 "SetImage may mirror output on chained panels. Testing only."
@@ -1280,7 +1280,7 @@ Examples:
                              "shift registers at low slowdown, causing intermittent "
                              "scrambled/garbled output that gets worse under load. "
                              "If still garbled, raise further; see "
-                             "raspi_scripts/lcd_pi4/fix_gpio_timing.sh for the other "
+                             "raspi_scripts/fix_gpio_timing.sh for the other "
                              "known Pi 4 GPIO-timing conflicts to check on hardware "
                              "(snd_bcm2835, 1-Wire overlay, panel logic-chip voltage)")
     parser.add_argument("--cols",           type=int, default=64,
@@ -1309,7 +1309,7 @@ Examples:
                              "subprocess, restart-based. 'rgbmatrix' = hzeller Python "
                              "bindings with true double buffering, but has a known "
                              "unresolved chained-panel mirroring bug — test only, see "
-                             "documentation.md and ROAD_SENTINEL_REVAMP_MASTER.md §2)")
+                             "docs/documentation.md and docs/ROAD_SENTINEL_REVAMP_MASTER.md §2)")
 
     args = parser.parse_args()
 

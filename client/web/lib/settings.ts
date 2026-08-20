@@ -1,6 +1,7 @@
-// Client-side preference storage. No settings backend exists yet (Phase 2
-// scope — see ROAD_SENTINEL_REVAMP_MASTER.md), so these persist to
-// localStorage rather than being decorative no-op switches.
+// Client-side preference storage — these two preferences (email/sound
+// notifications) are genuinely per-browser, so localStorage is the correct
+// place for them rather than a DB-backed settings table. See
+// docs/Summarization.md's Phase 2 section for the reasoning.
 
 const STORAGE_KEY = "rs_settings";
 

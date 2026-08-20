@@ -6,14 +6,22 @@
 #   PI_AGENT_TOKEN=<token> bash setup_pi5.sh [NODE_URL] [CAM_B_RTSP] [AI_URL]
 #
 # Defaults:
-#   NODE_URL      = http://192.168.8.50:3001
+#   NODE_URL      = http://100.120.27.110:3001   (server PC over Tailscale)
 #   CAM_B_RTSP    = rtsp://192.168.8.108:554/cam/realmonitor?channel=1&subtype=1
 #                   (provisional — Camera B's IP is DHCP-assigned, not static;
 #                    camera_sender.py's auto-discovery will persist the real
 #                    IP back to Node once it finds it, see camera_sender.py)
+#   AI_URL        = http://100.120.27.110:8000   (server PC over Tailscale)
 #   PI_AGENT_TOKEN = REQUIRED, no default. Must match server/node-service/.env's
 #                    PI_AGENT_TOKEN exactly — the /admin namespace rejects the
 #                    Pi agent's connection otherwise.
+#
+# Server addressing: the Node/AI services run on the `irm-pc` PC,
+# reached over Tailscale (100.120.27.110) rather than a LAN IP — the Pis and
+# the server PC aren't guaranteed to share a subnet, and Tailscale addresses
+# stay stable across network changes where a DHCP LAN IP wouldn't. The camera
+# RTSP URL is still a LAN address, since the cameras are on the Pi's own
+# local network and aren't Tailscale nodes.
 #
 # Pi 5 LED note: uses led-image-viewer (coprocessor mode, no --led-rp1-rio).
 #   RIO mode (--led-rp1-rio=1) causes rapid GPIO de-sync — do NOT use it.
@@ -22,9 +30,9 @@
 
 set -euo pipefail
 
-NODE_URL="${1:-http://192.168.8.50:3001}"
+NODE_URL="${1:-http://100.120.27.110:3001}"
 CAM_B_RTSP="${2:-rtsp://192.168.8.108:554/cam/realmonitor?channel=1&subtype=1}"
-AI_URL="${3:-http://192.168.8.50:8000}"
+AI_URL="${3:-http://100.120.27.110:8000}"
 CAMERA_ID="CAM-B-002"
 HOSTNAME="pi5-sentinel"
 

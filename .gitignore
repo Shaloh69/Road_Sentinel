@@ -429,3 +429,14 @@ runs/
 # Sensitive reference files — never commit these
 render.env.txt
 *.env.txt
+
+# Python bytecode — these were tracked by mistake and have been untracked.
+# Compiled artifacts of source files that are already in the repo.
+__pycache__/
+*.pyc
+
+# Local Docker MySQL data (bind-mounted from docker-compose.yml)
+.data/
+
+# Cloudflare quick-tunnel runtime output (URLs change every restart)
+.tunnels/

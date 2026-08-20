@@ -21,9 +21,13 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-  // Idempotent add-column for cameras created before homography_points existed
-  // (CREATE TABLE IF NOT EXISTS above is a no-op on an already-existing table).
-  `ALTER TABLE cameras ADD COLUMN IF NOT EXISTS homography_points JSON NULL
+  // Add-column for cameras created before homography_points existed (CREATE
+  // TABLE IF NOT EXISTS above is a no-op on an already-existing table). MySQL
+  // has no ADD COLUMN IF NOT EXISTS clause (confirmed against a real 8.0.46
+  // instance — it's a parse error, not a no-op) — runMigrations() below
+  // catches ER_DUP_FIELDNAME (1060) for this specific statement instead, so
+  // it's still idempotent on a database that already has the column.
+  `ALTER TABLE cameras ADD COLUMN homography_points JSON NULL
     COMMENT 'Phase 1: {image_points:[[x,y]x4], real_points:[[x,y]x4] in meters} from the Calibration Tool. NULL = uncalibrated, falls back to pixels_per_meter.'`,
 
   // ── detections ───────────────────────────────────────────────────────────────
@@ -124,11 +128,27 @@ const MIGRATIONS: string[] = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];
 
+// MySQL error codes that mean "this DDL statement's effect already exists" —
+// safe to ignore since the equivalent CREATE TABLE IF NOT EXISTS above (or a
+// prior run of this same migration) already got there.
+const IDEMPOTENT_ERROR_CODES = new Set([
+  "ER_DUP_FIELDNAME", // ADD COLUMN — column already exists
+  "ER_DUP_KEYNAME", // ADD INDEX/KEY — index already exists
+]);
+
 export async function runMigrations(): Promise<void> {
   const conn = await pool.getConnection();
   try {
     for (const sql of MIGRATIONS) {
-      await conn.execute(sql);
+      try {
+        await conn.execute(sql);
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code && IDEMPOTENT_ERROR_CODES.has(code)) {
+          continue;
+        }
+        throw err;
+      }
     }
     logger.info("Database migrations applied successfully");
   } catch (err) {

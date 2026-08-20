@@ -1,492 +1,102 @@
 # Road Sentinel Node Service
 
-Main backend service for Road Sentinel traffic monitoring system.
+Express + Socket.IO backend: REST API, MySQL persistence, AI-service orchestration, real-time updates, and an authenticated admin terminal.
 
-## Features
+## Stack
 
-- **RTSP Stream Management**: Pull and process video streams from Raspberry Pi cameras
-- **AI Integration**: Communicate with Python AI service for vehicle and incident detection
-- **Database**: MySQL (Aiven) for storing detections, incidents, and analytics
-- **Storage**: Supabase Storage for images and video recordings
-- **Real-time Updates**: WebSocket (Socket.IO) for live frontend updates
-- **RESTful API**: Express.js endpoints for frontend communication
+- Node.js + Express + TypeScript
+- MySQL 8.0, self-hosted (local Docker for development, local-only on `irm-pc` in production — **not** Aiven, which was dropped entirely in Phase 0.5 after its hostname went NXDOMAIN)
+- Socket.IO — a public default namespace (live feeds, incidents, detections) and a separate, JWT-authenticated `/admin` namespace (admin terminal)
+- Storage: the AI service's local disk (`server/ai-service/media/`), **not** Supabase — Supabase was evaluated early on and never actually wired up; there's no Supabase code path left to configure
 
-## Tech Stack
-
-- **Runtime**: Node.js 18+
-- **Framework**: Express.js
-- **Language**: TypeScript
-- **Database**: MySQL (Aiven Cloud)
-- **Storage**: Supabase Storage
-- **Real-time**: Socket.IO
-- **Video**: fluent-ffmpeg, node-rtsp-stream
-- **Logging**: Winston
-
----
-
-## 🚀 Complete Installation Guide
-
-### Prerequisites
-
-- **Node.js 18+** ([Download](https://nodejs.org/))
-- **MySQL Database** (Aiven Cloud account - [Sign up](https://aiven.io/))
-- **Supabase Account** ([Sign up](https://supabase.com/))
-- **Python AI Service** running on port 8000
-
----
-
-## Windows Installation
-
-### Step 1: Navigate to Node Service Directory
-
-```powershell
-cd C:\Projects\Thesis\2026\RoadSentinel\server\node-service
-```
-
-### Step 2: Install Node.js Dependencies
-
-```powershell
-npm install
-```
-
-This will install all required packages from `package.json`.
-
-### Step 3: Configure Environment Variables
-
-```powershell
-# Copy example env file
-copy .env.example .env
-```
-
-Edit `.env` file with your credentials:
-
-```env
-# Server Configuration
-NODE_ENV=development
-PORT=3001
-HOST=0.0.0.0
-
-# MySQL Database (Aiven)
-DB_HOST=your-aiven-mysql-host.aivencloud.com
-DB_PORT=3306
-DB_USER=avnadmin
-DB_PASSWORD=your-password
-DB_NAME=road_sentinel
-DB_SSL=true
-
-# Supabase Storage
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SUPABASE_BUCKET_INCIDENTS=incidents
-SUPABASE_BUCKET_RECORDINGS=recordings
-
-# Python AI Service
-AI_SERVICE_URL=http://localhost:8000
-AI_SERVICE_TIMEOUT=30000
-
-# RTSP Stream Configuration
-RTSP_BUFFER_SIZE=1024000
-FRAME_PROCESSING_RATE=5
-VIDEO_RECORDING_ENABLED=true
-MAX_RECONNECT_ATTEMPTS=5
-
-# WebSocket
-WEBSOCKET_PORT=3002
-CORS_ORIGIN=http://localhost:3000
-
-# Logging
-LOG_LEVEL=info
-LOG_FILE=./logs/app.log
-```
-
-### Step 4: Setup MySQL Database (Aiven)
-
-1. **Create Aiven MySQL Database:**
-   - Go to [Aiven Console](https://console.aiven.io/)
-   - Create a new MySQL service
-   - Note down the connection details
-
-2. **Run Database Schema:**
-
-```powershell
-# Option 1: Using MySQL client (if installed)
-mysql -h your-host.aivencloud.com -u avnadmin -p -D road_sentinel < ..\database\mysql_schema.sql
-
-# Option 2: Using Aiven web console
-# Copy contents of ../database/mysql_schema.sql and run in Aiven SQL editor
-```
-
-### Step 5: Setup Supabase Storage
-
-1. **Create Supabase Project:**
-   - Go to [Supabase](https://supabase.com/)
-   - Create a new project
-   - Get your URL and keys from Project Settings > API
-
-2. **Create Storage Buckets:**
-   - Go to Storage in Supabase dashboard
-   - Create bucket: `incidents` (public)
-   - Create bucket: `recordings` (public)
-
-### Step 6: Create Logs Directory
-
-```powershell
-mkdir logs
-```
-
-### Step 7: Build TypeScript
-
-```powershell
-npm run build
-```
-
-### Step 8: Start the Service
-
-**Development mode (with hot reload):**
-```powershell
-npm run dev
-```
-
-**Production mode:**
-```powershell
-npm start
-```
-
-You should see:
-```
-🚀 Server running on http://0.0.0.0:3001
-📊 Environment: development
-🔌 WebSocket server ready
-💾 Database: Connected
-🤖 AI Service: Connected
-```
-
-**✅ Node Service is now running!**
-
----
-
-## Linux/macOS Installation
-
-### Step 1: Navigate to Node Service Directory
-
-```bash
-cd /home/user/Road_Sentinel/server/node-service
-```
-
-### Step 2: Install Dependencies
+## Setup
 
 ```bash
 npm install
-```
-
-### Step 3: Configure Environment
-
-```bash
 cp .env.example .env
-# Edit .env with your credentials
+# Fill in DB_* (see docker-compose.yml at the repo root for local defaults),
+# then generate JWT_SECRET / ADMIN_PASSWORD / PI_AGENT_TOKEN.
+npm run dev       # http://localhost:3001, auto-reloads via nodemon
 ```
 
-### Step 4: Setup Database
+The easiest path is `start.bat` at the repo root, which brings up local MySQL (Docker), this service, the AI service, and the client together.
 
-```bash
-# Run MySQL schema on Aiven
-mysql -h your-host.aivencloud.com -u avnadmin -p road_sentinel < ../database/mysql_schema.sql
-```
+On startup this service checks the database connection; if MySQL is reachable it runs migrations (`src/database/migrate.ts` — idempotent, safe to run against an existing database) and seeds the two Busay cameras. If MySQL is unreachable, the server still starts (degraded — DB-backed routes will 500) rather than crashing, so you can at least confirm the process itself boots.
 
-### Step 5: Create Directories
+## Authentication
 
-```bash
-mkdir -p logs
-```
+`POST /api/auth/login` (rate-limited) exchanges `ADMIN_PASSWORD` for a JWT. That token is required to connect to the `/admin` Socket.IO namespace (`adminNamespaceAuth` middleware, `src/middleware/auth.ts`) — the admin terminal, and the channel Raspberry Pi agents (`pi_agent.py`) use to relay shell commands. The public namespace (live camera feeds, incidents, detections) requires no auth by design — it's read-only, no camera credentials or config are exposed through it.
 
-### Step 6: Build and Run
+Raspberry Pi agents authenticate to the same `/admin` namespace using `PI_AGENT_TOKEN` (must match exactly between this service's `.env` and each Pi's environment).
 
-```bash
-# Development
-npm run dev
-
-# Production
-npm run build
-npm start
-```
-
----
-
-## 🧪 Testing the Node Service
-
-### Check Service Status
-
-```powershell
-# Open browser or use curl
-curl http://localhost:3001/health
-```
-
-Response:
-```json
-{
-  "success": true,
-  "message": "Road Sentinel Node Service is running",
-  "timestamp": "2024-01-31T10:30:00.000Z"
-}
-```
-
-### Check System Status
-
-```powershell
-curl http://localhost:3001/api/status
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "service": "road-sentinel-node",
-    "database": "connected",
-    "ai_service": "connected",
-    "timestamp": "2024-01-31T10:30:00.000Z"
-  }
-}
-```
-
----
+CORS is an explicit allowlist (`CORS_ORIGIN`, comma-separated) — no wildcard.
 
 ## API Endpoints
 
-### Health & Status
+| Route | Purpose |
+|---|---|
+| `POST /api/auth/login` | Admin login → JWT |
+| `GET/POST/PUT/DELETE /api/cameras` | Camera CRUD, including `homography_points` for calibrated speed |
+| `GET /api/detections` | Vehicle detections, filterable by camera/date range (`until` param) |
+| `GET/POST/PUT /api/incidents` | Incidents — creating a `critical`-severity one also fires the webhook alert (below) |
+| `GET /api/analytics/summary` \| `/hourly` \| `/speed` \| `/violations` | Dashboard stats, hourly traffic, speed histogram, speed violations by hour-of-day (thesis figure) |
+| `GET/POST /api/recordings` | Recorded video segments (opt-in, Pi-side `--record`) |
+| `GET /api/public/status` | **Unauthenticated.** Clear/vehicle-incoming/incident state + today's tallies — backs the public `/status` page, exposes no camera feeds or config |
 
-- `GET /health` - Service health check
-- `GET /api/status` - Detailed system status (DB, AI service)
+## WebSocket events
 
-### Cameras
+**Public namespace (`/`)**
 
-- `GET /api/cameras` - List all cameras
-- `GET /api/cameras/:id` - Get camera details
-- `POST /api/cameras` - Add new camera
-- `PUT /api/cameras/:id` - Update camera
-- `DELETE /api/cameras/:id` - Delete camera
+| Direction | Event | Purpose |
+|---|---|---|
+| Client → Server | `subscribe_camera` / `unsubscribe_camera` | Camera status updates |
+| Client → Server | `subscribe_stream` / `unsubscribe_stream` | Binary JPEG frame push for a camera's live view |
+| Client → Server | `subscribe_incidents` / `unsubscribe_incidents` | Live incident feed |
+| Pi → Server | `pi_frame` | Camera frame upload, relayed to subscribed clients |
+| Server → Client | `detection`, `incident`, `camera_status` | Real-time updates |
 
-### Detections
+**Admin namespace (`/admin`, JWT or `PI_AGENT_TOKEN` required)**
 
-- `GET /api/detections` - Get recent detections
-- `GET /api/detections/camera/:id` - Get detections by camera
+| Direction | Event | Purpose |
+|---|---|---|
+| Pi → Server | `pi_register` | Pi agent announces itself online |
+| Pi → Server | `pi_output` | Streams shell command output back to the requesting admin |
+| Admin → Server | `terminal_command` / `terminal_kill` | Run/kill a shell command on the server or a specific Pi (`target: 'server' \| 'pi4' \| 'pi5'`) |
+| Server → Admin | `terminal_output`, `pi_status`, `pi_status_all` | Command output, Pi online/offline state |
 
-### Incidents
+## Webhook alerts
 
-- `GET /api/incidents` - Get incidents
-- `GET /api/incidents/:id` - Get incident details
-- `PUT /api/incidents/:id` - Update incident status
+Set `ALERT_WEBHOOK_URL` (and optionally `ALERT_WEBHOOK_MIN_SEVERITY`, default `critical`) to POST a Slack/Discord/Zapier-compatible JSON payload whenever a matching-severity incident is created (`src/services/alert.service.ts`). Unset by default — silent no-op, not an error, if not configured.
 
-### Analytics
+## Environment variables
 
-- `GET /api/analytics/hourly` - Get hourly statistics
-- `GET /api/analytics/daily` - Get daily statistics
+See `.env.example` for the full annotated list. The load-bearing ones:
 
----
+```env
+DB_HOST=localhost           # local MySQL — see docker-compose.yml
+DB_PORT=3307                # 3307 for the local dev Docker container; irm-pc production uses the real 3306
+DB_USER=roadsentinel
+DB_PASSWORD=...
+DB_NAME=roadsentinel
+DB_SSL=false                 # always false for a local/loopback connection
 
-## WebSocket Events
+AI_SERVICE_URL=http://localhost:8000
 
-### Client → Server
+JWT_SECRET=...                # node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+ADMIN_PASSWORD=...
+PI_AGENT_TOKEN=...            # must match each Pi's PI_AGENT_TOKEN
 
-- `subscribe_camera` - Subscribe to camera updates
-- `unsubscribe_camera` - Unsubscribe from camera
+CORS_ORIGIN=http://localhost:3000
 
-### Server → Client
-
-- `detection` - New vehicle detection
-- `incident` - New incident detected
-- `camera_status` - Camera status change
-
----
-
-## Project Structure
-
+# Optional
+ALERT_WEBHOOK_URL=
+ALERT_WEBHOOK_MIN_SEVERITY=critical
 ```
-src/
-├── config/           # Configuration files
-│   ├── database.ts   # MySQL connection
-│   ├── supabase.ts   # Supabase client
-│   └── logger.ts     # Winston logger
-├── services/         # Business logic services
-│   ├── ai.service.ts       # AI service client
-│   └── storage.service.ts  # Supabase storage
-├── types/            # TypeScript types
-│   └── index.ts
-└── server.ts         # Main server file
-
-logs/                 # Log files
-dist/                 # Compiled JavaScript (after build)
-```
-
----
-
-## Environment Variables Reference
-
-### Required Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DB_HOST` | Aiven MySQL host | `mysql-xxx.aivencloud.com` |
-| `DB_USER` | Database user | `avnadmin` |
-| `DB_PASSWORD` | Database password | `your-password` |
-| `DB_NAME` | Database name | `road_sentinel` |
-| `SUPABASE_URL` | Supabase project URL | `https://xxx.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service key | `eyJhbGc...` |
-| `AI_SERVICE_URL` | Python AI service URL | `http://localhost:8000` |
-
-### Optional Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Server port | `3001` |
-| `LOG_LEVEL` | Logging level | `info` |
-| `CORS_ORIGIN` | Frontend URL | `http://localhost:3000` |
-| `FRAME_PROCESSING_RATE` | Process every Nth frame | `5` |
-
----
 
 ## Troubleshooting
 
-### "Cannot connect to MySQL database"
+**"Database connection failed" on startup** — the server still starts, but every DB-backed route 500s. Check `DB_HOST`/`DB_PORT`/credentials and that the host actually resolves/is reachable (`docker compose ps` if using the local Docker MySQL).
 
-**Check:**
-1. Aiven MySQL service is running
-2. Firewall rules allow connection
-3. Credentials are correct in `.env`
-4. SSL is enabled (`DB_SSL=true`)
+**AI service unreachable** — detection features won't work, but the rest of the API still functions. Check `AI_SERVICE_URL` and that `server/ai-service` is actually running.
 
-**Solution:**
-```powershell
-# Test connection manually
-mysql -h your-host.aivencloud.com -u avnadmin -p
-```
-
-### "AI service not available"
-
-Make sure Python AI service is running:
-```powershell
-cd ..\ai-service
-.\venv\Scripts\Activate.ps1
-python -m app.main
-```
-
-### "Module not found" errors
-
-Reinstall dependencies:
-```powershell
-rm -rf node_modules
-rm package-lock.json
-npm install
-```
-
-### Port 3001 already in use
-
-Change port in `.env`:
-```env
-PORT=3002
-```
-
-### TypeScript compilation errors
-
-Make sure TypeScript is installed:
-```powershell
-npm install -D typescript ts-node @types/node
-npm run build
-```
-
----
-
-## Development Scripts
-
-```powershell
-# Install dependencies
-npm install
-
-# Run in development mode (hot reload)
-npm run dev
-
-# Build TypeScript to JavaScript
-npm run build
-
-# Run production server
-npm start
-
-# Run linter
-npm run lint
-
-# Format code
-npm run format
-```
-
----
-
-## Integration with AI Service
-
-The Node service communicates with the Python AI service:
-
-```typescript
-// Example: Send frame for detection
-const result = await aiService.detectObjects(
-  frameBuffer,    // Image buffer
-  'CAM-A-001',   // Camera ID
-  0.75           // Confidence threshold
-);
-
-// Result contains:
-// - detections: Vehicle detections
-// - incidents: Incident detections
-// - processing_time_ms: Inference time
-```
-
----
-
-## Database Schema
-
-See `../database/mysql_schema.sql` for complete schema.
-
-**Main Tables:**
-- `cameras` - Camera configuration
-- `detections` - Vehicle detections
-- `incidents` - Traffic incidents
-- `analytics_hourly` - Hourly statistics
-- `recordings` - Video recordings
-
----
-
-## Deployment
-
-### Using PM2 (Process Manager)
-
-```powershell
-# Install PM2 globally
-npm install -g pm2
-
-# Build the project
-npm run build
-
-# Start with PM2
-pm2 start dist/server.js --name road-sentinel-node
-
-# Monitor
-pm2 logs road-sentinel-node
-
-# Stop
-pm2 stop road-sentinel-node
-```
-
----
-
-## Next Steps
-
-1. **Start AI Service** (port 8000)
-2. **Start Node Service** (port 3001)
-3. **Start Frontend** (port 3000)
-4. **Setup Raspberry Pi** with RTSP streaming
-5. **Configure cameras** in database
-
----
-
-## License
-
-MIT
+**Admin terminal connection rejected** — the token sent from the client doesn't match a currently-valid JWT, or a Pi's `PI_AGENT_TOKEN` doesn't match this service's. Re-login (client) or re-check the shared token (Pi).

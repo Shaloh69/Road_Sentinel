@@ -8,15 +8,22 @@
 #   PI_AGENT_TOKEN=<token> bash setup_pi4.sh [NODE_URL] [CAM_A_RTSP] [AI_URL]
 #
 # Defaults:
-#   NODE_URL       = http://192.168.8.50:3001
+#   NODE_URL       = http://100.120.27.110:3001   (server PC over Tailscale)
 #   CAM_A_RTSP     = rtsp://192.168.8.104:554/cam/realmonitor?channel=1&subtype=1
-#   AI_URL         = http://192.168.8.50:8000
+#   AI_URL         = http://100.120.27.110:8000   (server PC over Tailscale)
 #   PI_AGENT_TOKEN = REQUIRED, no default. Must match server/node-service/.env's
 #                    PI_AGENT_TOKEN exactly — the /admin namespace rejects the
 #                    Pi agent's connection otherwise.
 #
+# Server addressing: the Node/AI services run on the `irm-pc` PC,
+# reached over Tailscale (100.120.27.110) rather than a LAN IP — the Pis and
+# the server PC aren't guaranteed to share a subnet, and Tailscale addresses
+# stay stable across network changes where a DHCP LAN IP wouldn't. The camera
+# RTSP URL is still a LAN address, since the cameras are on the Pi's own
+# local network and aren't Tailscale nodes.
+#
 # Pi 4 LED note: uses ledcat (direct /dev/mem GPIO, needs sudo). If it shows
-# intermittent garbled output, see lcd_pi4/fix_gpio_timing.sh and
+# intermittent garbled output, see fix_gpio_timing.sh and
 # raspi_scripts/README.md's "LED Matrix Status Display" section (Phase 0 fix
 # raised --led-slowdown-gpio 4->6 as a starting point — this is code-level,
 # not yet hardware-verified as of this script).
@@ -25,9 +32,9 @@
 
 set -euo pipefail
 
-NODE_URL="${1:-http://192.168.8.50:3001}"
+NODE_URL="${1:-http://100.120.27.110:3001}"
 CAM_A_RTSP="${2:-rtsp://192.168.8.104:554/cam/realmonitor?channel=1&subtype=1}"
-AI_URL="${3:-http://192.168.8.50:8000}"
+AI_URL="${3:-http://100.120.27.110:8000}"
 CAMERA_ID="CAM-A-001"
 HOSTNAME="pi4-sentinel"
 
@@ -297,7 +304,7 @@ echo "   $SCRIPTS_DIR/test_display.sh — test LED with fake alerts"
 echo
 echo " If LED display shows garbled/intermittent output, this is a known,"
 echo "   not-yet-hardware-verified Phase 0 issue — see"
-echo "   raspi_scripts/lcd_pi4/fix_gpio_timing.sh and raspi_scripts/README.md."
+echo "   raspi_scripts/fix_gpio_timing.sh and raspi_scripts/README.md."
 echo
 echo " Live logs:"
 echo "   tail -f $LOG_DIR/camera.log"

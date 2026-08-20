@@ -83,9 +83,9 @@ def main():
         print("="*70)
         print("\n🚀 You're ready to start training!\n")
         print("Quick start:")
-        print("  cd scripts/training")
-        print("  python quick_train.py")
-        print("\nOr see TRAINING_GUIDE.md for more options.")
+        print("  python run_merge_busay.py")
+        print("  python train.py --dataset vehicle --model-size n --epochs 100")
+        print("\nOr see docs/TRAINING_GUIDE.md for more options.")
     else:
         print("❌ SOME DEPENDENCIES ARE MISSING")
         print("="*70)

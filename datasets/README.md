@@ -1,99 +1,41 @@
 # Datasets Folder
 
-This folder contains all datasets for training your Busay vehicle detection system.
+Training data for Road Sentinel's two models (vehicle detection, crash/incident detection).
 
-## 📁 Folder Structure
+## Structure
 
 ```
 datasets/
-├── downloaded/          # Raw datasets from Roboflow
-│   ├── Traffic-surveillance-system-1/
-│   ├── Vehicle-Detection-Day-Night-1/
-│   └── Accident-detection-1/
-│
-└── processed/          # Merged/processed datasets ready for training
-    ├── busay_vehicle_detection/     # Model 1: Vehicle detection
-    └── busay_accident_detection/    # Model 2: Crash detection
+├── downloaded/          # Raw Roboflow exports — untracked, gitignored
+└── processed/           # Merged/converted datasets ready for training
+    ├── busay_vehicle_detection/     # Model 1: vehicle detection & tracking
+    └── busay_accident_detection/    # Model 2: crash/incident detection
 ```
 
-## 📥 How to Use
+## How to use
 
-### Step 1: Download Datasets from Roboflow
+### 1. Download datasets from Roboflow
 
-Place your downloaded Roboflow datasets in the `downloaded/` folder:
+Place downloaded Roboflow exports (YOLO format) under `datasets/downloaded/`.
 
-```bash
-# After downloading from Roboflow, move them here:
-mv ~/Downloads/Traffic-surveillance-system-1 datasets/downloaded/
-mv ~/Downloads/Vehicle-Detection-Day-Night-1 datasets/downloaded/
-mv ~/Downloads/Accident-detection-1 datasets/downloaded/
-```
-
-### Step 2: Process/Merge Datasets
+### 2. Merge into the two Busay-specific training sets
 
 ```bash
-cd scripts/training
-
-# Run the automatic merger
+cd training
 python run_merge_busay.py
 ```
 
-This will create processed datasets in `datasets/processed/`:
-- `busay_vehicle_detection/` - For Model 1 (vehicle tracking & speed)
-- `busay_accident_detection/` - For Model 2 (crash detection)
+This produces `datasets/processed/busay_vehicle_detection/` and `datasets/processed/busay_accident_detection/`, each with `data.yaml` + `train`/`valid`/`test` splits — both already exist on a working checkout.
 
-### Step 3: Train Models
+### 3. Train
 
 ```bash
-# Train Model 1 (Vehicle Detection)
-python train_vehicle_detector.py \
-  --data ../../datasets/processed/busay_vehicle_detection/data.yaml \
-  --model n \
-  --batch 4 \
-  --epochs 100 \
-  --project ../../models/v1 \
-  --name vehicle_detection
-
-# Train Model 2 (Crash Detection)
-python train_vehicle_detector.py \
-  --data ../../datasets/processed/busay_accident_detection/data.yaml \
-  --model n \
-  --batch 4 \
-  --epochs 100 \
-  --project ../../models/v1 \
-  --name crash_detection
+python train.py --dataset vehicle --model-size n --epochs 100
+python train.py --dataset accident --model-size n --epochs 100
 ```
 
-## 🗂️ Dataset Versions
+There is no `scripts/` folder and no `train_vehicle_detector.py` — `train.py` (in `training/`) is the real, only trainer, and it takes `--dataset {vehicle,accident,both}` rather than a raw path to a merged dataset.
 
-If you want to experiment with different dataset combinations:
+## Storage
 
-```
-processed/
-├── busay_vehicle_v1/          # First version
-├── busay_vehicle_v2/          # With additional data
-└── busay_vehicle_night_only/  # Night-only variant
-```
-
-## 💾 Storage Requirements
-
-- **Downloaded datasets**: ~2-5 GB per dataset
-- **Processed datasets**: ~3-8 GB total
-- **Total space needed**: ~15-20 GB
-
-## 🧹 Cleaning Up
-
-To free up space after merging:
-
-```bash
-# Keep only processed datasets, remove downloaded originals
-rm -rf datasets/downloaded/*
-
-# Or keep originals as backup (recommended)
-```
-
-## 📝 Notes
-
-- Always keep backups of processed datasets
-- Each dataset includes train/valid/test splits
-- YOLO format: `data.yaml` + images + labels folders
+`datasets/downloaded/` and `datasets/processed/` are both gitignored — datasets are large (several GB) and machine-specific, not something to commit. Keep the raw `downloaded/` exports around if you might need to re-merge with different settings later; otherwise they're safe to delete once `processed/` exists.

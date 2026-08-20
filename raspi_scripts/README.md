@@ -13,10 +13,9 @@ Scripts and utilities that run **on the Raspberry Pis** at the Busay blind-curve
 | `pi_agent.py` | Authenticated admin-terminal relay — connects to Node's `/admin` Socket.IO namespace with `PI_AGENT_TOKEN`, runs commands sent from the web dashboard. |
 | `setup_pi4.sh` | systemd install: Camera A + LED (`roadsentinel-camera`, `roadsentinel-display`, `roadsentinel-agent`). |
 | `setup_pi5.sh` | systemd install: Camera B + LED (`roadsentinel-camera`, `roadsentinel-display`, `roadsentinel-agent`). |
-| `lcd_pi4/fix_gpio_timing.sh` | Pi 4 GPIO-timing diagnostic/fixer (sound module, 1-Wire overlay, core isolation) — see below. |
+| `fix_gpio_timing.sh` | Pi 4 GPIO-timing diagnostic/fixer (sound module, 1-Wire overlay, core isolation) — see below. |
 | `color_test.py`, `test_display.py` | LED hardware bring-up/diagnostic scripts. |
 | `camera_reboot_autostart_setup.sh` (repo root) | **Legacy, separate** ffplay-based desktop-autostart path — see below. |
-| `lcd/`, `lcd_pi4/` | Earlier, per-model LED drivers — **superseded** by the unified `display_manager.py`, kept for reference. |
 
 ---
 
@@ -61,13 +60,13 @@ Requires Desktop Autologin (`raspi-config → System Options → Boot / Auto Log
 | **Pi 4** | `LedcatBackend` | hzeller `ledcat` (subprocess, piped frames) | Yes (`/dev/mem` GPIO) |
 | **Pi 5** | `LedImageViewerBackend` | hzeller `led-image-viewer` (subprocess, PPM file) | No (`/dev/pio0` coprocessor) |
 
-`lcd/` and `lcd_pi4/` contain earlier, per-model implementations that predate the unified driver (their own git history is placeholder-message-only commits) — **superseded**, kept only for reference. Install scripts still live under `lcd_pi4/install.sh` (builds the shared hzeller C library/binaries both backends above use) and `lcd/README.md`/`lcd_pi4/README.md` (hardware wiring notes, still accurate).
+This folder used to also contain `lcd/` and `lcd_pi4/` — earlier, per-model driver implementations that predated the unified driver above (their own git history was placeholder-message-only commits, e.g. `"123"`). They've been removed as dead code now that `display_manager.py` supersedes both; `setup_pi4.sh`/`setup_pi5.sh` build the shared hzeller C library/binaries directly rather than shelling out to a separate install script.
 
 Both Pis use the same **₱149 HUB75 adapter board** (hzeller "regular"/Active3 GPIO mapping).
 
-### Phase 0 bug fixes applied (code-level; hardware verification pending Tailscale access — see `Summarization.md`)
+### Phase 0 bug fixes applied (code-level; hardware verification pending Tailscale access — see `docs/Summarization.md`)
 
-- **Pi 4 — intermittent garbled/scrambled output.** Signature of a GPIO signal-timing problem (Pi 4's CPU outpaces the panel's shift registers at low `--led-slowdown-gpio`). `display_manager.py`'s default raised **4 → 6**. If still garbled once verified on hardware, raise further and run `lcd_pi4/fix_gpio_timing.sh` (report-only by default; `--fix` applies) — it checks/fixes the other three common causes in order of likelihood: the onboard sound module (`snd_bcm2835`, shares hardware with the LED driver and must be blacklisted), a `1-Wire` overlay on the same GPIO pins, and CPU core isolation (`isolcpus`). The adapter board's input logic chips must be `74HCT245`/`74AHCT245` (3.3V-compatible) — `74HC245` causes exactly this symptom and can only be checked by reading the physical board.
+- **Pi 4 — intermittent garbled/scrambled output.** Signature of a GPIO signal-timing problem (Pi 4's CPU outpaces the panel's shift registers at low `--led-slowdown-gpio`). `display_manager.py`'s default raised **4 → 6**. If still garbled once verified on hardware, raise further and run `fix_gpio_timing.sh` (report-only by default; `--fix` applies) — it checks/fixes the other three common causes in order of likelihood: the onboard sound module (`snd_bcm2835`, shares hardware with the LED driver and must be blacklisted), a `1-Wire` overlay on the same GPIO pins, and CPU core isolation (`isolcpus`). The adapter board's input logic chips must be `74HCT245`/`74AHCT245` (3.3V-compatible) — `74HC245` causes exactly this symptom and can only be checked by reading the physical board.
 - **Pi 5 — garbage specifically when content changes.** The *active* backend (`LedImageViewerBackend`) restarts a subprocess on every content change rather than using true double-buffering (a separate, correctly-double-buffered backend, `RGBMatrixBackend`, exists but is disabled for an unrelated reason — see below). Added a settle delay in `_restart()` between confirming the old process exited and launching the new one, to reduce the chance of the new process racing the RP1 coprocessor's leftover state. **This is a reasoned mitigation based on the git history's established RP1-timing-drift pattern, not a hardware-verified fix** — confirm on real hardware before relying on it.
 - **`RGBMatrixBackend`** (Python bindings, real `CreateFrameCanvas()`/`SwapOnVSync()` double buffering — architecturally the better long-term choice for Pi 5) remains **disabled by default**. Audited in Phase 0: it has no offscreen-canvas violation: the disabling reason is a separate, unresolved bug — `SetImage` mirrors output on this display's 2-panel chain. Opt into it for testing with `--pi5-backend rgbmatrix` once hardware is reachable; do not flip the default without verifying the mirroring issue is actually resolved, since this is safety-relevant hardware.
 

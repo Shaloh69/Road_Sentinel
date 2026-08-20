@@ -1,6 +1,6 @@
 # YOLO26 Training Pipeline
 
-Scripts for training vehicle-detection and crash/incident-detection models for Road Sentinel from your own merged Busay datasets. (This replaces an earlier version of this file that documented `train_vehicle_detector.py` and `quick_train.py` — neither exists in this repo. The real trainer is `train.py`. See `documentation.md §15` for the full drift history.)
+Scripts for training vehicle-detection and crash/incident-detection models for Road Sentinel from your own merged Busay datasets. (This replaces an earlier version of this file that documented `train_vehicle_detector.py` and `quick_train.py` — neither exists in this repo. The real trainer is `train.py`. See `docs/documentation.md §15` for the full drift history.)
 
 ## Setup
 
@@ -31,8 +31,6 @@ python run_merge_busay.py
 ```
 
 This produces `../datasets/processed/busay_vehicle_detection/` (merged Traffic Surveillance + Day/Night) and `../datasets/processed/busay_accident_detection/` (Accident Detection, prepared but not merged with anything else).
-
-See `DATASET_STRATEGY_GUIDE.md` for merge-vs-single-dataset guidance and `YOLO_NATIVE_DATASETS.md` for the Roboflow Universe path.
 
 ## Training — `train.py`
 

@@ -190,37 +190,24 @@ def main():
     if traffic_found and daynight_found:
         print("1️⃣  Train Model 1 (Vehicle Detection):")
         print()
-        print("   python train_vehicle_detector.py \\")
-        print("     --data ../../datasets/processed/busay_vehicle_detection/data.yaml \\")
-        print("     --model n \\")
-        print("     --batch 4 \\")
-        print("     --epochs 100 \\")
-        print("     --project ../../models/v1 \\")
-        print("     --name vehicle_detection")
+        print("   python train.py --dataset vehicle --model-size n --epochs 100")
         print()
-        print("   Output: models/v1/vehicle_detection/weights/best.pt")
+        print("   Output: models/runs/vehicle/vehicle_yolo26n_<timestamp>/weights/best.pt")
         print("   Training time: ~6-8 hours (merged dataset is larger)")
         print()
 
     if accident_found:
         print("2️⃣  Train Model 2 (Crash Detection):")
         print()
-        print("   python train_vehicle_detector.py \\")
-        print("     --data ../../datasets/processed/busay_accident_detection/data.yaml \\")
-        print("     --model n \\")
-        print("     --batch 4 \\")
-        print("     --epochs 100 \\")
-        print("     --project ../../models/v1 \\")
-        print("     --name crash_detection")
+        print("   python train.py --dataset accident --model-size n --epochs 100")
         print()
-        print("   Output: models/v1/crash_detection/weights/best.pt")
+        print("   Output: models/runs/accident/accident_yolo26n_<timestamp>/weights/best.pt")
         print("   Training time: ~3-4 hours")
         print()
 
-    print("💡 TIP: You can train both models simultaneously in different terminals!")
-    print()
-    print("📖 See: scripts/training/DUAL_MODEL_TRAINING_GUIDE.md")
-    print()
+    if traffic_found and daynight_found and accident_found:
+        print("💡 TIP: --dataset both trains both models back to back in one run.")
+        print()
 
 
 if __name__ == "__main__":

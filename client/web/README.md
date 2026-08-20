@@ -1,53 +1,29 @@
-# Next.js & HeroUI Template
+# Road Sentinel — Web Dashboard
 
-This is a template for creating applications using Next.js 14 (app directory) and HeroUI (v2).
+Next.js 15 + HeroUI v2 dashboard for the Road Sentinel traffic-monitoring system: live dual-camera feeds, analytics, incidents, camera calibration, an authenticated admin terminal, and a public no-login status page.
 
-[Try it on CodeSandbox](https://githubbox.com/heroui-inc/heroui/next-app-template)
+Styled with **"Night Watch"** — see [`DESIGN.md`](./DESIGN.md) for the design system's tokens, font pairing, and rationale.
 
-## Technologies Used
-
-- [Next.js 14](https://nextjs.org/docs/getting-started)
-- [HeroUI v2](https://heroui.com/)
-- [Tailwind CSS](https://tailwindcss.com/)
-- [Tailwind Variants](https://tailwind-variants.org)
-- [TypeScript](https://www.typescriptlang.org/)
-- [Framer Motion](https://www.framer.com/motion/)
-- [next-themes](https://github.com/pacocoursey/next-themes)
-
-## How to Use
-
-### Use the template with create-next-app
-
-To create a new project based on this template using `create-next-app`, run the following command:
-
-```bash
-npx create-next-app -e https://github.com/heroui-inc/next-app-template
-```
-
-### Install dependencies
-
-You can use one of them `npm`, `yarn`, `pnpm`, `bun`, Example using `npm`:
+## Running locally
 
 ```bash
 npm install
+echo NEXT_PUBLIC_API_URL=http://localhost:3001 > .env.local
+npm run dev                        # http://localhost:3000
 ```
 
-### Run the development server
+Needs the Node service (`server/node-service`) running for real data — see the repo root [`README.md`](../../README.md) for the full stack setup, or run `start.bat` from the repo root to bring everything up (MySQL, AI service, Node service, this client) in one step.
 
-```bash
-npm run dev
-```
+## Structure
 
-### Setup pnpm (optional)
+- `app/` — Next.js App Router pages (dashboard, monitor, analytics, incidents, cameras, history, reports, settings, admin, status)
+- `components/` — shared UI (video feed, stat cards, alert cards, sidebar, calibration tool, animated background, page transitions)
+- `lib/` — client-side helpers (socket connections, CSV/PDF export, localStorage settings)
+- `hero.ts` / `styles/globals.css` — the Night Watch design tokens
+- `config/` — site metadata and font definitions
 
-If you are using `pnpm`, you need to add the following code to your `.npmrc` file:
+## Further docs
 
-```bash
-public-hoist-pattern[]=*@heroui/*
-```
-
-After modifying the `.npmrc` file, you need to run `pnpm install` again to ensure that the dependencies are installed correctly.
-
-## License
-
-Licensed under the [MIT license](https://github.com/heroui-inc/next-app-template/blob/main/LICENSE).
+- [`DESIGN.md`](./DESIGN.md) — design system rationale
+- [`../../docs/documentation.md`](../../docs/documentation.md) — ground-truth codebase audit
+- [`../../docs/Summarization.md`](../../docs/Summarization.md) — full revamp record

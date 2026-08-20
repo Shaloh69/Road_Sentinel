@@ -268,7 +268,7 @@ python test_camera.py --confidence 0.7
 - ✅ Visual bounding boxes and labels
 - ✅ Works without AI service (camera-only mode)
 
-See [CAMERA_TEST_GUIDE.md](../../CAMERA_TEST_GUIDE.md) for detailed documentation.
+See [CAMERA_TEST_GUIDE.md](../../docs/CAMERA_TEST_GUIDE.md) for detailed documentation.
 
 ### 2. Quick Test (Sample Image)
 
