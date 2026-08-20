@@ -676,7 +676,25 @@ def create_backend(args, pi_model: str) -> DisplayBackend:
         log.info("Emulator mode → RGBMatrixEmulator backend")
         return EmulatorBackend(cols=args.cols, chain=args.chain or 2)
     elif pi_model == "pi5":
-        pi5_backend = getattr(args, "pi5_backend", "viewer")
+        # Default is PioMatter, and that matters for correctness rather than
+        # taste. The Pi 5 replaced directly-addressable BCM GPIO registers with
+        # the RP1 chip, so hzeller's rpi-rgb-led-matrix — which pokes those
+        # registers — cannot drive a HUB75 panel properly here at all. The
+        # visible result is a garbled panel even on a solid-color frame, which
+        # no combination of --led-slowdown-gpio / --led-multiplexing fixes,
+        # because the timing was never the problem. Adafruit's PioMatter drives
+        # the panel from RP1's PIO state machines instead, which is the
+        # supported path on Pi 5.
+        #
+        # Both hzeller backends are kept selectable for comparison, but neither
+        # should be the default on a Pi 5.
+        pi5_backend = getattr(args, "pi5_backend", "piomatter")
+        if pi5_backend == "piomatter":
+            log.info("Detected Raspberry Pi 5 → PioMatter backend (RP1 PIO, native)")
+            return PioMatterBackend(
+                pinout_name  = getattr(args, "pinout", "active3"),
+                n_addr_lines = getattr(args, "addr_lines", 4),
+            )
         if pi5_backend == "rgbmatrix":
             # RGBMatrixBackend already implements correct offscreen-canvas +
             # SwapOnVSync double buffering (audited in Phase 0 — no violation
@@ -1348,13 +1366,14 @@ Examples:
                         help="PioMatter pinout (Pi 5, default: active3 = ₱149 adapter)")
     parser.add_argument("--addr-lines",     type=int, default=4,
                         help="Address lines (Pi 5, default: 4 for 32-row panels)")
-    parser.add_argument("--pi5-backend",    default="viewer",
-                        choices=["viewer", "rgbmatrix"],
-                        help="Pi 5 display backend (default: viewer = led-image-viewer "
-                             "subprocess, restart-based. 'rgbmatrix' = hzeller Python "
-                             "bindings with true double buffering, but has a known "
-                             "unresolved chained-panel mirroring bug — test only, see "
-                             "docs/documentation.md and docs/ROAD_SENTINEL_REVAMP_MASTER.md §2)")
+    parser.add_argument("--pi5-backend",    default="piomatter",
+                        choices=["piomatter", "viewer", "rgbmatrix"],
+                        help="Pi 5 display backend (default: piomatter — the only "
+                             "driver that actually supports the Pi 5's RP1 GPIO. "
+                             "'viewer' = led-image-viewer subprocess, 'rgbmatrix' = "
+                             "hzeller Python bindings; both are hzeller-based and "
+                             "render garbled output on Pi 5, see the note in "
+                             "make_backend())")
 
     args = parser.parse_args()
 
