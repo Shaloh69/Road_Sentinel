@@ -58,44 +58,27 @@ parallel chain 1 and LED2 on parallel chain 2, as defined in
 
 So `--led-gpio-mapping=regular` is correct.
 
-## ⚠️ The panels are wired PARALLEL, not CHAINED
+## Actual panel topology: CHAINED (confirmed on the hardware)
 
-This is the important part, and it contradicts the configuration the code
-has been using.
+The schematic above shows the **adapter board's** available outputs — it
+documents which GPIO each of its HUB75 connectors is wired to, not how the
+panels are physically cabled.
 
-Each panel gets its **own** set of six RGB data lines on a different parallel
-port. They are *not* daisy-chained — a chained setup would run one panel's
-output connector into the next panel's input and use only one set of data
-lines.
+In the real installation the two panels are **daisy-chained**: panel 1's
+output connector feeds panel 2's input, both driven from the parallel-1 data
+lines. They are mounted **side by side** to read as a single 128×32 banner.
+Both Pi 4 and Pi 5 use this same arrangement.
 
-The software has been asking for the opposite:
+So the existing configuration is correct and should not be changed:
 
 ```
---led-chain=2 --led-parallel=1     # wrong: says one chain of two panels
---led-chain=1 --led-parallel=2     # right: two parallel chains of one panel
+--led-chain=2 --led-parallel=1     # correct for this installation
+--led-rows=32 --led-cols=64        # two 64x32 panels -> 128x32
 ```
 
-Told to drive a 2-deep chain, the library clocks all 128 columns of pixel
-data out of the **parallel-1 pins only**, while the parallel-2 pins (LED2)
-receive nothing coherent. Neither panel then shows what it should — and this
-happens even on a solid-color frame, which is exactly the observed symptom.
-No amount of `--led-slowdown-gpio` or `--led-multiplexing` tuning fixes it,
-because the timing was never the problem.
-
-## Geometry consequence
-
-With `parallel=2, chain=1`, the library's framebuffer is **64 wide × 64 tall**
-(two 64×32 panels stacked), not 128×32 side by side. If the panels are
-physically mounted side by side to read as one 128×32 banner, the frame has
-to be split: left half to parallel chain 1, right half to chain 2.
-
-Options:
-- Set `--led-parallel=2 --led-chain=1` and render to a 64×64 buffer, mapping
-  the two halves to the correct panels.
-- Or rewire the panels as an actual chain (LED1 output → LED2 input, both on
-  the parallel-1 data lines) and keep `--led-chain=2 --led-parallel=1`.
-
-Rewiring is the smaller change if a true 128×32 layout is wanted.
+(An earlier revision of this file claimed the panels were wired in parallel,
+inferred from the schematic alone. That was wrong — corrected here after
+confirming the physical wiring.)
 
 ## Pi 5 caveat — separate issue
 
