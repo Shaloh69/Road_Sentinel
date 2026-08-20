@@ -89,6 +89,45 @@ Re-checked everything above rather than trusting the stale table. What actually 
 
 ---
 
+### Phase 0.5 — SSH UNBLOCKED, deployment to `irm-pc` under way
+
+**SSH now works to all three machines.** The earlier failures were my own wrong guesses at usernames, not a policy problem on the Pis:
+
+| Machine | Address | SSH user | Status |
+|---|---|---|---|
+| Pi 4 | `100.98.53.95` | `roadsentinel` | ✅ in — Raspberry Pi 4 Model B Rev 1.5, kernel 6.18.22-v8+ |
+| Pi 5 | `100.94.18.9` | `raspi5` | ✅ in — Raspberry Pi 5 Model B Rev 1.1, kernel 6.12.75+rpt-rpi-2712 |
+| `irm-pc` | `100.120.27.110` | `malubay ivan ray` (spaces in the name) | ✅ in, after the public key was added |
+
+**First real look at the deployed Pi state** — both are running, and the picture differs per Pi:
+
+| | Pi 4 | Pi 5 |
+|---|---|---|
+| `roadsentinel-camera` | ✅ active (running) | ✅ active (running) |
+| `roadsentinel-agent` | ✅ active (running) | ✅ active (running) |
+| `roadsentinel-display` | ⛔ **not installed at all** | ⛔ **failed** (`status=2/INVALIDARGUMENT`, crash-looped 5× then gave up on 2026-08-12) |
+| LED binary | `ledcat` ✅ built | `led-image-viewer` ✅ built |
+| Pi model detection | `/dev/pio0` absent → Pi 4 ✅ correct | `/dev/pio0` present → Pi 5 ✅ correct |
+| `display_manager.py` deployed | ❌ absent from `~/roadsentinel` | ✅ present |
+
+So the Phase 2 "Pi 4 LED parity" work is real but **has never been deployed** — Pi 4 has no display service and no `display_manager.py` on disk. The rewritten `setup_pi4.sh` installs both; it just hasn't been re-run on the hardware.
+
+Pi 5's display failure is separate and more interesting. Two findings:
+1. Its service unit has a **dead Cloudflare quick-tunnel URL baked in** (`--api https://fruit-budapest-stocks-consecutive.trycloudflare.com`) from a tunnel that no longer exists — a concrete instance of exactly the "quick-tunnel URLs don't survive restarts" tradeoff, which is why the Pi scripts now default to the stable Tailscale address instead.
+2. Running the same script manually **starts fine** and reaches `Display loop started` → `Clearing panel...`, so the script itself is not broken. `led-image-viewer` does warn `Can't set realtime thread priority=99: Operation not permitted` when not running as root, which affects color stability/flicker. Root-cause of the `exit 2` is still open — investigating.
+
+**Deployment to `irm-pc` in progress** (see `docs/DEPLOYMENT.md` for the full guide and machine facts):
+- ✅ Repo cloned to `D:\RoadSentinel` — on D: deliberately; C: has only ~11 GB free, D: ~292 GB
+- ✅ Trained vehicle model copied over and byte-verified (5,401,861 bytes, exact match)
+- ✅ All three `.env` files written, with **freshly generated** production secrets (`JWT_SECRET`, `PI_AGENT_TOKEN`, `ADMIN_PASSWORD`) — deliberately not reusing the dev laptop's values
+- ✅ Python 3.12.10 venv created (the machine's default `python` is 3.14, which PyTorch/ultralytics don't support — `py -3.12` is the working interpreter)
+- ⏳ PyTorch CUDA + AI dependencies installing
+- ⏳ Node dependencies installing for both services
+- ⏳ MySQL: Docker isn't installed on `irm-pc` and C: can't comfortably host Docker Desktop + WSL2, so MySQL runs **natively from the ZIP distribution** with root and data on D:, port 3307, bound to `127.0.0.1` only. Complication found: `dev.mysql.com` returns **403 Forbidden** from `irm-pc`'s IP specifically (fine from the dev laptop), so the ZIP is being downloaded here and copied across.
+- ✅ `cloudflared` already present on `irm-pc`
+
+---
+
 ## Phase 1 — Functionality correctness pass — ✅ COMPLETE
 
 Full lint/typecheck sweep clean (`tsc --noEmit` on both `client/web` and `server/node-service`, `prettier --write`, `eslint --fix`, `python -m py_compile` on every changed `.py` file) before closing this phase.

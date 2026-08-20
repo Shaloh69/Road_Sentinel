@@ -210,27 +210,55 @@ class DisplayBackend(ABC):
 
 # ── Pi 4 backend: ledcat subprocess ───────────────────────────────────────────
 
-def _find_ledcat() -> str:
-    for p in [
-        os.path.expanduser("~/rpi-rgb-led-matrix/examples-api-use/ledcat"),
-        "/home/roadsentinel/rpi-rgb-led-matrix/examples-api-use/ledcat",
-    ]:
+def _find_matrix_binary(relative_path: str) -> str:
+    """Locate a binary built inside someone's ~/rpi-rgb-led-matrix checkout.
+
+    The display services run as root (both backends need privileged GPIO or
+    /dev/mem access), but the library is built under the *login* user's home —
+    so a bare `~` expands to /root and finds nothing. That mismatch silently
+    crash-looped the Pi 5 display service for over a week: argparse rejected
+    the nonexistent /root path and exited 2 before the display loop ever ran.
+
+    Search order, first hit wins:
+      1. $HOME                     — normal non-root invocation
+      2. $SUDO_USER's home         — `sudo python3 display_manager.py`
+      3. every /home/* directory   — systemd User=root, where SUDO_USER is unset
+                                     and the build user's name isn't knowable
+                                     ahead of time (it differs per Pi:
+                                     `roadsentinel` on the Pi 4, `raspi5` on
+                                     the Pi 5)
+
+    Falls back to the $HOME-relative path so the argparse error message still
+    names a sensible location. Pass --ledcat/--viewer explicitly to skip all
+    of this; setup_pi4.sh/setup_pi5.sh now do exactly that.
+    """
+    candidates = [os.path.expanduser(f"~/{relative_path}")]
+
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        candidates.append(os.path.join("/home", sudo_user, relative_path))
+
+    try:
+        for entry in sorted(os.listdir("/home")):
+            candidates.append(os.path.join("/home", entry, relative_path))
+    except OSError:
+        pass
+
+    for p in candidates:
         if os.path.isfile(p):
             return p
-    return os.path.expanduser("~/rpi-rgb-led-matrix/examples-api-use/ledcat")
+    return candidates[0]
+
+
+def _find_ledcat() -> str:
+    return _find_matrix_binary("rpi-rgb-led-matrix/examples-api-use/ledcat")
 
 LEDCAT_DEFAULT = _find_ledcat()
 _BLACK_FRAME   = bytes(WIDTH * HEIGHT * 3)
 
 
 def _find_led_image_viewer() -> str:
-    for p in [
-        os.path.expanduser("~/rpi-rgb-led-matrix/utils/led-image-viewer"),
-        "/home/roadsentinel/rpi-rgb-led-matrix/utils/led-image-viewer",
-    ]:
-        if os.path.isfile(p):
-            return p
-    return os.path.expanduser("~/rpi-rgb-led-matrix/utils/led-image-viewer")
+    return _find_matrix_binary("rpi-rgb-led-matrix/utils/led-image-viewer")
 
 LED_IMAGE_VIEWER_DEFAULT = _find_led_image_viewer()
 
@@ -387,7 +415,16 @@ class LedImageViewerBackend(DisplayBackend):
             "--led-multiplexing=1",
             "--led-pwm-bits=3",
         ]
-        self._ppm           = "/tmp/roadsentinel_frame.ppm"
+        # Per-UID frame path. A single shared /tmp filename breaks hard under
+        # fs.protected_regular (=2 on Raspberry Pi OS): once the file exists
+        # owned by one user, no *other* user — root included — may open it for
+        # writing, because /tmp is world-writable and sticky. So a single
+        # manual `python3 display_manager.py` run as the login user would
+        # permanently break the root-owned systemd service with
+        # "PermissionError: /tmp/roadsentinel_frame.ppm", and vice versa.
+        # Keying on the UID means each user gets its own file and they never
+        # collide.
+        self._ppm           = f"/tmp/roadsentinel_frame_{os.getuid()}.ppm"
         self._proc: Optional[subprocess.Popen] = None
         self._last_frame    = b""
         self._last_img_id   = -1
@@ -1287,8 +1324,16 @@ Examples:
                         help="Columns per panel (Pi 4, default: 64)")
     parser.add_argument("--chain",          type=int, default=0,
                         help="Chained panels (Pi 4, default: auto)")
-    parser.add_argument("--multiplexing",   type=int, default=0,
-                        help="Panel multiplexing type (Pi 4, default: 0)")
+    # Default 1 (Stripe), NOT 0 (direct). On the cheap HUB75 adapter board
+    # this project uses, multiplexing=0 renders solid colors correctly but
+    # turns text and mixed-pixel content into garbage random colors — which
+    # is precisely the "Pi 4 intermittent garbled output" symptom. Stripe
+    # multiplexing fixes it, and is already hardcoded in the Pi 5 backend's
+    # flag set (see LedImageViewerBackend); Pi 4 drives the same panels
+    # through the same adapter, so it needs the same value. It was left at 0
+    # here only because this argument predates that finding.
+    parser.add_argument("--multiplexing",   type=int, default=1,
+                        help="Panel multiplexing type (Pi 4, default: 1 = Stripe)")
     parser.add_argument("--scan-mode",      type=int, default=0, choices=[0, 1],
                         help="Scan mode (Pi 4, default: 0)")
     parser.add_argument("--mapping",        default="regular",

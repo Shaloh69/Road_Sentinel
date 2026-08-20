@@ -15,14 +15,28 @@
 - **Browser/public access uses the Cloudflare tunnel.** No port forwarding, no static IP, no domain needed.
 - **MySQL is never exposed** — bound to `127.0.0.1` only, reachable neither through Tailscale nor the tunnel. The Node service talks to it over loopback on the same machine.
 
-## Prerequisites on `irm-pc`
+## `irm-pc` machine facts
 
-- Docker Desktop
-- Node.js 18+
-- Python 3.10–3.12
-- Tailscale (already connected — `100.120.27.110`)
-- `cloudflared` — `winget install Cloudflare.cloudflared`
-- Git
+Verified directly over SSH, not assumed:
+
+| | |
+|---|---|
+| GPU | **NVIDIA RTX 3060 Ti, 8 GB** — the same GPU the vehicle model was trained on, so CUDA inference is available |
+| Disks | **C: ~11 GB free** (nearly full — avoid installing anything large here), **D: ~292 GB free**, **E: ~465 GB free** |
+| Repo location | `D:\RoadSentinel` — on D: deliberately, so `.data\`, `media\recordings\`, `node_modules\`, and the AI venv all land on the drive with space |
+| Python | 3.14 is the default `python`, which **PyTorch and ultralytics do not support**. Use `py -3.12` — Python 3.12.10 is installed and is what the AI service venv is built from |
+| Docker | **Not installed.** MySQL runs natively instead (see below) rather than via `docker-compose.yml`, because Docker Desktop plus its WSL2 image would not fit comfortably in C:'s remaining space |
+| Node / Git / cloudflared | All installed and on PATH |
+| Oracle downloads | `dev.mysql.com` returns **403 Forbidden** from this machine's IP (works fine elsewhere), so the MySQL ZIP has to be fetched on another machine and copied over |
+
+## Prerequisites
+
+- Node.js 18+ ✅
+- Python 3.12 (via `py -3.12`) ✅
+- Tailscale, connected as `100.120.27.110` ✅
+- `cloudflared` ✅
+- Git ✅
+- MySQL — installed natively from the ZIP distribution, see below
 
 ## First-time setup
 
@@ -61,13 +75,40 @@ venv\Scripts\pip install -r requirements.txt
 cd ..\..
 ```
 
+## MySQL on `irm-pc` (native, not Docker)
+
+Docker isn't installed and C: is nearly full, so MySQL runs as a native Windows service from the ZIP distribution, with everything on D:
+
+| | |
+|---|---|
+| Install root | `D:\RoadSentinel-mysql` |
+| Data directory | `D:\RoadSentinel-mysql\data` |
+| Config | `D:\RoadSentinel-mysql\my.ini` |
+| Port | **3307** (matching the dev machine's Docker setup, so `.env` files are portable) |
+| Bind address | **127.0.0.1 only** — never reachable over Tailscale or the tunnel |
+| Windows service | `RoadSentinelMySQL` |
+| Database / user | `roadsentinel` / `roadsentinel` |
+
+Service control:
+
+```bat
+net start RoadSentinelMySQL
+net stop RoadSentinelMySQL
+```
+
+Because `dev.mysql.com` returns 403 from this machine, the ZIP must be downloaded elsewhere and copied across (e.g. `scp mysql-winx64.zip "user@100.120.27.110:D:/"`).
+
+> `docker-compose.yml` at the repo root is the **development-machine** path — MySQL 8.0 + Adminer in containers, data bind-mounted to `.\.data\mysql`. It is not used on `irm-pc`. Both setups deliberately use port 3307 and the same credentials so `.env` files work unchanged on either.
+
 ## Running
 
 ```bat
 start.bat
 ```
 
-Brings up MySQL + Adminer (Docker), then the AI service, Node service, and client, each in its own window. It creates any missing `.env` files from the examples, installs Node dependencies if absent, and warns about port conflicts before launching. Database files land in `.\.data\mysql` on whatever drive the repo lives on.
+Starts the AI service, Node service, and client, each in its own window, after scaffolding any missing `.env` files, installing absent Node dependencies, and warning about port conflicts.
+
+> **On `irm-pc`, start MySQL first** (`net start RoadSentinelMySQL`) — `start.bat`'s Docker/compose steps are for the development machine and will report Docker as missing here. The three service launches still work.
 
 Then, for public access:
 

@@ -52,6 +52,13 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 LED_SLOWDOWN=4   # gpio slowdown passed to display_manager (4 = stable on Pi 5)
 
+# Absolute path to the LED binary, passed explicitly to the display service.
+# The service runs as root (User=root) but the library is built under this
+# login user's home — a bare "~" inside display_manager.py would expand to
+# /root and find nothing, which silently crash-looped this service before.
+# Passing it explicitly removes the dependency on HOME resolution entirely.
+VIEWER_BIN="$HOME/rpi-rgb-led-matrix/utils/led-image-viewer"
+
 echo "================================================"
 echo " Road Sentinel — Pi 5 Setup (Camera B + LED)"
 echo "================================================"
@@ -184,7 +191,8 @@ User=root
 WorkingDirectory=${SCRIPTS_DIR}
 ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py \
     --api ${NODE_URL} \
-    --pi 5
+    --pi 5 \
+    --viewer ${VIEWER_BIN}
 Restart=always
 RestartSec=5
 StandardOutput=append:${LOG_DIR}/display.log

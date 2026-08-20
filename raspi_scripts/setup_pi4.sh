@@ -45,6 +45,13 @@ if [ -z "${PI_AGENT_TOKEN:-}" ]; then
     exit 1
 fi
 
+# Absolute path to the LED binary, passed explicitly to the display service.
+# The service runs as root (User=root) but the library is built under this
+# login user's home — a bare "~" inside display_manager.py would expand to
+# /root and find nothing, which silently crash-looped the Pi 5 service before.
+# Passing it explicitly removes the dependency on HOME resolution entirely.
+LEDCAT_BIN="$HOME/rpi-rgb-led-matrix/examples-api-use/ledcat"
+
 VENV="$HOME/venvs/cam_venv"
 SCRIPTS_DIR="$HOME/roadsentinel"
 LOG_DIR="$HOME/roadsentinel/logs"
@@ -179,7 +186,8 @@ User=root
 WorkingDirectory=${SCRIPTS_DIR}
 ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py \
     --api ${NODE_URL} \
-    --pi 4
+    --pi 4 \
+    --ledcat ${LEDCAT_BIN}
 Restart=always
 RestartSec=5
 StandardOutput=append:${LOG_DIR}/display.log
