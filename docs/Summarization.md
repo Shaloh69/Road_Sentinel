@@ -123,8 +123,43 @@ Pi 5's display failure is separate and more interesting. Two findings:
 - ✅ Python 3.12.10 venv created (the machine's default `python` is 3.14, which PyTorch/ultralytics don't support — `py -3.12` is the working interpreter)
 - ⏳ PyTorch CUDA + AI dependencies installing
 - ⏳ Node dependencies installing for both services
-- ⏳ MySQL: Docker isn't installed on `irm-pc` and C: can't comfortably host Docker Desktop + WSL2, so MySQL runs **natively from the ZIP distribution** with root and data on D:, port 3307, bound to `127.0.0.1` only. Complication found: `dev.mysql.com` returns **403 Forbidden** from `irm-pc`'s IP specifically (fine from the dev laptop), so the ZIP is being downloaded here and copied across.
+- ✅ MySQL 8.0.40 running natively (Docker isn't installed and C: can't host Docker Desktop + WSL2), service `RoadSentinelMySQL`, root and data on D:, port 3307, bound to `127.0.0.1` only. Complication found and worked around: `dev.mysql.com` returns **403 Forbidden** from `irm-pc`'s IP specifically (fine from the dev laptop), so the ZIP was downloaded here and copied across.
 - ✅ `cloudflared` already present on `irm-pc`
+
+---
+
+### 🎉 Phase 0.5 / Phase 4 — DEPLOYED AND VERIFIED END TO END
+
+**The full pipeline is live on `irm-pc` and serving publicly.**
+
+| Component | Status | Evidence |
+|---|---|---|
+| MySQL 8.0.40 | ✅ | Service `RoadSentinelMySQL`, all 5 tables created, both cameras seeded |
+| **`migrate.ts` fix proven** | ✅ | Migrations applied cleanly against a genuinely fresh production database — the exact scenario that failed before the `ADD COLUMN IF NOT EXISTS` fix |
+| AI service | ✅ | `custom_model=True`, classes `{car, motorcycle, bicycle, bus, truck}`, **on CUDA** (`torch 2.5.1+cu121`, `cuda True`, RTX 3060 Ti) — the real trained weight, not the stock fallback |
+| Node service | ✅ | `/health` and `/api/public/status` both return correct JSON against the live DB |
+| Client | ✅ | Dashboard, `/status`, `/admin` all HTTP 200 publicly |
+| Cloudflare tunnels | ✅ | All three assigned and reachable from the public internet |
+| Persistence | ✅ | All six processes (3 services + 3 tunnels) registered as Scheduled Tasks — they survive SSH disconnect *and* reboot |
+| **Camera B (Pi 5)** | ✅ **LIVE** | RTSP opened, Socket.IO connected to `irm-pc`, `sent=258 errors=0` |
+| **Real detections** | ✅ | **7 vehicle detections persisted to MySQL** from the actual Busay camera; `CAM-B-002` shows `online` |
+| Pi 5 LED display | ✅ | Running and driving the panel after the three bug fixes |
+
+**Two deployment-mechanics bugs found and fixed along the way:**
+1. *Processes started over SSH die with the session.* `Start-Process` from an SSH session puts the child in the session's job object, so every service died the moment the SSH connection closed — silently, several times, before I spotted it. Fixed by registering everything as **Scheduled Tasks**, which also gets boot-start for free (`install_services.ps1`, `install_tunnels.ps1`).
+2. *`USERDOMAIN` is wrong on non-domain machines.* `Register-ScheduledTask` failed with "No mapping between account names and security IDs was done" because `$env:USERDOMAIN` reports `WORKGROUP`, which isn't a resolvable principal. The local-account form is `$env:COMPUTERNAME\$env:USERNAME`.
+
+Also hit the documented PowerShell 5.1 native-stderr trap: `mysqld --initialize-insecure` writes ordinary progress to stderr, which under `$ErrorActionPreference='Stop'` became a fatal `NativeCommandError` and left a half-initialized data directory. Fixed by checking `$LASTEXITCODE` explicitly instead.
+
+**The Pis were running pre-revamp code.** A significant discovery: everything from Phases 0–3 existed in git but had **never been deployed to the hardware**. The deployed `pi_agent.py` had no `PI_AGENT_TOKEN` support at all (so the authenticated `/admin` relay from Phase 0 could never have worked), and both Pi services pointed at **long-dead Cloudflare quick-tunnel URLs** — concrete proof of why the Pi scripts now default to stable Tailscale addresses instead. Current scripts are now deployed to the Pi 5.
+
+**Measured, not assumed — the 30 FPS question:** Camera B sustains **~9-10 FPS**, not 30 (`fps=10.3`, `dropped=581`). The Phase 2 audit concluded there was no *code-level* bottleneck, and that still looks right — the sender is dropping stale frames by design under backpressure. But the delivered rate is well short of the 30 FPS requirement, so the constraint is upstream (camera configuration, RTSP substream, or network). This is the first real measurement of it; needs investigation before the 30 FPS claim can be made.
+
+**Still open:**
+- **Pi 4** — camera and agent run, but it has **no display service at all** and is still on pre-revamp code. Installing it needs `sudo`, and the `roadsentinel` account requires a password that passwordless SSH can't supply (the Pi 5's `raspi5` has NOPASSWD). Needs either the password or a manual `setup_pi4.sh` run.
+- **Pi 4 multiplexing fix unverified** — the `multiplexing=0 → 1` change is committed and matches the project's own hardware notes, but can't be confirmed on the panel until the display service is installed.
+- **Camera A offline** — `CAM-A-001` still shows `offline`; the Pi 4 camera service points at the same dead tunnel URLs and hasn't been repointed yet (same sudo blocker).
+- **Quick-tunnel URLs rotate on restart.** Fine for browser access; that's why Pi→server traffic uses Tailscale.
 
 ---
 
