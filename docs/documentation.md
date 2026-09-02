@@ -357,14 +357,26 @@ panel does not render legible text. Full observation trail in
 
 ## 14. Known issues / rough edges
 
-1. **Unauthenticated remote command execution.** `server/node-service/src/server.ts:187-274` lets any Socket.IO client run arbitrary shell commands on the Node server process (`child_process.spawn`) and, via `pi_agent.py`, on both physical Raspberry Pis, with **no login, token, or origin check anywhere in the stack** (confirmed: no `middleware.ts`, no auth import in any `node-service` route, no login page in `client/web`). The sidebar navigation links directly to `/admin` for anyone who loads the client (`components/sidebar.tsx:177-195`). CORS is wide open (`cors({ origin: "*" })`, `server.ts:38`).
+1. **Remote command execution — RESOLVED.** Previously any Socket.IO client
+could run arbitrary shell commands on the Node server and, via `pi_agent.py`,
+on both Pis, with no authentication anywhere. Now behind real auth:
+`middleware/auth.ts` (JWT via `jsonwebtoken`, plus a static `PI_AGENT_TOKEN`
+for Pi service connections, compared with `timingSafeStringEqual`), issued by
+`POST /api/auth/login`, gating a dedicated `/admin` Socket.IO namespace through
+`adminNamespaceAuth` — no event handler runs for an unauthenticated socket.
+CORS is likewise no longer `origin: "*"`; `server.ts:37` builds an allowlist
+from `CORS_ORIGIN`. Verified by reading the current source 2026-09-03.
+
 2. **Plaintext production secrets in a repo-root file.** `render.env.txt` (untracked/gitignored, so not in git history, but present in the working tree) contains a live Aiven MySQL password and a live Supabase service-role key in cleartext.
 3. **Hardcoded, machine-specific absolute path.** The active AI-service `.env`'s `TRAFFIC_MODEL_PATH` is a Windows absolute path on a different drive letter/root than this checkout — will break on any other machine or clone.
 4. **`training/train.py`'s `DATASETS_DIR` resolution bug** — assumes the repo's parent folder is literally named `Road_Sentinel` (§4); breaks silently to a `Dataset not found` message on any checkout not laid out that way (e.g. this one, `RoadSentinel`).
 5. **Duplicate/overlapping logic across `training/`, `testing/`, `inference/`.** Three independent implementations of "run a detector against a video/image and draw boxes" exist (`training/validate.py`, `testing/test_video.py`/`test_images.py`, `inference/speed_detection.py`), with no shared code.
 6. **Two incompatible schema sources of truth** for the analytics table name and the `recordings` table (§7.3) — a developer following `server/database/mysql_schema.sql` by hand would end up with a database Node's own migration code doesn't expect.
 7. **Two independent, undocumented-as-separate camera-launch mechanisms** on the Pi (`camera_sender.py`/systemd vs. the `ffplay`/desktop-autostart path in `camera_reboot_autostart_setup.sh`) with **different hardcoded IPs for Camera B** (`.108` in the autostart script and `setup_pi5.sh`, vs. `.102` as `node-service`'s seeded DB default) — whichever is stale would silently point Camera B's config at the wrong device.
-8. **Declared-but-ignored env vars** in `node-service`: `.env.example` documents `CORS_ORIGIN` and `LOG_FILE`, neither of which the code actually reads (`server.ts` hardcodes `origin: "*"`; `logger.ts` hardcodes its file paths).
+8. **Declared-but-ignored env vars — PARTLY RESOLVED.** `CORS_ORIGIN` is now
+read and enforced as an allowlist (`server.ts:37`). `LOG_FILE` is still
+documented in `.env.example` but ignored — `logger.ts` hardcodes its paths.
+
 9. **Unused dependency surface**: `@supabase/supabase-js`, `node-rtsp-stream`, `fluent-ffmpeg` are all declared in `server/node-service/package.json` but have zero imports anywhere in `src/` (grepped, no matches) — Supabase is an explicit no-op stub, and Node never touches RTSP or ffmpeg directly (that happens on the Pi).
 10. **LED display subsystem — RESOLVED.** Previously the most actively-patched code in the repo, with an open `# TODO: fix pixel mapping before re-enabling`. The root cause was never in this repo: `ESP32-HUB75-MatrixPanel-DMA` (and hzeller/PioMatter before it) assume a framebuffer column index that does not correspond to these panels' shift-register clock order. Replaced with a hand-written driver in `LEDMatrixDrivers/`; the sign now renders legible text at a measured 250fps.
 11. **Confidence threshold defaults disagree across the stack**: `ai-service/.env.example` default `0.75`; the live `.env` on this checkout sets `0.5`; `node-service` seeds cameras with `detection_confidence = 0.5` (`seed.ts`) while `mysql_schema.sql`'s sample INSERT and column default use `0.75`.
