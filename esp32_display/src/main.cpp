@@ -49,6 +49,27 @@
 #define PANEL_H     32
 #define PANEL_CHAIN 2
 
+// ── The D line ─────────────────────────────────────────────────────────────
+// Set to 1 once HUB75 pin 12 is wired to GPIO 17.
+//
+// Why this exists. The panel silkscreen reads pin 12 as `NC`, so D was left
+// unconnected; the adapter schematic disagreed and showed it as D. Measuring
+// the shift register settled it: with 256 positions clocked, only the last 64
+// ever reached the panel, and that content appeared on both panels at once.
+// A 64-wide panel holding 64 positions per row is clocked 1:1, which is 1/16
+// scan — and 1/16 scan needs four address lines. The schematic was right.
+//
+// One missing wire accounts for the whole symptom set: y=16 aliasing onto
+// y=0 (3 lines wrap every 8 rows), one row rendering as two bands, tilt that
+// accumulates per column (256 bits into a 64-position row), both panels
+// mirroring, and solid fills looking perfect throughout because a fill does
+// not depend on addressing at all.
+//
+// It is also why ~80 software configurations failed identically: no
+// multiplexing mode or scan mapping can synthesise a missing address line, so
+// the search space never contained the answer.
+#define HAVE_D_LINE 0
+
 MatrixPanel_I2S_DMA *dma_display = nullptr;
 
 // These panels are 1/8 scan outdoor units, whose internal pixel order does not
@@ -400,16 +421,26 @@ void setup() {
     25, 26, 27,   // R1, G1, B1
     14, 12, 13,   // R2, G2, B2
     23, 19,  5,   // A,  B,  C
-    -1,           // D  — this panel's pin 12 is NC (no D line). See
-                  //      raspi_scripts/HUB75_PINOUT.md. Set to 17 if a
-                  //      future panel does use D.
+#if HAVE_D_LINE
+    17,           // D  — HUB75 pin 12. See HAVE_D_LINE above.
+#else
+    -1,           // D  — not wired yet; flip HAVE_D_LINE to 1 after wiring.
+#endif
     -1,           // E  — only needed for 1/32-scan (64-row) panels
     16,  4, 15    // CLK, LAT, OE
   };
 
-  // 1/8 scan: each 64-wide panel shifts 128 positions, two chained = 256 per
-  // row, over 16 addressable rows. Same 4096 pixels, different shape.
+#if HAVE_D_LINE
+  // With four address lines the panel is a standard 1/16-scan unit, so the
+  // natural geometry is also the correct one: no doubled width, no halved
+  // height, no custom remapping.
+  HUB75_I2S_CFG mxconfig(PANEL_W, PANEL_H, PANEL_CHAIN, pins);
+#else
+  // Without D, only 3 address lines exist. This 1/8-scan shape was the best
+  // approximation available and does not render positioned content correctly
+  // — kept only so the diagnostic commands still run before rewiring.
   HUB75_I2S_CFG mxconfig(PANEL_W * 2, PANEL_H / 2, PANEL_CHAIN, pins);
+#endif
 
   // If output looks shifted by a pixel or doubled, these are the two knobs
   // worth trying before anything else.
@@ -430,7 +461,11 @@ void setup() {
   // If output is still wrong, the other candidates are FOUR_SCAN_16PX_HIGH
   // and FOUR_SCAN_64PX_HIGH — these are user-contributed mappings and which
   // one fits varies by panel.
+#if HAVE_D_LINE
+  display->setPhysicalPanelScanRate(NORMAL_TWO_SCAN);
+#else
   display->setPhysicalPanelScanRate(FOUR_SCAN_32PX_HIGH);
+#endif
 
   C_BLACK  = display->color565(0, 0, 0);
   C_WHITE  = display->color565(255, 255, 255);

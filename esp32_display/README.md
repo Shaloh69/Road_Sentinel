@@ -39,11 +39,17 @@ Wiring is in `raspi_scripts/HUB75_PINOUT.md`. Summary:
 | R1 (1) | 25 | | A (9) | 23 |
 | G1 (2) | 26 | | B (10) | 19 |
 | B1 (3) | 27 | | C (11) | 5 |
-| GND (4) | GND | | **D (12)** | **not connected** |
+| GND (4) | GND | | **D (12)** | **17** |
 | R2 (5) | 14 | | CLK (13) | 16 |
 | G2 (6) | 12 | | LAT (14) | 4 |
 | B2 (7) | 13 | | OE (15) | 15 |
 | GND (8) | GND | | GND (16) | GND |
+
+**Pin 12 (`D`) must be connected.** The panel silkscreen reads it as `NC`,
+which is why it was left off initially, but the adapter schematic showed it as
+`D` and measurement proved the schematic right — see the `HAVE_D_LINE` note in
+`src/main.cpp`. These are 1/16-scan panels and will not address more than 8
+rows without it. After wiring, set `#define HAVE_D_LINE 1` and reflash.
 
 **Panel power is separate.** 5V 8A into the panels' own terminals, supply
 ground tied to ESP32 ground. The 16 data wires carry no useful power — two
@@ -154,5 +160,7 @@ Try in this order, one at a time:
 
 1. `mxconfig.clkphase = false` → `true` (pixels shifted by one)
 2. Uncomment `mxconfig.driver = HUB75_I2S_CFG::FM6124`
-3. If only part of the panel lights, set `gpio.d = 17` — that would mean the
-   panel does have a D line and the `NC` silkscreen reading was a miscount
+3. If only part of the panel lights, or content appears doubled/tilted, check
+   `HAVE_D_LINE` is 1 and pin 12 is actually wired. That symptom set is what a
+   missing address line looks like, and no software setting can compensate for
+   it

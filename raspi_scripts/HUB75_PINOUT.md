@@ -207,3 +207,25 @@ now defaults the Pi 5 to that backend.
 The Pi 4 has conventional GPIO and can keep using the hzeller path
 (`ledcat`), so on the Pi 4 the parallel-vs-chain fix above should be
 sufficient on its own.
+
+
+## Resolved: pin 12 is D, not NC (2026-09-03)
+
+The three pinouts recorded above disagreed about pin 12 — the panel silkscreen
+read `NC`, the adapter schematic read `D`. **The schematic was right.**
+
+Measured with `RAWSPAN` on the ESP32: of 256 shift-register positions clocked
+out, only the last 64 reached the panel, and that content appeared on both
+panels simultaneously. A 64-wide panel holding 64 positions per row is clocked
+1:1 — that is 1/16 scan, which requires four address lines.
+
+Wire HUB75 pin 12 to ESP32 **GPIO 17**, then set `#define HAVE_D_LINE 1` in
+`esp32_display/src/main.cpp` and reflash.
+
+Reading `NC` off the silkscreen and trusting it over the schematic is what
+sent roughly eighty software configurations chasing a wire. Where two sources
+disagree about hardware, the cheap move is to measure rather than to pick the
+more convenient one.
+
+🟡 Unverified — requires the physical wire and someone to report what the panel
+then shows.

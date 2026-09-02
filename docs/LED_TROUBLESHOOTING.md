@@ -194,20 +194,50 @@ colour at raw y=0, all four at once:
 | 128-191 | blue | not visible |
 | 192-255 | white | **two bands, lower area** |
 
-Only the last-drawn quarter appeared. Two readings fit:
+Only the last-drawn quarter appeared. Two readings fit: **overwriting** (all
+four land on the same pixels, last one wins) or **truncation** (positions
+0-191 never arrive). They imply opposite fixes, so each quarter was then drawn
+*alone*, cleared between:
 
-1. **Overwriting** — all four land on the same physical pixels, so each
-   overwrites the previous and only white survives. This would mean the
-   effective row width is far smaller than the configured 256.
-2. **Truncation** — positions 0-191 genuinely never reach the panel.
+| Quarter | Alone |
+|---|---|
+| 0-63 red | not visible |
+| 64-127 green | not visible |
+| 128-191 blue | not visible |
+| 192-255 white | visible — **both panels**, lower area, slightly tilted |
 
-These are distinguished by drawing each quarter *alone* with a clear between,
-which is what the follow-up cycle does. Note the two readings imply opposite
-fixes, so guessing between them would have been another sweep.
+Truncation, not overwriting. Only the final 64 shift-register positions reach
+the panel, and their content appears on **both** panels at once.
 
-Worth flagging against the full-colour result: solid fills cover both panels
-cleanly, which means all 4096 pixels are reachable. Any explanation has to
-account for both facts at once.
+## Leading conclusion: the D line is missing
+
+A per-panel register of 64 positions per row means each row of a 64-wide panel
+is clocked 1:1 — which is **1/16 scan**, and 1/16 scan needs **four** address
+lines. Only A, B and C are wired; HUB75 pin 12 (`D`) was read as `NC` off the
+panel silkscreen and left unconnected. The adapter schematic disagreed and
+showed pin 12 as `D`; the schematic appears to have been right.
+
+One missing wire predicts every symptom collected across both the Pi and ESP32
+attempts:
+
+| Symptom | Consequence of no D line |
+|---|---|
+| `y=16` aliases onto `y=0` | 3 address lines wrap every 8 rows |
+| One logical row → two bands | two addresses lit for one row |
+| Tilt accumulating per column | 256 bits clocked into a 64-position row |
+| Both panels showing the same thing | both hold the same last-clocked data |
+| Only the last 64 positions visible | the rest is clocked off the end |
+| Solid fills perfect | fills do not depend on addressing |
+
+This also explains why ~80 software configurations failed identically. No
+multiplexing mode, row-address type or scan mapping can synthesise a missing
+address line, so the search space never contained the answer. The breadth of a
+failing sweep was itself the signal to stop sweeping and measure.
+
+**Fix:** wire HUB75 pin 12 to a free ESP32 GPIO (17), set `gpio.d`, and
+configure the natural geometry — 64x32 per panel, chain 2, no four-scan
+remapping. 🟡 Requires physical rewiring; unverified until someone connects it
+and reports what the panel does.
 
 ## Geometries tried
 
