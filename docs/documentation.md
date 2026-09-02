@@ -92,6 +92,7 @@ Notes on protocols/ports, all confirmed from code:
 | `server/database/` | Static reference `mysql_schema.sql` (schema is **also** independently defined and actually applied by `node-service/src/database/migrate.ts` — the two differ, see §7 and §14) |
 | `client/web/` | Next.js 15 / React 18 dashboard (HeroUI component library) |
 | `raspi_scripts/` | Everything that runs on the two Raspberry Pis: camera capture/forwarding, LED matrix driver, Pi-side remote-terminal agent, setup scripts |
+| `esp32_display/` | ESP32 firmware (PlatformIO) driving the roadside 128x32 HUB75 sign over USB serial from a Pi — supersedes the Pi-GPIO LED path on installations that use it |
 | `models/` | `README.md` (describes a `v1/v2/production` layout that does not exist) + the real output tree `models/runs/<dataset>/<run_name>/weights/{best,last,epochNN}.pt`, only a `vehicle` run present |
 | `datasets/` | `downloaded/` (raw Roboflow export, untracked) and `processed/busay_vehicle_detection/`, `processed/busay_accident_detection/` (untracked, gitignored) |
 | `config.yml` | Empty (`{}`) — not read by any code in the repo |
@@ -261,6 +262,41 @@ Two coexisting camera-launch approaches are present in the repo simultaneously (
 - A one-time installer that wires two **`ffplay`**-based desktop preview windows into the Pi's desktop-session autostart (`~/.config/autostart/roadsentinel-cameras.desktop`), independent of `camera_sender.py`/systemd. Also runs `set_ir_auto_all.py` (ONVIF, day/night IR switching) before launching the streams. Uses **different** hardcoded camera IPs (`192.168.8.104` / `192.168.8.108`) than `node-service`'s seeded default for Camera B (`192.168.8.102`, see §14).
 
 **LED subfolders** `lcd/` (Pi 5, Adafruit PioMatter) and `lcd_pi4/` (Pi 4, hzeller rpi-rgb-led-matrix, build-from-source, needs `sudo`) contain earlier per-model `display_manager.py` implementations, each with trivial/placeholder git commit messages (`"123"`, `"789"`, etc.) predating the unified top-level `display_manager.py`. `raspi_scripts/README.md` still presents the `lcd/` vs `lcd_pi4/` split as the current setup path without mentioning the newer unified driver.
+
+---
+
+## 9.1 ESP32 LED sign (`esp32_display/`) — added 2026-09-03
+
+An alternative to driving the HUB75 panel from Pi GPIO: an ESP32 dev board
+drives the panel directly, and the Pi sends it state over USB serial via
+`raspi_scripts/esp32_display_bridge.py`. The Pi keeps everything needing a
+network or a decision; the ESP32 only draws.
+
+This exists because the Pi path never worked on these panels — see
+`docs/LED_TROUBLESHOOTING.md` and `esp32_display/DEBUG_LOG.md`. Moving to the
+ESP32 removes kernel GPIO contention, the Pi 5 RP1 incompatibility, and 3.3V
+level marginality at once, and gives access to the FM6124 init sequence these
+panels require.
+
+| | |
+|---|---|
+| Firmware | `esp32_display/src/` — modular: `display`, `protocol`, `mode_status`, `mode_char`, `mode_sand` |
+| Hardware config | `esp32_display/include/config.h` — every pin, geometry and driver constant, in one place |
+| Board | ESP32 30-pin dev board (`esp32dev`), PlatformIO |
+| Panel | 2x 64x32 P5 outdoor, chained -> 128x32, **1/8 scan (no D line)**, **FM6124** driver IC |
+| Protocol | newline ASCII @115200, every command acked `OK`/`ERR` |
+| Pi bridge | `raspi_scripts/esp32_display_bridge.py`, polls `/api/public/status` |
+
+State comes from `/api/public/status` rather than being recomputed, so the
+physical sign and the public web page cannot disagree. The `offline` state is
+decided by the board's own 15s command timeout, deliberately not sent by the
+bridge, so a dead cable and a dead API produce the same honest sign.
+
+**Status: not working on hardware yet.** The firmware compiles, flashes, and
+responds over serial (verified over Tailscale to the Pi 4), and the FM6124 flag
+measurably changed panel behaviour, but the scan mapping is still wrong and the
+panel does not render legible text. Full observation trail in
+`esp32_display/DEBUG_LOG.md`.
 
 ---
 

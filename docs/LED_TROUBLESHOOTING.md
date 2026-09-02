@@ -6,8 +6,14 @@ side by side to 128×32, on the LEADWAY Pi→HUB75 adapter.
 
 ## Current status
 
-**Unresolved.** Panel lights and responds to content, but renders green-only
-horizontal bands rather than full-colour full-panel output.
+**Open, with a strong untested candidate.** Two hardware facts were confirmed
+by the user on 2026-09-03: the panels are **1/8 scan (no D line)** and the
+driver IC is **FM6124**. The FM6124 flag had never been enabled in any
+configuration tried — it is the one variable the whole ~80-config history never
+moved. Firmware now sets it; awaiting a look at the panel.
+
+The earlier "pin 12 is D / 1/16 scan" conclusion is **retracted** — see below
+and `esp32_display/DEBUG_LOG.md`.
 
 ## Confirmed fixed
 
@@ -209,7 +215,24 @@ four land on the same pixels, last one wins) or **truncation** (positions
 Truncation, not overwriting. Only the final 64 shift-register positions reach
 the panel, and their content appears on **both** panels at once.
 
-## Leading conclusion: the D line is missing
+## ~~Leading conclusion: the D line is missing~~ — RETRACTED 2026-09-03
+
+> **This conclusion was wrong.** The user confirmed against the physical board
+> that the panels are **1/8 scan with no D line**, and that the driver IC is
+> **FM6124**. Nothing below should be acted on. It is kept only so the reasoning
+> can be audited, because it was committed (`36535e4`) and written into
+> `raspi_scripts/HUB75_PINOUT.md` as though settled.
+>
+> Why it was wrong: the `RAWSPAN` probe it rests on was run with the driver left
+> at the library default `SHIFTREG`, on an **FM6124** panel. An FM6124 that has
+> never received its register-init sequence sits in an undefined state, so what
+> reached the panel says nothing dependable about register length or scan rate.
+> The measurement was real; the inference was not, because the thing being
+> measured was itself misconfigured. Measuring beats sweeping presets — but a
+> measurement taken through an unknown configuration only *feels* more rigorous.
+>
+> Current ground truth and the actual fix: `esp32_display/DEBUG_LOG.md`.
+
 
 A per-panel register of 64 positions per row means each row of a 64-wide panel
 is clocked 1:1 — which is **1/16 scan**, and 1/16 scan needs **four** address
@@ -234,10 +257,10 @@ multiplexing mode, row-address type or scan mapping can synthesise a missing
 address line, so the search space never contained the answer. The breadth of a
 failing sweep was itself the signal to stop sweeping and measure.
 
-**Fix:** wire HUB75 pin 12 to a free ESP32 GPIO (17), set `gpio.d`, and
-configure the natural geometry — 64x32 per panel, chain 2, no four-scan
-remapping. 🟡 Requires physical rewiring; unverified until someone connects it
-and reports what the panel does.
+**~~Fix:~~ Do not do this.** Wiring pin 12 would drive a fourth address line
+this panel cannot decode. `PIN_D` stays `-1`. The real change was enabling the
+FM6124 driver flag, which had been commented out for every configuration ever
+tried — see `esp32_display/DEBUG_LOG.md`.
 
 ## Geometries tried
 

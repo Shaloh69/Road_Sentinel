@@ -209,23 +209,21 @@ The Pi 4 has conventional GPIO and can keep using the hzeller path
 sufficient on its own.
 
 
-## Resolved: pin 12 is D, not NC (2026-09-03)
+## Retracted: pin 12 is NOT D (2026-09-03)
 
-The three pinouts recorded above disagreed about pin 12 — the panel silkscreen
-read `NC`, the adapter schematic read `D`. **The schematic was right.**
+An earlier revision of this file carried a section here titled *"Resolved: pin
+12 is D, not NC"*, concluding from a `RAWSPAN` shift-register probe that these
+are 1/16-scan panels needing a fourth address line on GPIO 17.
 
-Measured with `RAWSPAN` on the ESP32: of 256 shift-register positions clocked
-out, only the last 64 reached the panel, and that content appeared on both
-panels simultaneously. A 64-wide panel holding 64 positions per row is clocked
-1:1 — that is 1/16 scan, which requires four address lines.
+**That was wrong, and it has been removed rather than left to mislead.** The
+user confirmed against the physical board: these panels are **1/8 scan, with
+only A/B/C**, exactly as the silkscreen and the "P5 outdoor" label at the top
+of this file already said. Do not wire pin 12.
 
-Wire HUB75 pin 12 to ESP32 **GPIO 17**, then set `#define HAVE_D_LINE 1` in
-`esp32_display/src/main.cpp` and reflash.
+The probe behind the retracted claim ran with the panel driver left at the
+library default `SHIFTREG`, on an **FM6124** controller that had therefore
+never been initialised — so its output could not support any conclusion about
+scan rate. Full reasoning in `esp32_display/DEBUG_LOG.md`.
 
-Reading `NC` off the silkscreen and trusting it over the schematic is what
-sent roughly eighty software configurations chasing a wire. Where two sources
-disagree about hardware, the cheap move is to measure rather than to pick the
-more convenient one.
-
-🟡 Unverified — requires the physical wire and someone to report what the panel
-then shows.
+The genuine fault was that `mxconfig.driver = HUB75_I2S_CFG::FM6124` had never
+been set in any configuration tried, on the Pi or the ESP32.

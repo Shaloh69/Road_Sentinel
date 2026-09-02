@@ -208,6 +208,7 @@ The server degrades gracefully (skips migrations/seeding, keeps serving) rather 
 
 Everything below is code-complete and passed every check that doesn't require physical access to the Raspberry Pis, but is genuinely unverified in the real world — pending Tailscale connectivity to both Pis. Don't treat any of these as confirmed working until they've been checked live:
 
+- **ESP32 LED sign (`esp32_display/`)** — firmware compiles, flashes and answers over serial (verified live on the Pi 4), and the FM6124 driver flag measurably changed panel behaviour, but the panel still does not render legible text: the scan mapping is unresolved. Do not treat the sign as working. Trail in `esp32_display/DEBUG_LOG.md`.
 - **Both LED matrices' bug fixes** — Pi 4's legible-text-consistency fix and Pi 5's no-corruption-on-content-change fix (see `docs/Summarization.md` Phase 0) haven't been re-confirmed under a real, repeated run on the actual hardware.
 - **Camera reachability on both Pis** — RTSP connectivity for Camera A (Pi 4) and Camera B (Pi 5), including Camera B's auto-discovery recovery path actually triggering and persisting a new IP in practice, not just in code.
 - **Always-on 30 FPS live feed, sustained** — the capture/AI-dispatch/frame-push architecture was audited and found sound (Phase 2: no code-level bottleneck), but the actual delivered FPS under real camera load hasn't been measured. `client/web/components/video-feed.tsx` already has the client-side FPS instrumentation needed to check this the moment the feeds are reachable.
