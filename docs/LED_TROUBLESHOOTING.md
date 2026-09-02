@@ -181,6 +181,34 @@ via `R2/G2/B2` — so 16 rows are driven per pass. Covering 32 visible rows with
 Same panel, same pixels. The remapping layer translates between them, so
 application code still works in 128x32.
 
+### Shift-register probe (RAWSPAN)
+
+First test that measured the hardware rather than sweeping presets. The 256
+shift-register positions were split into quarters, each drawn in its own
+colour at raw y=0, all four at once:
+
+| Shift register | Colour | Observed |
+|---|---|---|
+| 0-63 | red | not visible |
+| 64-127 | green | not visible |
+| 128-191 | blue | not visible |
+| 192-255 | white | **two bands, lower area** |
+
+Only the last-drawn quarter appeared. Two readings fit:
+
+1. **Overwriting** — all four land on the same physical pixels, so each
+   overwrites the previous and only white survives. This would mean the
+   effective row width is far smaller than the configured 256.
+2. **Truncation** — positions 0-191 genuinely never reach the panel.
+
+These are distinguished by drawing each quarter *alone* with a clear between,
+which is what the follow-up cycle does. Note the two readings imply opposite
+fixes, so guessing between them would have been another sweep.
+
+Worth flagging against the full-colour result: solid fills cover both panels
+cleanly, which means all 4096 pixels are reachable. Any explanation has to
+account for both facts at once.
+
 ## Geometries tried
 
 | Physical config | Chain | Result |
