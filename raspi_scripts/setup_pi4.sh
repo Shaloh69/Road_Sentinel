@@ -100,17 +100,31 @@ fi
 echo "      Repo at $REPO_DIR"
 echo
 
-# ── [2] LED sign — nothing to build ───────────────────────────────────────────
+# ── [2] LED sign — udev rule for a stable device name ─────────────────────────
 # The panel is no longer driven from this Pi's GPIO, so hzeller's
-# rpi-rgb-led-matrix is not built or installed any more. That whole approach
-# was abandoned after ~80 configurations failed to render legible text on
-# these 1/8-scan FM6124 panels; see LEDMatrixDrivers/esp32/DEBUG_LOG.md.
+# rpi-rgb-led-matrix is not built or installed any more. That approach was
+# abandoned after ~80 configurations failed to render legible text on these
+# 1/8-scan FM6124 panels; see LEDMatrixDrivers/esp32/DEBUG_LOG.md.
 #
-# The sign is driven by a microcontroller over USB serial instead, which also
-# removes the /dev/mem root requirement and the SPI/audio GPIO conflicts.
-echo "[2/7] LED sign: driven over USB serial, nothing to build."
+# The sign is driven by a ESP32 over USB serial instead, which also
+# removes the /dev/mem root requirement and the SPI/audio GPIO conflicts that
+# made the old path fragile.
+#
+# The udev rule pins /dev/roadsentinel-sign to the board regardless of
+# enumeration order — plugging in another USB-serial device can otherwise
+# steal ttyUSB0 and leave the bridge talking to the wrong hardware.
+echo "[2/7] Installing LED sign udev rule..."
+sudo cp "$SRC_DIR/99-roadsentinel-sign.rules" /etc/udev/rules.d/99-roadsentinel-sign.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=tty || true
+sudo usermod -aG dialout "$USER" || true
+if [ -e /dev/roadsentinel-sign ]; then
+    echo "      Sign board detected at /dev/roadsentinel-sign"
+else
+    echo "      NOTE: no sign board detected yet. Plug it in and re-check with:"
+    echo "            ls -l /dev/roadsentinel-sign"
+fi
 echo
-
 
 # ── [3] Python venv ────────────────────────────────────────────────────────────
 echo "[3/7] Creating Python venv..."

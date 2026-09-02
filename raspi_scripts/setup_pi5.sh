@@ -23,7 +23,7 @@
 # RTSP URL is still a LAN address, since the cameras are on the Pi's own
 # local network and aren't Tailscale nodes.
 #
-# Pi 5 LED note: uses led-image-viewer (coprocessor mode, no --led-rp1-rio).
+# Pi 5 LED note: the sign is driven by an STM32 Black Pill over USB CDC.
 #   RIO mode (--led-rp1-rio=1) causes rapid GPIO de-sync — do NOT use it.
 #
 # After setup, SSH via:  ssh pi@pi5-sentinel.local  (no IP needed, ever)
@@ -55,7 +55,6 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The service runs as root (User=root) but the library is built under this
 # /root and find nothing, which silently crash-looped this service before.
 # Passing it explicitly removes the dependency on HOME resolution entirely.
-VIEWER_BIN="$HOME/rpi-rgb-led-matrix/utils/led-image-viewer"
 
 echo "================================================"
 echo " Road Sentinel — Pi 5 Setup (Camera B + LED)"
@@ -103,17 +102,31 @@ SRC_DIR="$REPO_DIR/raspi_scripts"
 echo "      Repo at $REPO_DIR"
 echo
 
-# ── [2] LED sign — nothing to build ───────────────────────────────────────────
+# ── [2] LED sign — udev rule for a stable device name ─────────────────────────
 # The panel is no longer driven from this Pi's GPIO, so hzeller's
-# rpi-rgb-led-matrix is not built or installed any more. That whole approach
-# was abandoned after ~80 configurations failed to render legible text on
-# these 1/8-scan FM6124 panels; see LEDMatrixDrivers/esp32/DEBUG_LOG.md.
+# rpi-rgb-led-matrix is not built or installed any more. That approach was
+# abandoned after ~80 configurations failed to render legible text on these
+# 1/8-scan FM6124 panels; see LEDMatrixDrivers/esp32/DEBUG_LOG.md.
 #
-# The sign is driven by a microcontroller over USB serial instead, which also
-# removes the /dev/mem root requirement and the SPI/audio GPIO conflicts.
-echo "[2/7] LED sign: driven over USB serial, nothing to build."
+# The sign is driven by a STM32 Black Pill over USB serial instead, which also
+# removes the /dev/mem root requirement and the SPI/audio GPIO conflicts that
+# made the old path fragile.
+#
+# The udev rule pins /dev/roadsentinel-sign to the board regardless of
+# enumeration order — plugging in another USB-serial device can otherwise
+# steal ttyUSB0 and leave the bridge talking to the wrong hardware.
+echo "[2/7] Installing LED sign udev rule..."
+sudo cp "$SRC_DIR/99-roadsentinel-sign.rules" /etc/udev/rules.d/99-roadsentinel-sign.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=tty || true
+sudo usermod -aG dialout "$USER" || true
+if [ -e /dev/roadsentinel-sign ]; then
+    echo "      Sign board detected at /dev/roadsentinel-sign"
+else
+    echo "      NOTE: no sign board detected yet. Plug it in and re-check with:"
+    echo "            ls -l /dev/roadsentinel-sign"
+fi
 echo
-
 
 # ── [3] Python venv ────────────────────────────────────────────────────────────
 echo "[3/7] Creating Python venv..."
@@ -315,7 +328,6 @@ echo "   $SCRIPTS_DIR/update.sh       — git pull + restart (or use Admin Termi
 echo "   $SCRIPTS_DIR/test_display.sh — test LED with fake alerts"
 echo
 echo " If LED display shows garbage, check display.log and ensure"
-echo "   led-image-viewer was built: ls ~/rpi-rgb-led-matrix/utils/led-image-viewer"
 echo
 echo " Live logs:"
 echo "   tail -f $LOG_DIR/camera.log"

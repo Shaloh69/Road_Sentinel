@@ -20,7 +20,7 @@ ESP32 knows only how to draw four screens. If the sign shows the wrong thing,
 the bug is here; if it shows it wrongly, the bug is in the firmware. That
 separation is most of the value of this design.
 
-The same state logic as display_manager.py:
+Road state, and what the sign shows for each:
     STOP              active incident from either camera   (12s hold)
     VEHICLE INCOMING  recent detection from either camera  ( 8s hold)
     SAFE              no recent activity
@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import os
 import logging
 import sys
 import time
@@ -56,7 +57,9 @@ except ImportError:
 log = logging.getLogger("led-sign")
 
 # How long a detection/incident keeps the sign lit after the last event.
-# Matches display_manager.py so both display paths behave identically.
+# Held here rather than in firmware: a single frame's detection would otherwise
+# flicker the sign off again immediately, and a sign that blinks between two
+# messages reads as broken rather than as informative.
 VEHICLE_HOLD_SECS = 8
 INCIDENT_HOLD_SECS = 12
 
@@ -64,13 +67,25 @@ POLL_INTERVAL = 2.0
 BAUD = 115200
 
 
-def find_port() -> str | None:
-    """First plausible USB serial device.
+# A udev rule (installed by setup_pi4.sh / setup_pi5.sh) points this symlink at
+# whichever sign board is attached. Preferring it means enumeration order no
+# longer matters — plugging a second USB serial device in cannot silently steal
+# /dev/ttyUSB0 and leave the sign talking to a camera.
+STABLE_LINK = "/dev/roadsentinel-sign"
 
-    ESP32 boards appear as ttyUSB* (external USB-serial chip); the STM32 Black
-    Pill appears as ttyACM* (native USB CDC). Checking both means one script
-    serves both installations with no configuration.
+
+def find_port() -> str | None:
+    """Locate the sign board.
+
+    Order matters. The stable symlink is authoritative when present; the
+    globs are the fallback for a Pi whose udev rule has not been installed.
+
+    ESP32 boards appear as ttyUSB* (external CP2102/CH340 bridge); the STM32
+    Black Pill appears as ttyACM* (native USB CDC). Checking both means one
+    script serves both installations with no configuration.
     """
+    if os.path.exists(STABLE_LINK):
+        return STABLE_LINK
     for pattern in ("/dev/ttyUSB*", "/dev/ttyACM*"):
         found = sorted(glob.glob(pattern))
         if found:
@@ -81,10 +96,14 @@ def find_port() -> str | None:
 class EspLink:
     """Serial link to the sign board, reconnecting on its own."""
 
-    def __init__(self, port: str | None):
+    def __init__(self, port: str | None, brightness: int | None = None):
         self._explicit_port = port
         self._ser: serial.Serial | None = None
         self._last_sent: str | None = None
+        # Reapplied on every (re)connect. Sending it only at startup meant a
+        # board that reset overnight came back at its firmware default, and
+        # nobody would notice until the sign looked wrong in daylight.
+        self._brightness = brightness
 
     def _open(self) -> bool:
         port = self._explicit_port or find_port()
@@ -92,17 +111,63 @@ class EspLink:
             return False
         try:
             self._ser = serial.Serial(port, BAUD, timeout=1)
+
             # Opening the port toggles DTR, which resets most ESP32 boards.
             # Give the firmware time to boot before the first command, or it
-            # lands in the bootloader's lap and is silently lost.
+            # lands in the bootloader's lap and is silently lost. The STM32's
+            # native CDC does not reset on open, so this wait is wasted there
+            # but harmless — not worth a board-specific branch.
             time.sleep(2.0)
             self._ser.reset_input_buffer()
-            log.info("Connected to display board on %s", port)
+
+            # Prove the board is actually running firmware, not just that the
+            # device node exists. A wedged or half-flashed board still
+            # enumerates, and without this the bridge would happily "send"
+            # state into a void for hours while the sign showed nothing.
+            if not self._handshake():
+                log.warning("No response from board on %s — will retry", port)
+                self.close()
+                return False
+
+            log.info("Connected to sign board on %s", port)
             self._last_sent = None      # force a resend after any reconnect
+            if self._brightness is not None:
+                self._ser.write(f"BRIGHT:{self._brightness}\n".encode())
+                self._ser.flush()
             return True
         except (serial.SerialException, OSError) as exc:
             log.warning("Could not open %s: %s", port, exc)
             self._ser = None
+            return False
+
+    def _handshake(self) -> bool:
+        """PING for liveness, then log INFO.
+
+        INFO goes into the service log deliberately: when someone reports the
+        sign misbehaving weeks from now, the log already says which firmware
+        build, which mapping and what refresh rate were live at the time.
+        Reconstructing that after the fact is otherwise guesswork.
+        """
+        try:
+            self._ser.write(b"PING\n")
+            self._ser.flush()
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                line = self._ser.readline().decode(errors="replace").strip()
+                if line == "PONG":
+                    break
+                if line == "READY":
+                    continue        # board just booted; keep waiting for PONG
+            else:
+                return False
+
+            self._ser.write(b"INFO\n")
+            self._ser.flush()
+            info = self._ser.readline().decode(errors="replace").strip()
+            if info:
+                log.info("Board: %s", info)
+            return True
+        except (serial.SerialException, OSError):
             return False
 
     def send(self, cmd: str, force: bool = False) -> bool:
@@ -122,6 +187,27 @@ class EspLink:
         except (serial.SerialException, OSError) as exc:
             log.warning("Write failed (%s) — will reconnect", exc)
             self.close()
+            return False
+
+    def alive(self) -> bool:
+        """Round-trip check. Returns False if the board stopped answering.
+
+        Writing to a wedged board succeeds — the OS buffers it — so a write
+        that does not raise proves nothing. Without this the bridge could sit
+        for hours reporting healthy while the sign showed a frozen screen.
+        """
+        if self._ser is None:
+            return False
+        try:
+            self._ser.reset_input_buffer()
+            self._ser.write(b"PING\n")
+            self._ser.flush()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if self._ser.readline().decode(errors="replace").strip() == "PONG":
+                    return True
+            return False
+        except (serial.SerialException, OSError):
             return False
 
     def close(self) -> None:
@@ -195,10 +281,7 @@ def main() -> int:
         datefmt="%H:%M:%S",
     )
 
-    link = EspLink(args.port)
-
-    if args.brightness is not None:
-        link.send(f"BRIGHT:{args.brightness}", force=True)
+    link = EspLink(args.port, args.brightness)
 
     if args.test:
         return run_test(link)
@@ -209,6 +292,12 @@ def main() -> int:
     last_state = None
     last_change = 0.0
     consecutive_errors = 0
+    last_health = 0.0
+
+    # How often to prove the board is still answering. 30s is a compromise:
+    # frequent enough that a wedged sign is caught within a minute, rare
+    # enough that the PING traffic is negligible.
+    HEALTH_INTERVAL = 30.0
 
     while True:
         try:
@@ -231,6 +320,14 @@ def main() -> int:
                 last_state = state
 
             link.send(f"STATE:{state}")
+
+            # Liveness. A board can wedge while still enumerating, in which
+            # case every send() below succeeds and the sign quietly freezes.
+            if now - last_health >= HEALTH_INTERVAL:
+                last_health = now
+                if not link.alive():
+                    log.warning("Board stopped answering PING — reconnecting")
+                    link.close()
 
         except Exception as exc:
             consecutive_errors += 1

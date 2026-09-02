@@ -1,0 +1,30 @@
+# Road Sentinel — stable device name for the LED sign board.
+#
+# Installed to /etc/udev/rules.d/ by setup_pi4.sh and setup_pi5.sh.
+#
+# WHY THIS EXISTS
+#
+# /dev/ttyUSB0 is assigned in enumeration order, not by device. Plug in a
+# second USB-serial device — a camera, a GPS, a debug adapter — and it can take
+# ttyUSB0 while the sign moves to ttyUSB1. The bridge would then happily open
+# the wrong device and send sign commands into it: no error, no output on the
+# panel, and a genuinely confusing thing to diagnose in the field.
+#
+# This pins a name to the hardware instead, so the bridge asks for
+# /dev/roadsentinel-sign and always gets the sign.
+#
+# Covers all three boards this project uses or might use:
+#
+#   10c4:ea60   Silicon Labs CP2102     ESP32 dev boards (most common)
+#   1a86:7523   WCH CH340               ESP32 dev boards (cheaper clones)
+#   0483:5740   ST Virtual COM Port     STM32 Black Pill, native USB CDC
+#
+# The STM32 entry matters for a second reason: 0483:5740 is ST's own VCP id, so
+# the Black Pill only presents it in APPLICATION mode. In DFU (bootloader) mode
+# it enumerates as 0483:df11 instead, which deliberately does NOT match here —
+# so the symlink vanishing is a positive signal that the board is sitting in
+# the bootloader rather than running firmware.
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="roadsentinel-sign", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="roadsentinel-sign", MODE="0660", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="roadsentinel-sign", MODE="0660", GROUP="dialout"

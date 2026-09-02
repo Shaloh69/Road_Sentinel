@@ -15,6 +15,7 @@ RoadSentinel/
 │   ├── node-service/             # Express + Socket.IO — API, MySQL, auth
 │   └── database/                 # mysql_schema.sql (generated; migrate.ts is authoritative)
 ├── client/web/                   # Next.js dashboard ("Night Watch" design system)
+├── LEDMatrixDrivers/             # HUB75 sign firmware — shared core + one file per board
 ├── raspi_scripts/                # Runs on the Raspberry Pis
 ├── datasets/                     # downloaded/ (raw) + processed/ (merged, ready to train)
 ├── models/                       # models/runs/<dataset>/<run>/weights/ — real trained output
@@ -142,18 +143,55 @@ MySQL is self-hosted and local-only (`docker-compose.yml` at the repo root for d
 ```
 raspi_scripts/
 ├── README.md
-├── camera/camera_sender.py   # RTSP → AI service → Node (production path, both Pis)
+├── camera/camera_sender.py        # RTSP -> AI service -> Node (production path, both Pis)
 ├── camera/README.md
-├── display_manager.py        # Unified Pi 4/Pi 5 LED matrix driver
-├── pi_agent.py                # Authenticated admin-terminal relay
-├── setup_pi4.sh / setup_pi5.sh  # systemd install scripts (Camera A + LED / Camera B + LED)
-├── fix_gpio_timing.sh          # Pi 4 GPIO-timing diagnostic/fixer
-└── color_test.py, test_display.py, hub75_piomatter_notes.md  # Hardware bring-up/diagnostic scripts + notes
+├── led_sign_bridge.py             # Polls Node, drives the LED sign over USB serial (both boards)
+├── 99-roadsentinel-sign.rules     # udev: pins /dev/roadsentinel-sign to the sign board
+├── pi_agent.py                    # Authenticated admin-terminal relay
+├── wifi_portal.py                 # Headless WiFi re-provisioning from a phone
+├── setup_wifi_portal.sh
+└── setup_pi4.sh / setup_pi5.sh    # systemd + udev install (Camera + sign, per Pi)
 ```
 
-There used to also be `lcd/` and `lcd_pi4/` subfolders containing earlier, per-model LED driver implementations that predated the unified `display_manager.py` above — removed as dead code (their own git history was placeholder-message-only commits).
+**The Pi no longer drives the LED panel.** It sends state over USB serial to a
+microcontroller. The entire Pi-GPIO path — `display_manager.py`, the `lcd/` and
+`lcd_pi4/` per-model drivers, `ledcat`/`led-image-viewer`/PioMatter, the
+`color_test.py` and `test_display.py` bring-up scripts, `fix_gpio_timing.sh`,
+`hub75_piomatter_notes.md`, `HUB75_PINOUT.md`, `SETUP_GUIDE.html` and the
+RGBMatrixEmulator configs — has been **deleted**. It never worked on these
+1/8-scan FM6124 panels; see `LEDMatrixDrivers/esp32/DEBUG_LOG.md`.
 
-`camera_reboot_autostart_setup.sh` (repo root) is a **separate, legacy** ffplay-based desktop-autostart path, independent of the systemd services above — see `raspi_scripts/README.md`.
+`camera_reboot_autostart_setup.sh` (repo root) is a **separate, legacy**
+ffplay-based desktop-autostart path, independent of the systemd services above.
+
+---
+
+### `/LEDMatrixDrivers` — LED sign firmware
+
+```
+LEDMatrixDrivers/
+├── README.md                      # The library: design, protocol, roadmap
+├── shared/HUB75Sign/              # Portable core — identical on every board
+│   ├── panel_config.h             #   pins (per board), geometry, orientation
+│   ├── framebuffer.*              #   3-bit pixel store
+│   ├── panel_map.*                #   the MEASURED scan mapping
+│   ├── hub75.h                    #   the interface a port implements
+│   ├── display.*                  #   Adafruit_GFX bound to the framebuffer
+│   ├── mode_status/char/sand.*    #   sign states + two bring-up tests
+│   ├── protocol.*                 #   serial command parsing
+│   └── sign_app.*                 #   startup + non-blocking scheduler
+├── esp32/                         # ESP32 port -> Pi 4 sign (250fps, verified)
+│   ├── src/hub75_esp32.cpp        #   the ONLY board-specific file
+│   ├── WIRING.md
+│   └── DEBUG_LOG.md               #   how the panel was reverse-engineered
+└── stm32/                         # STM32 Black Pill port -> Pi 5 sign
+    ├── src/hub75_stm32.cpp        #   the ONLY board-specific file
+    ├── boards/                    #   board manifest with USB CDC hwids
+    └── WIRING.md
+```
+
+Porting to a new board is one ~150-line file implementing four functions.
+Everything else describes the panel and the product, not the microcontroller.
 
 ---
 

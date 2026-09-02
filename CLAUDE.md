@@ -29,7 +29,8 @@ deliberately. Never start it in the background.
 | `server/ai-service` | FastAPI, YOLO26 via ultralytics | 8000 |
 | `server/node-service` | Express + Socket.IO + MySQL | 3001 |
 | `client/web` | Next.js 15 + HeroUI, "Night Watch" design system | 3000 |
-| `raspi_scripts` | camera_sender, display_manager, pi_agent | — |
+| `raspi_scripts` | camera_sender, led_sign_bridge, pi_agent | — |
+| `LEDMatrixDrivers` | HUB75 sign firmware: shared core + ESP32 (Pi 4) / STM32 (Pi 5) | — |
 
 `migrate.ts` is the authoritative DB schema. `mysql_schema.sql` is a generated
 reference — do not edit it by hand and expect it to take effect.
@@ -55,9 +56,26 @@ fails. Run `rewire_tunnels.ps1` after any tunnel restart.
 password share stdin, so `tee` writes the password instead of the content.
 Write the file first, then `sudo cp`.
 
-**SPI steals the HUB75 data pins.** `dtparam=spi=on` gives the kernel GPIO
-7, 8, 9, 10, 11 — which are B1, R2, G2, B2, R1. Nothing works until SPI and
-onboard audio are disabled. See `raspi_scripts/HUB75_PINOUT.md`.
+**A library's abstraction can hide an unverifiable assumption.**
+`ESP32-HUB75-MatrixPanel-DMA` exposes a DMA framebuffer whose column index is
+*assumed* to equal the shift-register clock position. On our panels it is not,
+and its API cannot correct for it — so all five scan-mapping presets were
+adjusting a layer above a broken foundation and none could ever converge. Cost:
+~80 Pi configurations plus a week on the ESP32. A hand-written driver, where
+position `p` IS the p-th clock pulse, worked immediately. When a config sweep
+fails uniformly, suspect the layer beneath it.
+
+**Panel facts are measured, never inferred.** This project reached two
+confident WRONG conclusions from specs and silkscreens ("pin 12 is D", "1/16
+scan"), wrote both into docs as *resolved*, and lost days. Two bit-banged
+tests — walk A/B/C and count lit rows, then colour each quarter of the shift
+register and photograph where it lands — settled everything in under an hour.
+See `LEDMatrixDrivers/esp32/DEBUG_LOG.md`.
+
+**A test where everything lights tells you nothing.** A full-screen fill writes
+every pixel, so it looks identical under a correct mapping and a broken one.
+Several hardware sessions were spent on exactly that non-test. Positioned
+content is the only thing that exercises addressing.
 
 **Quick-tunnel URLs rotate on every restart.** Pi→server traffic uses the
 stable Tailscale address, never a tunnel URL.

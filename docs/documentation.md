@@ -8,13 +8,13 @@ Audit date: 2026-08-03. Branch `main` @ `ed6c0fd`. This document describes what 
 
 Road Sentinel is a two-camera traffic-monitoring rig for a blind curve at Barangay Busay, Cebu. As actually implemented:
 
-- Two Raspberry Pis each own one IP camera. **Pi 4** runs Camera A only (`CAM-A-001`, no LED). **Pi 5** runs Camera B (`CAM-B-002`) **and** drives a 128×32 HUB75 RGB LED matrix that shows status text (`raspi_scripts/setup_pi4.sh`, `raspi_scripts/setup_pi5.sh`).
+- Two Raspberry Pis each own one IP camera **and one roadside LED sign**. **Pi 4** runs Camera A (`CAM-A-001`) with an **ESP32**-driven sign; **Pi 5** runs Camera B (`CAM-B-002`) with an **STM32 Black Pill**-driven sign. Neither Pi drives the panel itself — it sends state over USB serial (`raspi_scripts/setup_pi4.sh`, `raspi_scripts/setup_pi5.sh`).
 - On each Pi, `raspi_scripts/camera/camera_sender.py` pulls the RTSP stream with OpenCV, JPEG-encodes frames, and POSTs them to the FastAPI **AI service** (`server/ai-service`) at `/api/detect`, passing the camera's `pixels_per_meter` and `speed_limit` so the AI service can estimate speed and auto-generate speeding incidents.
 - The AI service runs two YOLOv8/YOLO26 models — `TrafficDetector` (vehicle detection + an in-process IoU tracker for speed) and `IncidentDetector` (crash/incident detection) — and returns detections + incidents as JSON (`server/ai-service/app/main.py`, `app/models/traffic_detector.py`, `app/models/incident_detector.py`).
 - `camera_sender.py` forwards those results to the **Node service** (`server/node-service`) via `POST /api/detections` and `POST /api/incidents`, which persist to MySQL and broadcast over Socket.IO. It also pushes the raw JPEG to Node's in-memory frame buffer for live viewing — via a Socket.IO `pi_frame` event (primary, zero-HTTP-round-trip path added in commit `ed6c0fd`) with an HTTP `PUT /api/cameras/:id/frame` fallback.
 - The **Next.js client** (`client/web`) subscribes to Node's Socket.IO server for live detections/incidents/camera-frame binary streams and renders a live monitor, incident feed, analytics dashboards, and camera configuration screens.
 - Only **one** of the two planned models is actually trained: a YOLO26n vehicle detector (`models/runs/vehicle/vehicle_yolo26n_20260203_032528/weights/best.pt`). No crash/incident model has been trained anywhere in the repo — `IncidentDetector` therefore runs in a brightness-variance **heuristic fallback** in practice unless a real `incident.pt` is supplied (see §13).
-- The LED display side (`raspi_scripts/display_manager.py`) is a separate, actively-worked subsystem (most of the last ~35 commits are LED timing/driver fixes) that renders REAL/TEST alert screens to the physical panel on Pi 5.
+- The LED sign side is now **resolved and stable**. `raspi_scripts/led_sign_bridge.py` polls Node for road state and sends it to a microcontroller running firmware from `LEDMatrixDrivers/`. The previous Pi-GPIO driver churn (~35 commits of timing/driver fixes) ended when that whole approach was abandoned: it never worked on these 1/8-scan FM6124 panels.
 
 This is a functioning push-based pipeline (Pi → AI service → Node → MySQL/WebSocket → client), not the RTSP-pull-into-Node architecture the docs describe.
 
@@ -33,7 +33,7 @@ This is a functioning push-based pipeline (Pi → AI service → Node → MySQL/
 │  192.168.8.108:554 │  (seed.ts default:.102)     │   Raspberry Pi 5     │
 └───────────────────┘                             │  camera_sender.py    │
                                                     │  pi_agent.py         │
-                                                    │  display_manager.py  │
+                                                    │  led_sign_bridge.py  │
                                                     │  → HUB75 128×32 LED  │
                                                     └──────────┬───────────┘
                                                                │
@@ -91,12 +91,11 @@ Notes on protocols/ports, all confirmed from code:
 | `server/node-service/` | Express + Socket.IO backend; MySQL access, REST API, WebSocket broadcast, admin shell terminal |
 | `server/database/` | Static reference `mysql_schema.sql` (schema is **also** independently defined and actually applied by `node-service/src/database/migrate.ts` — the two differ, see §7 and §14) |
 | `client/web/` | Next.js 15 / React 18 dashboard (HeroUI component library) |
-| `raspi_scripts/` | Everything that runs on the two Raspberry Pis: camera capture/forwarding, LED matrix driver, Pi-side remote-terminal agent, setup scripts |
+| `raspi_scripts/` | Everything that runs on the two Raspberry Pis: camera capture/forwarding, the LED sign serial bridge, Pi-side remote-terminal agent, setup scripts |
 | `LEDMatrixDrivers/` | Hand-written HUB75 sign drivers: a portable core (`shared/HUB75Sign/`) plus one file per board — `esp32/` (Pi 4) and `stm32/` (Pi 5). Replaces the Pi-GPIO LED path entirely |
 | `models/` | `README.md` (describes a `v1/v2/production` layout that does not exist) + the real output tree `models/runs/<dataset>/<run_name>/weights/{best,last,epochNN}.pt`, only a `vehicle` run present |
 | `datasets/` | `downloaded/` (raw Roboflow export, untracked) and `processed/busay_vehicle_detection/`, `processed/busay_accident_detection/` (untracked, gitignored) |
 | `config.yml` | Empty (`{}`) — not read by any code in the repo |
-| `emulator_config.json` / `raspi_scripts/emulator_config.json` / `raspi_scripts/emulator.cfg` | Config files for the third-party `RGBMatrixEmulator` pip package (auto-discovered by filename convention, not referenced anywhere in this repo's own code) |
 | `.claude/` | Local Claude Code permission settings only (`settings.local.json`) — no application content |
 | `render.env.txt` | Untracked (gitignored) copy-paste template of Render.com deployment env vars — **contains live plaintext production DB and Supabase credentials**, see §14 |
 
@@ -254,14 +253,21 @@ Two coexisting camera-launch approaches are present in the repo simultaneously (
 **Current/production path** (`setup_pi4.sh`, `setup_pi5.sh`, systemd services):
 - `camera/camera_sender.py` (783 lines) — RTSP → OpenCV capture → JPEG (quality 50, target 30 FPS) → `POST {AI_URL}/api/detect` with `pixels_per_meter`/`speed_limit` fetched per-camera from Node (`fetch_camera_config()`) → forwards results to Node `POST /api/detections` / `/api/incidents` (deduping repeat incident types within a 30s window) → pushes frames to Node primarily via Socket.IO `pi_frame` emit, HTTP `PUT` as fallback. Includes ONVIF WS-Discovery + RTSP port-scanning **auto-discovery** logic if the configured RTSP URL fails repeatedly (`DISCOVERY_AFTER_FAILURES = 3`).
 - `pi_agent.py` (177 lines) — connects outbound to the Node service over `python-socketio`, registers as `pi4`/`pi5` (`pi_register`), and on `pi_command` runs `subprocess.Popen(["sh","-c",command], preexec_fn=os.setsid)`, streaming stdout/stderr back via `pi_output`; `pi_kill` sends `SIGINT` to the process group. No inbound ports needed on the Pi. This is the backend for the Admin Terminal's "pi4"/"pi5" targets (§7.2, §8).
-- `display_manager.py` (1318 lines, top-level) — the **unified**, currently-maintained LED driver. Auto-detects Pi 4 vs Pi 5 (`/dev/pio0` presence) and picks a backend: Pi 4 → `ledcat` subprocess over `/dev/mem` (hzeller C lib, needs `sudo`); Pi 5 → `led-image-viewer` subprocess (SwapOnVSync/coprocessor mode). Has a documented, currently-disabled RGBMatrixBackend Python-bindings path for Pi 5 with an explicit `# TODO: fix pixel mapping before re-enabling` (`display_manager.py:636`). Renders REAL/TEST severity-colored status screens (`SEVERITY_COLORS` for critical/high/medium/low).
-- `setup_pi4.sh` / `setup_pi5.sh` — install scripts; Pi 4 installs only `roadsentinel-camera` + `roadsentinel-agent`; Pi 5 additionally installs `roadsentinel-display`. Default `NODE_URL=http://192.168.8.50:3001`, `AI_URL=http://192.168.8.50:8000`.
-- `color_test.py`, `test_display.py` — hardware bring-up/diagnostic scripts for the LED panel (color cycling, auto-cycling status screens to keep the RP1 refresh thread "fresh" and avoid PWM timing drift — this exact issue dominates the last ~35 git commits, see §16).
+- `led_sign_bridge.py` — the **current** LED path. Polls Node's
+`/api/public/status`, maps the three server states onto the sign's screens, and
+sends them over USB serial to whichever controller is attached (ESP32 on
+`/dev/ttyUSB*`, STM32 Black Pill on `/dev/ttyACM*`, or the udev-pinned
+`/dev/roadsentinel-sign`). Verifies the board with a `PING`/`INFO` handshake on
+every connect and logs the firmware's live configuration, re-applies brightness
+after a reconnect, and re-opens the port if the board stops answering.
 
-**Legacy/parallel path** (`camera_reboot_autostart_setup.sh`, root of repo):
-- A one-time installer that wires two **`ffplay`**-based desktop preview windows into the Pi's desktop-session autostart (`~/.config/autostart/roadsentinel-cameras.desktop`), independent of `camera_sender.py`/systemd. Also runs `set_ir_auto_all.py` (ONVIF, day/night IR switching) before launching the streams. Uses **different** hardcoded camera IPs (`192.168.8.104` / `192.168.8.108`) than `node-service`'s seeded default for Camera B (`192.168.8.102`, see §14).
-
-**LED subfolders** `lcd/` (Pi 5, Adafruit PioMatter) and `lcd_pi4/` (Pi 4, hzeller rpi-rgb-led-matrix, build-from-source, needs `sudo`) contain earlier per-model `display_manager.py` implementations, each with trivial/placeholder git commit messages (`"123"`, `"789"`, etc.) predating the unified top-level `display_manager.py`. `raspi_scripts/README.md` still presents the `lcd/` vs `lcd_pi4/` split as the current setup path without mentioning the newer unified driver.
+**The entire Pi-GPIO LED implementation has been deleted** — `display_manager.py`
+(1418 lines), the `lcd/` and `lcd_pi4/` per-model drivers, `color_test.py`,
+`test_display.py`, `fix_gpio_timing.sh`, `hub75_piomatter_notes.md`,
+`HUB75_PINOUT.md`, `SETUP_GUIDE.html` and the RGBMatrixEmulator configs. It was
+never made to work on these panels; ~80 hzeller/PioMatter configurations failed
+identically, and hzeller's own `demo` failed the same way, so it was never this
+repo's code at fault. Full account in `LEDMatrixDrivers/esp32/DEBUG_LOG.md`.
 
 ---
 
@@ -323,7 +329,6 @@ panel does not render legible text. Full observation trail in
 | Key / file | Read by | Effect |
 |---|---|---|
 | `config.yml` (root, `{}`)  | *(nothing)* | Empty placeholder, not referenced by any `.py`/`.ts`/`.js`/`.sh` file in the repo |
-| `emulator_config.json` (root and `raspi_scripts/`), `raspi_scripts/emulator.cfg` | The third-party `RGBMatrixEmulator` pip package, by filename convention | Configures the browser-based HUB75 emulator (pixel size/style, target FPS, Pi 5 pinout/plane settings) for testing the LED code without physical hardware — not read by any code authored in this repo |
 | `server/ai-service/.env` (untracked; `.env.example` tracked) | `app/main.py` via `os.getenv` | `HOST`, `PORT`, `WORKERS`, `TRAFFIC_MODEL_PATH`, `INCIDENT_MODEL_PATH`, `CONFIDENCE_THRESHOLD`, `IOU_THRESHOLD`, `DEVICE`. Live `.env` on this checkout points `TRAFFIC_MODEL_PATH` at the real trained weight via a hardcoded absolute path on a different drive than this checkout; `INCIDENT_MODEL_PATH` is unresolved (§7.1) |
 | `server/node-service/.env` (untracked; `.env.example` tracked) | `src/config/database.ts`, `src/server.ts`, `src/services/*` | `DB_HOST/PORT/USER/PASSWORD/NAME/SSL` (Aiven MySQL), `SUPABASE_*` (declared but unused — see §7.2), `AI_SERVICE_URL`, `AI_SERVICE_TIMEOUT`, `FRAME_PROCESSING_RATE`/`VIDEO_RECORDING_ENABLED`/`MAX_RECONNECT_ATTEMPTS` (declared in `.env.example` but **not referenced anywhere** in `src/`), `CORS_ORIGIN` (declared but Node actually hardcodes `cors({origin: "*"})` in `server.ts:38`, ignoring this var), `LOG_LEVEL`, `LOG_FILE` (declared but `logger.ts` hardcodes `logs/error.log`/`logs/combined.log`, ignoring `LOG_FILE`) |
 | `client/web/.env.local` (untracked, present on disk; not read for this audit) | Next.js build | `NEXT_PUBLIC_API_URL` — points the browser at the Node service |
@@ -341,7 +346,7 @@ panel does not render legible text. Full observation trail in
 | Camera calibration / homography | **Partial** | Real homography implementation exists (`inference/camera_calibration.py`) but is a disconnected standalone script never invoked by the server; production speed math uses uncorrected pixel distance. Client's "Calibration Tool" buttons (`app/cameras/page.tsx:311-327`) are decorative, no handler |
 | Crash/anomaly detection | **Stubbed** | `server/ai-service/app/models/incident_detector.py:118-161` — no trained model exists anywhere in the repo (§10); falls back to a brightness-variance heuristic explicitly labeled "simplified example" in source |
 | Dual-camera coordination | **Done** | `raspi_scripts/setup_pi4.sh` (Cam A only) / `setup_pi5.sh` (Cam B + LED); `node-service/src/database/seed.ts` seeds both camera rows; independent per-camera IoU trackers keyed by `camera_id` |
-| LED warning output | **Done, actively fragile** | `raspi_scripts/display_manager.py`; ~35 of the most recent commits are timing/driver fixes for RP1 PWM drift; one backend explicitly disabled pending a pixel-mapping fix (`display_manager.py:636`) |
+| LED warning output | **Done, hardware-verified** | `LEDMatrixDrivers/` firmware + `raspi_scripts/led_sign_bridge.py`. Renders legible `SAFE` / `VEHICLE INCOMING` + `SLOW DOWN` / `STOP` at a measured 250fps on the ESP32 sign |
 | Night vision handling | **Partial** | ONVIF auto-IR switching exists in the legacy `camera_reboot_autostart_setup.sh` path (`set_ir_auto_all.py`) but is not present in the current `camera_sender.py` production path; no IR/day-night logic in the AI models themselves |
 | MySQL event logging | **Done** | `node-service/src/database/migrate.ts` (cameras/detections/incidents/hourly_analytics tables); routes insert on every POST from `camera_sender.py` |
 | Web client live view | **Done** | `app/monitor/page.tsx`, `components/video-feed.tsx` — WebSocket binary frames with MJPEG fallback |
@@ -361,7 +366,7 @@ panel does not render legible text. Full observation trail in
 7. **Two independent, undocumented-as-separate camera-launch mechanisms** on the Pi (`camera_sender.py`/systemd vs. the `ffplay`/desktop-autostart path in `camera_reboot_autostart_setup.sh`) with **different hardcoded IPs for Camera B** (`.108` in the autostart script and `setup_pi5.sh`, vs. `.102` as `node-service`'s seeded DB default) — whichever is stale would silently point Camera B's config at the wrong device.
 8. **Declared-but-ignored env vars** in `node-service`: `.env.example` documents `CORS_ORIGIN` and `LOG_FILE`, neither of which the code actually reads (`server.ts` hardcodes `origin: "*"`; `logger.ts` hardcodes its file paths).
 9. **Unused dependency surface**: `@supabase/supabase-js`, `node-rtsp-stream`, `fluent-ffmpeg` are all declared in `server/node-service/package.json` but have zero imports anywhere in `src/` (grepped, no matches) — Supabase is an explicit no-op stub, and Node never touches RTSP or ffmpeg directly (that happens on the Pi).
-10. **LED display subsystem is the most actively-patched code in the repo** and still has an open, explicitly-flagged bug: the Pi 5 `RGBMatrixBackend` (Python-bindings path) is disabled because `SetImage` mirrors output on chained panels, with a `# TODO: fix pixel mapping before re-enabling` (`display_manager.py:636`) — the currently-used fallback (`led-image-viewer` subprocess) requires periodically restarting the viewer process to avoid RP1 PWM timing drift (multiple `heartbeat`/`auto-cycle` commits).
+10. **LED display subsystem — RESOLVED.** Previously the most actively-patched code in the repo, with an open `# TODO: fix pixel mapping before re-enabling`. The root cause was never in this repo: `ESP32-HUB75-MatrixPanel-DMA` (and hzeller/PioMatter before it) assume a framebuffer column index that does not correspond to these panels' shift-register clock order. Replaced with a hand-written driver in `LEDMatrixDrivers/`; the sign now renders legible text at a measured 250fps.
 11. **Confidence threshold defaults disagree across the stack**: `ai-service/.env.example` default `0.75`; the live `.env` on this checkout sets `0.5`; `node-service` seeds cameras with `detection_confidence = 0.5` (`seed.ts`) while `mysql_schema.sql`'s sample INSERT and column default use `0.75`.
 12. **`models/runs/segment/`** contains trained YOLO segmentation weights (`runs/segment/train-2/weights/best.pt`) with no corresponding segmentation training code anywhere in tracked `training/` — orphaned artifact from work not represented in the current scripts.
 
@@ -409,13 +414,13 @@ Concrete, file-by-file claims in the five top-level docs that no longer match th
 
 **`raspi_scripts/README.md`**
 - Reasonably accurate for what it covers, but silently omits `pi_agent.py`, `camera/camera_sender.py`, `color_test.py`, `test_display.py`, `setup_pi4.sh`, `setup_pi5.sh`, `hub75_piomatter_notes.md`, and `SETUP_GUIDE.html` — i.e. most of the folder's actual content is undocumented by its own README.
-- Presents `lcd/` vs `lcd_pi4/` as *the* two current display implementations (lines 99-113); the actually-current, actively-maintained driver is the unified top-level `display_manager.py`, which auto-selects between the two backends and supersedes both subfolder scripts (confirmed via git history — `lcd/` and `lcd_pi4/`'s `display_manager.py` files have only early, placeholder-message commits like `"123"`, `"789"`).
+- Rewritten 2026-09-03 for the serial-driven sign; the `lcd/` vs `lcd_pi4/` content it used to carry described implementations that no longer exist.
 
 ---
 
 ## 16. Open threads
 
-- **LED matrix RP1 timing drift** is the single most actively-worked problem in the repo: of the last ~35 commits on `main`, the large majority are iterative fixes to Pi 5 HUB75 panel corruption/mirroring/flicker (heartbeat restarts, pwm-bits tuning, backend swaps between `LedImageViewerBackend` and `RGBMatrixBackend`, a reverted attempt at `--led-rp1-rio=1`). The `RGBMatrixBackend` Python-bindings path remains explicitly disabled with an open `# TODO: fix pixel mapping before re-enabling` (`raspi_scripts/display_manager.py:636`).
+- **LED matrix RP1 timing drift — no longer applicable.** The Pi 5 never drives the panel now, so RP1 PWM behaviour is irrelevant to the sign. The Pi-GPIO backends this entry described have been deleted.
 - **Live camera streaming migration in progress**: the four most recent commits (`ea033a9`, `498f005`, `b74fc36`, `ed6c0fd`) show an active migration from MJPEG-only streaming to WebSocket binary frame push, with MJPEG kept only as a fallback — `components/video-feed.tsx` and `routes/cameras.ts`/`server.ts`'s `pi_frame` handling are the freshest code in the client/server split.
 - **Crash/incident model training** has evidently never been completed: `training/train.py --dataset accident` is fully implemented and the merged `datasets/processed/busay_accident_detection/` dataset already exists on disk, but no output run folder exists under `models/runs/accident/` — this is a ready-to-run, not-yet-run step, not a missing capability.
 - **Camera calibration UI is a dead end**: the client has "Open Calibration Tool" / "View Calibration Guide" buttons (`app/cameras/page.tsx:311-327`) with no handlers, while a real (if disconnected) homography calibration implementation already exists in `inference/camera_calibration.py` — the two were never connected.

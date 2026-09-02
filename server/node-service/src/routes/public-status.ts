@@ -8,7 +8,7 @@ const router = Router();
 // exposes only a safety-relevant state (safe / vehicle-incoming / incident),
 // camera online counts, and a same-day vehicle/incident tally — no camera
 // feeds, no admin surface, no RTSP URLs or other configuration. Mirrors the
-// same VEHICLE_ALERT_SECS convention raspi_scripts/display_manager.py's
+// same VEHICLE_ALERT_SECS convention raspi_scripts/led_sign_bridge.py's
 // SystemState uses, so the LED sign and this page agree on "current state."
 
 const VEHICLE_ALERT_SECS = 8;
