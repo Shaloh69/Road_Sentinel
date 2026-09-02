@@ -1,7 +1,122 @@
 # HUB75 Wiring Reference — Road Sentinel LED Matrices
 
+## ⚠️ READ FIRST: the panels are 1/8 scan, not 1/16
+
+Confirmed 2026-09-01 from the panel's own silkscreen: **pin 12 is `NC`**,
+where a 1/16-scan panel would have `D`. Only `A`, `B`, `C` exist, so there are
+8 row addresses, not 16.
+
+The adapter board is built for 1/16-scan panels and *does* wire D to pin 12 —
+see the schematic below. The panel simply ignores it. The adapter is not at
+fault; the software configuration was.
+
+**This matters because in hzeller `--led-rows` selects how many address lines
+are driven:**
+
+| `--led-rows` | Address lines used | Scan rate |
+|---|---|---|
+| 16 | A, B, C | **1/8 — these panels** |
+| 32 | A, B, C, **D** | 1/16 |
+| 64 | A, B, C, D, E | 1/32 |
+
+Using `--led-rows=32` makes the library drive a D line the panel does not
+have, so row addressing is wrong no matter what else is set. That is why
+sweeping multiplexing 0-17, row-addr-type 0-5, six RGB sequences and six
+PioMatter pinouts all failed identically — none of them can undo a phantom
+address line.
+
+For a 64x32 panel that is 1/8 scan, the panel is internally arranged more like
+128x16, so the starting point is:
+
+```
+--led-rows=16 --led-cols=64 --led-chain=2 --led-multiplexing=<sweep 0..17>
+```
+
+The multiplexing value then remaps that internal layout onto the visible
+128x32. On the ESP32 library the equivalent is `mxconfig.gpio.d = -1`.
+
+Panel: `P5户外全彩 KLB 6124` — P5 **outdoor**. Outdoor panels are commonly 1/8
+or 1/4 scan; 1/16 is typically indoor. That was a clue available from the
+label all along.
+
+---
+
+
 Transcribed from the project's wiring schematic. Header pin numbers are
 identical across Pi 3 / 4 / 5, so this applies to both Pis.
+
+## Panel facts (counted on the hardware, not inferred)
+
+- **32 LEDs vertically, 64 LEDs horizontally** per panel — physically counted
+  2026-09-01, so 64x32 is confirmed, not assumed.
+- **Two panels, daisy-chained** (panel 1 OUT → panel 2 IN), mounted side by
+  side. Total display: **128x32**.
+- Label: `P5户外全彩 KLB 6124` — P5 **outdoor**, 5 mm pitch.
+- 32 rows means **no E line is needed** (E is only for 1/32-scan 64-row
+  panels). The adapter does not wire E anyway.
+
+So the geometry the software should describe is 128x32, reached as
+`--led-cols=64 --led-chain=2`. What remains genuinely uncertain is the **scan
+rate** — how those 32 rows are addressed internally — not the dimensions.
+
+---
+
+## The three sources, side by side
+
+Three separate pinouts matter here and they do **not** all agree. Recording all
+three so the discrepancy is not rediscovered.
+
+| HUB75 pin | Panel silkscreen | Adapter schematic | ESP32 library default |
+|---|---|---|---|
+| 1 | R1 | R1 → GPIO11 | GPIO25 |
+| 2 | G1 | G1 → GPIO27 | GPIO26 |
+| 3 | B1 | B1 → GPIO7 | GPIO27 |
+| 4 | GND | GND | GND |
+| 5 | R2 | R2 → GPIO8 | GPIO14 |
+| 6 | G2 | G2 → GPIO9 | GPIO12 |
+| 7 | B2 | B2 → GPIO10 | GPIO13 |
+| 8 | GND | GND | GND |
+| 9 | A | A → GPIO22 | GPIO23 |
+| 10 | B | B → GPIO23 | GPIO19 |
+| 11 | C | C → GPIO24 | GPIO5 |
+| **12** | **NC** | **D → GPIO25** | GPIO17 (set to `-1`) |
+| 13 | CLK | CLK → GPIO17 | GPIO16 |
+| 14 | LAT | STROBE → GPIO4 | GPIO4 |
+| 15 | OE | OE → GPIO18 | GPIO15 |
+| 16 | GND | GND | GND |
+
+**The disagreement is pin 12.** The adapter drives `D`; the panel says `NC`.
+The adapter is designed for 1/16-scan panels and is not at fault — it simply
+provides a signal this panel does not use.
+
+### What that does to the display
+
+With `--led-rows=32`, hzeller drives four address lines and expects 16
+distinct row addresses. The panel decodes only A/B/C, so it can distinguish 8.
+Two different row-pairs therefore collapse onto the same address and show
+overlapping content — which is exactly the banding observed on the hardware.
+
+### Careful, though — this is not fully settled
+
+`--led-rows=16` (three address lines, matching the panel) produced a
+**completely dark** panel rather than a correct one. So either the column
+count has to change with it — a 1/8-scan 64x32 panel is internally arranged
+closer to 128x16, meaning `--led-cols` must double as `--led-rows` halves —
+or the NC reading is a miscount of the connector positions.
+
+Configurations still worth trying, all with three address lines:
+
+```
+--led-rows=16 --led-cols=128 --led-chain=2   # canvas 256x16
+--led-rows=16 --led-cols=64  --led-chain=4   # canvas 256x16
+--led-rows=16 --led-cols=128 --led-chain=1   # canvas 128x16
+```
+
+On the ESP32 library the equivalent is simply `mxconfig.gpio.d = -1`, which is
+one of the reasons that route is attractive: it expresses "this panel has no D
+line" directly, rather than through a geometry encoding.
+
+---
 
 ## Pin map (as wired)
 
