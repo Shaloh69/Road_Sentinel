@@ -93,3 +93,142 @@ drive 1/32-scan (64×64) panels at all.
 Sources: [hzeller/rpi-rgb-led-matrix](https://github.com/hzeller/rpi-rgb-led-matrix),
 [issue #934 — P5 8S outdoor](https://github.com/hzeller/rpi-rgb-led-matrix/issues/934),
 [Adafruit Pi 5 RGB matrix guide](https://learn.adafruit.com/rgb-matrix-panels-with-raspberry-pi-5/overview)
+
+---
+
+# ESP32 route (2026-09-02)
+
+After the Pi path was abandoned, the panel was moved to an ESP32 running
+`ESP32-HUB75-MatrixPanel-DMA`, with the Pi driving it over USB serial. See
+`esp32_display/README.md` for the architecture and `HUB75_PINOUT.md` for
+wiring.
+
+## Proven working on hardware ✅
+
+- Firmware compiles, flashes, boots. PlatformIO Core runs **on the Pi 4**
+  (`~/.pio-venv`), so build and flash happen on the device the ESP32 is
+  already plugged into — `bash ~/esp32_display/flash.sh`.
+- Serial protocol round-trips: `PING`→`PONG`, `OK` acknowledgements,
+  `ERR` on bad input.
+- **Every colour renders cleanly full-screen.** The red/green/blue/pink/
+  yellow/cyan/magenta/orange/white cycle was correct on both panels.
+  Wiring, power, colour channels and both panels are therefore proven good.
+
+Two build bugs were caught by compiling on the Pi rather than shipping blind:
+
+- The PlatformIO package owner is `mrfaptastic`, not `mrcodetastic` — the
+  GitHub org was renamed but the registry entry kept the original owner.
+- The HUB75 library needs Adafruit GFX but does not declare it, so the build
+  fails on a missing header until GFX and BusIO are listed explicitly.
+
+## Still unresolved ❌ — coordinate mapping
+
+Solid fills are perfect; **positioned drawing is not**. Text, rectangles and
+single rows land in the wrong places.
+
+The distinction matters and explains why this looked contradictory for so
+long: `fillScreen` writes the entire framebuffer, so every physical LED lights
+regardless of whether the logical→physical mapping is right. Only positioned
+drawing exercises the mapping. Solid-colour tests can therefore never
+distinguish a correct configuration from a broken one — a mistake that cost
+several rounds here.
+
+### Measured symptoms
+
+| Test | Result |
+|---|---|
+| Full-screen colour | correct, every time |
+| One 1px logical row | appears as **two** bands |
+| Logical row y=16 | lands on the same pixels as y=0 (aliases) |
+| Logical row y=16, 4 bands | rows past the addressable range fold back and compound |
+| Any single row | **tilted — drift accumulates per column, left to right** |
+| Small block (16x8) | invisible — pixels scatter too sparsely to see |
+| `drawLine` across the panel | visible, because it crosses many rows |
+
+### What those measurements mean
+
+**Doubling — initially misread.** One logical row appearing as two physical
+bands was treated as a scan-rate fault for several rounds. At the *raw* level
+it is the opposite: it is what a correct 1/8-scan configuration must do. A full
+raw row fills all 256 shift-register positions, and those positions feed four
+64-pixel segments spread over two physical rows. Two bands is the signature of
+the geometry being right. Reading it as a fault sent the search in the wrong
+direction; recorded here so it is not re-derived.
+
+**Aliasing at 16** — y and y+16 landing together confirms only 16 row-slots are
+addressable, not 32. Consistent with 3 address lines.
+
+**Tilt, accumulating per column** — this is the real unresolved symptom. A
+*single* 1-pixel row cannot appear tilted unless its data wraps into the next
+physical row part-way across. That is a **row-length** mismatch, not a
+scan-rate one: fewer pixels are being written per row than the panel's shift
+register holds, so no row ever aligns to a row boundary. Tilt persisted even at
+raw 256x16 with the remapping layer bypassed, so it is not the remapping layer.
+
+### Why 16 rows, when the panel is 32 tall
+
+The panel shows 32 rows but has only 3 address lines (pin 12 is `NC`), giving
+8 addresses. Each address drives two rows at once — one via `R1/G1/B1`, one
+via `R2/G2/B2` — so 16 rows are driven per pass. Covering 32 visible rows with
+16 drive slots means the shift register is twice as long: **128 positions per
+64-wide panel, 256 for two chained**.
+
+```
+256 x 16 = 4096 pixels     (how the hardware clocks it)
+128 x 32 = 4096 pixels     (what you draw on)
+```
+
+Same panel, same pixels. The remapping layer translates between them, so
+application code still works in 128x32.
+
+## Geometries tried
+
+| Physical config | Chain | Result |
+|---|---|---|
+| 64x32 | 1 | renders, doubled + tilted |
+| 64x32 | 2 | renders, doubled + tilted |
+| 128x16 | 1 | panel dark |
+| 128x16 | 2 | panel dark |
+| 256x16 (raw, no remap layer) | 2 | renders; two bands (**expected**), still tilted |
+
+All five `setPhysicalPanelScanRate` mappings (`NORMAL_TWO_SCAN`,
+`NORMAL_ONE_SIXTEEN`, `FOUR_SCAN_32PX_HIGH`, `FOUR_SCAN_16PX_HIGH`,
+`FOUR_SCAN_64PX_HIGH`) were swept at 64x32 with no combination correct.
+
+## Diagnostic commands in the firmware
+
+Added specifically to make this debuggable without reflashing each time —
+reflashing is ~20s, a serial command is ~1s:
+
+| Command | Purpose |
+|---|---|
+| `FILL:r,g,b` | solid colour (proves the panel, not the mapping) |
+| `RECT:x,y,w,h,r,g,b` | positioned rectangle — probes the mapping |
+| `RECTPX:...` | same rectangle via `drawPixel` only, to isolate the library's optimised fill path |
+| `RAWROW:y,r,g,b` | one row in **raw physical** coordinates, bypassing the remap layer entirely |
+| `RAWSPAN:x0,x1,y,r,g,b` | a raw span — lights part of the shift register, so which position drives which segment becomes observable |
+| `RAWCLS` | clear, raw |
+| `SCAN:0-4` | swap scan mapping at runtime |
+| `DIAG` | primitives test pattern |
+
+`RAWROW` removes one ambiguity: drawing through the remap layer means a wrong
+geometry and a wrong scan mapping produce identical garbage, so the two cannot
+be told apart.
+
+`RAWSPAN` removes the next one. A full raw row lights every shift-register
+position simultaneously, so there is no way to tell which position drove which
+physical segment — the very fact a custom mapping needs. Lighting one quarter
+at a time in a distinct colour makes that correspondence directly readable off
+the panel. This is the measurement that should have come first: roughly eighty
+preset configurations were swept before anything measured what the hardware
+actually does, and a sweep cannot converge when the search space does not
+contain the answer.
+
+## Note on test design
+
+A recurring error worth recording: several tests could not distinguish the
+configurations they were meant to compare. Full-screen white looks identical
+under every scan mode. Four colours drawn at once merged where rows aliased,
+making positions unreadable. Tests that only reveal the happy path are worse
+than no test, because they consume a hardware observation and return nothing.
+Single-row, single-colour, held-on-screen probes proved far more informative.
