@@ -187,6 +187,97 @@ observation.
 
 ---
 
+## 2026-09-03 — Pixel_Mapping_Test run; library config space exhausted
+
+Ran the library maintainer's own `Pixel_Mapping_Test` example (the step
+recommended in discussion #892), adapted only for panel size, our pins with
+D/E at -1, and the confirmed FM6124 flag. Preserved at
+`esp32_display/diagnostics/pixel_mapping_test.cpp`.
+
+### The decisive pair of observations ✅
+
+| Test | Result |
+|---|---|
+| Full-screen fill | **Whole sign lights solid red, both panels, correctly** |
+| Single 16px dash at one logical row | **Nothing visible**, any row |
+
+This is the entire problem in two lines. A full fill writes every pixel in the
+framebuffer, so every LED lights no matter how scrambled the mapping is — it
+looks perfect under a correct mapping and a broken one alike, and is therefore
+worthless as a test. Positioned drawing is the only thing that exercises
+addressing, and it produces nothing.
+
+It also proves everything upstream is sound: 5V supply, all 12 signal wires,
+the FM6124 register-init sequence, the DMA path, and both panels in the chain.
+The fault is confined to row addressing.
+
+### Configurations ruled out, with their specific failure modes
+
+| Configuration | Result |
+|---|---|
+| `NORMAL_TWO_SCAN` | nothing renders |
+| `NORMAL_ONE_SIXTEEN` | nothing renders |
+| `FOUR_SCAN_32PX_HIGH` | only `(y & 8) == 0` rows render, vertically swapped, clean |
+| `FOUR_SCAN_64PX_HIGH` | identical to the above |
+| `FOUR_SCAN_16PX_HIGH` | all four row groups render, but sheared with dim bleed; one stripe appeared as 3 bands on one panel and 2 on the other |
+| Maintainer's custom `pxbase` mapping | positioned draws invisible entirely |
+| `line_decoder = TYPE595` | **ruled out** — see below |
+
+### TYPE595 ruled out ❌
+
+Worth recording because the hypothesis was well-motivated and wrong. A 595-type
+panel clocks A/B/C into a shift register to generate row selects, which would
+have reconciled the two facts that otherwise conflict: this panel has no D
+line, yet is 32 rows tall.
+
+Enabling it made positioned draws appear as **multiple replicated red lines
+across both panels** — a change from invisible, which briefly looked like
+progress. But it also **broke the full-screen fill**, which works correctly
+under the default binary decoder. A panel that fills correctly under binary
+addressing and incorrectly under 595 addressing is not a 595 panel. Reverted
+the same session; left commented out in the diagnostic so it is not retried.
+
+### Where this leaves it 🟡
+
+The library's configuration space is exhausted. Every built-in scan mapping,
+both line decoders, the maintainer's parameterised custom mapping, the
+confirmed driver IC and the geometry the maintainer's own example prescribes
+have all been tried, and the panel still renders nothing positional.
+
+The remaining signature — one logical pixel producing either nothing or
+several physical lines — is **addressing multiplicity**, not coordinate
+scrambling. Remapping relocates pixels; it cannot stop one from appearing in
+several places or none. So further mapping work is not the answer, and per the
+session's own working agreement this is a check-in rather than more sweeping.
+
+Options, in the order I would try them:
+
+1. **Ask upstream.** The example's README says plainly: "Create an issue and
+   you will be helped!" The evidence here is unusually clean — driver IC
+   confirmed off the chip, full fill working, and a specific failure mode for
+   each of five mappings. That is a far better report than most.
+2. **Try a different stack.** ESPHome's HUB75 component, or a panel-specific
+   driver. The Home Assistant thread already noted this panel class is finicky
+   across multiple firmware stacks, so this is not obviously better, but it is
+   independent evidence.
+3. **Measure the scan rate physically** rather than inferring it — drive one
+   address value and count how many rows light. This is the one hardware fact
+   still taken on report rather than measured, and both previous wrong
+   conclusions in this log came from inferring it.
+4. **Substitute the panel.** Indoor P5 1/16-scan panels are well-supported by
+   this library and inexpensive. For a thesis with a deadline this is worth
+   weighing honestly against more debugging: the firmware, protocol, Pi bridge
+   and web integration are all complete and would work unchanged against a
+   panel the library supports.
+
+### Rig gotcha
+
+`upload_speed = 921600` **fails reproducibly** (`Failed to leave compressed
+flash mode ... C800: Not enough data`) while the panel is displaying a
+full-brightness frame — the current draw browns the board out at the end of the
+write. `230400` is reliable. This cost two failed flashes before it was
+noticed.
+
 ## Test-design notes worth keeping
 
 Carried forward from `docs/LED_TROUBLESHOOTING.md` because they were learned
