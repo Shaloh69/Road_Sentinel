@@ -92,7 +92,7 @@ Notes on protocols/ports, all confirmed from code:
 | `server/database/` | Static reference `mysql_schema.sql` (schema is **also** independently defined and actually applied by `node-service/src/database/migrate.ts` — the two differ, see §7 and §14) |
 | `client/web/` | Next.js 15 / React 18 dashboard (HeroUI component library) |
 | `raspi_scripts/` | Everything that runs on the two Raspberry Pis: camera capture/forwarding, LED matrix driver, Pi-side remote-terminal agent, setup scripts |
-| `esp32_display/` | ESP32 firmware (PlatformIO) driving the roadside 128x32 HUB75 sign over USB serial from a Pi — supersedes the Pi-GPIO LED path on installations that use it |
+| `LEDMatrixDrivers/` | Hand-written HUB75 sign drivers: a portable core (`shared/HUB75Sign/`) plus one file per board — `esp32/` (Pi 4) and `stm32/` (Pi 5). Replaces the Pi-GPIO LED path entirely |
 | `models/` | `README.md` (describes a `v1/v2/production` layout that does not exist) + the real output tree `models/runs/<dataset>/<run_name>/weights/{best,last,epochNN}.pt`, only a `vehicle` run present |
 | `datasets/` | `downloaded/` (raw Roboflow export, untracked) and `processed/busay_vehicle_detection/`, `processed/busay_accident_detection/` (untracked, gitignored) |
 | `config.yml` | Empty (`{}`) — not read by any code in the repo |
@@ -265,7 +265,7 @@ Two coexisting camera-launch approaches are present in the repo simultaneously (
 
 ---
 
-## 9.1 ESP32 LED sign (`esp32_display/`) — added 2026-09-03
+## 9.1 LED signs (`LEDMatrixDrivers/`) — added 2026-09-03
 
 An alternative to driving the HUB75 panel from Pi GPIO: an ESP32 dev board
 drives the panel directly, and the Pi sends it state over USB serial via
@@ -273,19 +273,19 @@ drives the panel directly, and the Pi sends it state over USB serial via
 network or a decision; the ESP32 only draws.
 
 This exists because the Pi path never worked on these panels — see
-`docs/LED_TROUBLESHOOTING.md` and `esp32_display/DEBUG_LOG.md`. Moving to the
+`docs/LED_TROUBLESHOOTING.md` and `LEDMatrixDrivers/esp32/DEBUG_LOG.md`. Moving to the
 ESP32 removes kernel GPIO contention, the Pi 5 RP1 incompatibility, and 3.3V
 level marginality at once, and gives access to the FM6124 init sequence these
 panels require.
 
 | | |
 |---|---|
-| Firmware | `esp32_display/src/` — modular: `display`, `protocol`, `mode_status`, `mode_char`, `mode_sand` |
-| Hardware config | `esp32_display/include/config.h` — every pin, geometry and driver constant, in one place |
-| Board | ESP32 30-pin dev board (`esp32dev`), PlatformIO |
+| Firmware | `LEDMatrixDrivers/shared/HUB75Sign/` — portable core, shared by both boards |
+| Hardware config | `shared/HUB75Sign/panel_config.h` — pins, geometry and orientation for both boards |
+| Boards | ESP32 dev board (Pi 4 sign) and WeAct Black Pill STM32F411CE (Pi 5 sign) |
 | Panel | 2x 64x32 P5 outdoor, chained -> 128x32, **1/8 scan (no D line)**, **FM6124** driver IC |
 | Protocol | newline ASCII @115200, every command acked `OK`/`ERR` |
-| Pi bridge | `raspi_scripts/esp32_display_bridge.py`, polls `/api/public/status` |
+| Pi bridge | `raspi_scripts/led_sign_bridge.py`, polls `/api/public/status`; serves both boards |
 
 State comes from `/api/public/status` rather than being recomputed, so the
 physical sign and the public web page cannot disagree. The `offline` state is
@@ -296,7 +296,7 @@ bridge, so a dead cable and a dead API produce the same honest sign.
 responds over serial (verified over Tailscale to the Pi 4), and the FM6124 flag
 measurably changed panel behaviour, but the scan mapping is still wrong and the
 panel does not render legible text. Full observation trail in
-`esp32_display/DEBUG_LOG.md`.
+`LEDMatrixDrivers/esp32/DEBUG_LOG.md`.
 
 ---
 

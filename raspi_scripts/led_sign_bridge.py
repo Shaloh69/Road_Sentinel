@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """
-Road Sentinel — Pi → ESP32 display bridge.
+Road Sentinel — Pi → LED sign bridge.
 
-Replaces display_manager.py's role on installations where the LED panel is
-driven by an ESP32 over USB serial instead of the Pi's own GPIO.
+Drives the roadside sign over USB serial. Works with either board:
+
+    Pi 4  ->  ESP32          (/dev/ttyUSB*, CP2102/CH340 bridge)
+    Pi 5  ->  STM32 Black Pill (/dev/ttyACM*, native USB CDC)
+
+Both run the same firmware core and speak the same protocol, so this script
+does not care which is attached — it opens whichever device it finds.
+
+This replaced the Pi-GPIO LED driver entirely. That approach never worked on
+these 1/8-scan FM6124 panels (~80 configurations tried) and has been removed;
+see LEDMatrixDrivers/esp32/DEBUG_LOG.md for the full account.
 
 The split: the Pi keeps everything that needs a network or a brain — polling
 the Node API, deciding what state the road is in, reconnecting, logging. The
@@ -12,14 +21,14 @@ the bug is here; if it shows it wrongly, the bug is in the firmware. That
 separation is most of the value of this design.
 
 The same state logic as display_manager.py:
-    INCIDENT AHEAD    active incident from either camera   (12s hold)
+    STOP              active incident from either camera   (12s hold)
     VEHICLE INCOMING  recent detection from either camera  ( 8s hold)
-    ROAD CLEAR        no recent activity
-    -- NO DATA --     Node unreachable (handled by the ESP32's own timeout)
+    SAFE              no recent activity
+    NO DATA           Node unreachable (handled by the board's own timeout)
 
 Usage:
-    python3 esp32_display_bridge.py --api http://100.120.27.110:3001
-    python3 esp32_display_bridge.py --port /dev/ttyUSB0 --test
+    python3 led_sign_bridge.py --api http://100.120.27.110:3001
+    python3 led_sign_bridge.py --port /dev/ttyUSB0 --test
 
 Requires: pyserial  (pip install pyserial)
 """
@@ -44,7 +53,7 @@ except ImportError:
     print("requests not installed.  pip install requests", file=sys.stderr)
     raise SystemExit(1)
 
-log = logging.getLogger("esp32-bridge")
+log = logging.getLogger("led-sign")
 
 # How long a detection/incident keeps the sign lit after the last event.
 # Matches display_manager.py so both display paths behave identically.
@@ -56,7 +65,12 @@ BAUD = 115200
 
 
 def find_port() -> str | None:
-    """First plausible USB serial device. ESP32 boards show up as either."""
+    """First plausible USB serial device.
+
+    ESP32 boards appear as ttyUSB* (external USB-serial chip); the STM32 Black
+    Pill appears as ttyACM* (native USB CDC). Checking both means one script
+    serves both installations with no configuration.
+    """
     for pattern in ("/dev/ttyUSB*", "/dev/ttyACM*"):
         found = sorted(glob.glob(pattern))
         if found:
@@ -65,7 +79,7 @@ def find_port() -> str | None:
 
 
 class EspLink:
-    """Serial link to the display board, reconnecting on its own."""
+    """Serial link to the sign board, reconnecting on its own."""
 
     def __init__(self, port: str | None):
         self._explicit_port = port
@@ -145,9 +159,9 @@ def road_state(api: str, session: requests.Session) -> str:
 def run_test(link: EspLink) -> int:
     """Cycle every screen so the panel can be checked without a server."""
     screens = [
-        ("STATE:clear", "ROAD CLEAR"),
-        ("STATE:vehicle", "VEHICLE INCOMING (flashing)"),
-        ("STATE:incident", "INCIDENT AHEAD (flashing)"),
+        ("STATE:clear", "SAFE (green)"),
+        ("STATE:vehicle", "VEHICLE INCOMING / SLOW DOWN (flashing yellow)"),
+        ("STATE:incident", "STOP (flashing red)"),
         ("STATE:offline", "NO DATA"),
         ("TEXT:ROAD|SENTINEL", "custom two-line text"),
     ]
@@ -163,7 +177,7 @@ def run_test(link: EspLink) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Pi -> ESP32 LED display bridge")
+    ap = argparse.ArgumentParser(description="Pi -> LED sign bridge (ESP32 or STM32)")
     ap.add_argument("--api", default="http://100.120.27.110:3001",
                     help="Node service base URL")
     ap.add_argument("--port", default=None,
@@ -177,7 +191,7 @@ def main() -> int:
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s [esp32-bridge] %(levelname)s %(message)s",
+        format="%(asctime)s [led-sign] %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
 
@@ -190,7 +204,7 @@ def main() -> int:
         return run_test(link)
 
     session = requests.Session()
-    log.info("Bridging %s -> display board", args.api)
+    log.info("Bridging %s -> LED sign", args.api)
 
     last_state = None
     last_change = 0.0

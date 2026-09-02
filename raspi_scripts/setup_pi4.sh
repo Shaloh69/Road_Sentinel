@@ -2,7 +2,6 @@
 # Road Sentinel — Raspberry Pi 4 Setup
 # Installs: Camera A (CAM-A-001) + HUB75 128x32 LED matrix display.
 # Phase 2: Pi 4 now gets the same LED matrix as Pi 5 (symmetric hardware) —
-# same unified display_manager.py driver, auto-detected Pi 4 backend (ledcat).
 #
 # Usage:
 #   PI_AGENT_TOKEN=<token> bash setup_pi4.sh [NODE_URL] [CAM_A_RTSP] [AI_URL]
@@ -22,7 +21,6 @@
 # RTSP URL is still a LAN address, since the cameras are on the Pi's own
 # local network and aren't Tailscale nodes.
 #
-# Pi 4 LED note: uses ledcat (direct /dev/mem GPIO, needs sudo). If it shows
 # intermittent garbled output, see fix_gpio_timing.sh and
 # raspi_scripts/README.md's "LED Matrix Status Display" section (Phase 0 fix
 # raised --led-slowdown-gpio 4->6 as a starting point — this is code-level,
@@ -47,10 +45,8 @@ fi
 
 # Absolute path to the LED binary, passed explicitly to the display service.
 # The service runs as root (User=root) but the library is built under this
-# login user's home — a bare "~" inside display_manager.py would expand to
 # /root and find nothing, which silently crash-looped the Pi 5 service before.
 # Passing it explicitly removes the dependency on HOME resolution entirely.
-LEDCAT_BIN="$HOME/rpi-rgb-led-matrix/examples-api-use/ledcat"
 
 VENV="$HOME/venvs/cam_venv"
 SCRIPTS_DIR="$HOME/roadsentinel"
@@ -67,7 +63,6 @@ echo " AI service   : $AI_URL"
 echo " Camera A     : $CAM_A_RTSP"
 echo " Camera ID    : $CAMERA_ID"
 echo " Hostname     : $HOSTNAME"
-echo " LED backend  : ledcat (direct GPIO, sudo required)"
 echo "================================================"
 echo
 
@@ -105,16 +100,17 @@ fi
 echo "      Repo at $REPO_DIR"
 echo
 
-# ── [2] Build hzeller ledcat (Pi 4 LED backend) ───────────────────────────────
-echo "[2/7] Building hzeller rpi-rgb-led-matrix (ledcat)..."
-if [ ! -d "$HOME/rpi-rgb-led-matrix" ]; then
-    git clone https://github.com/hzeller/rpi-rgb-led-matrix.git "$HOME/rpi-rgb-led-matrix"
-else
-    git -C "$HOME/rpi-rgb-led-matrix" pull
-fi
-make -C "$HOME/rpi-rgb-led-matrix/examples-api-use" ledcat -j2
-echo "      ledcat built at $HOME/rpi-rgb-led-matrix/examples-api-use/ledcat"
+# ── [2] LED sign — nothing to build ───────────────────────────────────────────
+# The panel is no longer driven from this Pi's GPIO, so hzeller's
+# rpi-rgb-led-matrix is not built or installed any more. That whole approach
+# was abandoned after ~80 configurations failed to render legible text on
+# these 1/8-scan FM6124 panels; see LEDMatrixDrivers/esp32/DEBUG_LOG.md.
+#
+# The sign is driven by a microcontroller over USB serial instead, which also
+# removes the /dev/mem root requirement and the SPI/audio GPIO conflicts.
+echo "[2/7] LED sign: driven over USB serial, nothing to build."
 echo
+
 
 # ── [3] Python venv ────────────────────────────────────────────────────────────
 echo "[3/7] Creating Python venv..."
@@ -135,9 +131,9 @@ echo
 echo "[4/7] Installing scripts..."
 mkdir -p "$SCRIPTS_DIR" "$LOG_DIR"
 cp "$SRC_DIR/camera/camera_sender.py" "$SCRIPTS_DIR/camera_sender.py"
-cp "$SRC_DIR/display_manager.py"      "$SCRIPTS_DIR/display_manager.py"
+cp "$SRC_DIR/led_sign_bridge.py" "$SCRIPTS_DIR/led_sign_bridge.py"
 cp "$SRC_DIR/pi_agent.py"             "$SCRIPTS_DIR/pi_agent.py"
-chmod +x "$SCRIPTS_DIR/camera_sender.py" "$SCRIPTS_DIR/display_manager.py" "$SCRIPTS_DIR/pi_agent.py"
+chmod +x "$SCRIPTS_DIR/camera_sender.py" "$SCRIPTS_DIR/led_sign_bridge.py" "$SCRIPTS_DIR/pi_agent.py"
 echo "      Scripts installed to $SCRIPTS_DIR/"
 echo
 
@@ -171,10 +167,19 @@ StandardError=append:${LOG_DIR}/camera.log
 WantedBy=multi-user.target
 EOF
 
-# LED display service — Pi 4 uses --pi 4 flag (ledcat backend, needs sudo)
+# LED sign service — the panel is driven by a ESP32 over USB serial,
+# not by this Pi's GPIO. The Pi keeps everything needing a network or a
+# decision (polling Node, deciding road state, reconnecting); the board only
+# draws. If the sign shows the WRONG THING the bug is here; if it shows it
+# WRONGLY the bug is in the firmware.
+#
+# The ESP32 sign is on /dev/ttyUSB* (CP2102/CH340 bridge).
+#
+# No sudo: unlike the old GPIO driver this needs no /dev/mem access, only
+# membership of the dialout group (added above).
 sudo tee /etc/systemd/system/roadsentinel-display.service > /dev/null <<EOF
 [Unit]
-Description=Road Sentinel LED Matrix Display (Pi 4)
+Description=Road Sentinel LED Sign Bridge (ESP32)
 After=network-online.target roadsentinel-camera.service
 Wants=network-online.target
 StartLimitIntervalSec=60
@@ -182,14 +187,11 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-User=root
+User=${USER}
 WorkingDirectory=${SCRIPTS_DIR}
-ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py \
-    --api ${NODE_URL} \
-    --pi 4 \
-    --ledcat ${LEDCAT_BIN}
+ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/led_sign_bridge.py --api ${NODE_URL}
 Restart=always
-RestartSec=5
+RestartSec=10
 StandardOutput=append:${LOG_DIR}/display.log
 StandardError=append:${LOG_DIR}/display.log
 
@@ -261,7 +263,7 @@ HELPER
 cat > "$SCRIPTS_DIR/test_display.sh" <<HELPER
 #!/usr/bin/env bash
 # Run display in TEST mode (cycles fake alerts, no network needed)
-sudo ${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py --test --pi 4
+${VENV}/bin/python3 ${SCRIPTS_DIR}/led_sign_bridge.py --test
 HELPER
 
 cat > "$SCRIPTS_DIR/update.sh" <<'HELPER'
@@ -274,10 +276,10 @@ echo "Pulling latest from GitHub..."
 git -C "$REPO_DIR" pull origin main
 echo "Copying updated scripts..."
 cp "$REPO_DIR/raspi_scripts/camera/camera_sender.py" "$SCRIPTS_DIR/camera_sender.py"
-cp "$REPO_DIR/raspi_scripts/display_manager.py"      "$SCRIPTS_DIR/display_manager.py"
+cp "$REPO_DIR/raspi_scripts/led_sign_bridge.py" "$SCRIPTS_DIR/led_sign_bridge.py"
 cp "$REPO_DIR/raspi_scripts/pi_agent.py"             "$SCRIPTS_DIR/pi_agent.py"
 cp "$REPO_DIR/raspi_scripts/color_test.py"           "$SCRIPTS_DIR/color_test.py"
-chmod +x "$SCRIPTS_DIR/camera_sender.py" "$SCRIPTS_DIR/display_manager.py" \
+chmod +x "$SCRIPTS_DIR/camera_sender.py" "$SCRIPTS_DIR/led_sign_bridge.py" \
          "$SCRIPTS_DIR/pi_agent.py" "$SCRIPTS_DIR/color_test.py"
 echo "Restarting services..."
 sudo systemctl restart roadsentinel-camera roadsentinel-display roadsentinel-agent
@@ -300,7 +302,7 @@ echo "================================================"
 echo
 echo " Services (start on every boot):"
 echo "   roadsentinel-camera  — Camera A → AI → Node"
-echo "   roadsentinel-display — HUB75 128×32 LED matrix (ledcat)"
+echo "   roadsentinel-display — LED sign bridge (ESP32 over USB serial)"
 echo "   roadsentinel-agent   — Admin Terminal relay (connects to $NODE_URL)"
 echo
 echo " Quick commands:"

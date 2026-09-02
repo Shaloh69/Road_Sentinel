@@ -4,6 +4,7 @@
 #include "mode_status.h"
 #include "mode_char.h"
 #include "mode_sand.h"
+#include "hub75.h"
 
 namespace protocol {
 
@@ -37,10 +38,11 @@ static void handle(String cmd) {
     // Reports what is actually running, so "did my reflash take?" is a
     // one-second question rather than a guess. During hardware bring-up that
     // distinction matters more than it sounds.
-    Serial.printf("canvas=%dx%d phys=%dx%d chain=%d driver=FM6124 "
-                  "d_line=%d scan=FOUR_SCAN_32PX_HIGH bright=%d mode=%d\n",
-                  CANVAS_W, CANVAS_H, PHYS_W, PHYS_H, PANEL_CHAIN,
-                  PIN_D, display::brightness(), (int)app::mode());
+    Serial.printf("canvas=%dx%d addresses=%d reglen=%d driver=own-bitbang "
+                  "fm6124=yes d_line=none bright=%d fps=%lu mode=%d\n",
+                  CANVAS_W, CANVAS_H, SCAN_ADDRESSES, REGISTER_LEN,
+                  display::brightness(), (unsigned long)hub75::framesPerSecond(),
+                  (int)app::mode());
     return;
   }
 
@@ -48,8 +50,7 @@ static void handle(String cmd) {
     Serial.println("STATE:clear|vehicle|incident|offline");
     Serial.println("TEXT:line1|line2   MODE:status|char|sand");
     Serial.println("CHAR:A   SAND:reset   SAND:rate,N");
-    Serial.println("FILL:r,g,b   RECT:x,y,w,h,r,g,b   CLS   DIAG   SCAN:0-4");
-    Serial.println("RAWSPAN:x0,x1,y,r,g,b   RAWCLS");
+    Serial.println("FILL:c   RECT:x,y,w,h,c   CLS   DIAG   (c = 0-7)");
     Serial.println("BRIGHT:0-255   INFO   PING");
     return;
   }
@@ -58,9 +59,9 @@ static void handle(String cmd) {
   if (cmd.startsWith("STATE:")) {
     String v = cmd.substring(6); v.trim();
     status_mode::State s;
-    if      (v == "clear")    s = status_mode::ST_CLEAR;
+    if      (v == "clear")    s = status_mode::ST_SAFE;
     else if (v == "vehicle")  s = status_mode::ST_VEHICLE;
-    else if (v == "incident") s = status_mode::ST_INCIDENT;
+    else if (v == "incident") s = status_mode::ST_STOP;
     else if (v == "offline")  s = status_mode::ST_OFFLINE;
     else { Serial.println("ERR unknown state"); return; }
     app::setMode(app::MODE_STATUS);
@@ -125,43 +126,41 @@ static void handle(String cmd) {
 
   // ── Diagnostics ─────────────────────────────────────────────────────────
   if (cmd.startsWith("FILL:")) {
-    // A flat colour proves the LEDs, the power rail and the RGB pin order.
-    // It proves NOTHING about coordinate mapping — every pixel is written
-    // either way — so never read a good FILL as "the panel works".
-    int v[3];
-    if (parseInts(cmd.substring(5), v, 3) < 3) {
-      Serial.println("ERR expected FILL:r,g,b"); return;
-    }
+    // FILL:c  where c is 0-7: 0 off, 1 blue, 2 green, 3 cyan,
+    //                        4 red, 5 magenta, 6 yellow, 7 white.
+    //
+    // A flat fill proves the LEDs, the power rail and the RGB pin order. It
+    // proves NOTHING about coordinate mapping — every pixel is written either
+    // way — so never read a good FILL as "the panel works". Several hardware
+    // sessions were lost to exactly that misreading.
+    int c = cmd.substring(5).toInt();
+    if (c < 0 || c > 7) { Serial.println("ERR colour 0-7"); return; }
     app::setMode(app::MODE_DIAG);
-    display::gfx()->fillScreen(display::gfx()->color565(
-        constrain(v[0], 0, 255), constrain(v[1], 0, 255), constrain(v[2], 0, 255)));
+    display::gfx()->fillScreen((uint16_t)c);
     Serial.println("OK");
     return;
   }
 
   if (cmd == "CLS") {
     app::setMode(app::MODE_DIAG);
-    display::gfx()->fillScreen(display::C_BLACK);
+    display::gfx()->fillScreen(HC_OFF);
     Serial.println("OK");
     return;
   }
 
   if (cmd.startsWith("RECT:")) {
-    // RECT:x,y,w,h,r,g,b — one filled rectangle in LOGICAL coordinates,
-    // without clearing first, so regions can be probed one at a time.
+    // RECT:x,y,w,h,c — one filled rectangle in canvas coordinates, drawn
+    // without clearing first so regions can be probed one at a time.
     //
-    // This is the workhorse of scan-mapping calibration: a rectangle covering
-    // a known fraction of the canvas either appears as that same contiguous
-    // fraction on the panel, or it does not. Unlike a full-screen fill it
-    // cannot look correct under a wrong mapping, and unlike text it has no
-    // second way to fail.
-    int v[7];
-    if (parseInts(cmd.substring(5), v, 7) < 7) {
-      Serial.println("ERR expected RECT:x,y,w,h,r,g,b"); return;
+    // Unlike a full-screen fill this cannot look right under a wrong mapping,
+    // and unlike text it has only one way to fail — which makes it the useful
+    // diagnostic of the three.
+    int v[5];
+    if (parseInts(cmd.substring(5), v, 5) < 5) {
+      Serial.println("ERR expected RECT:x,y,w,h,c"); return;
     }
     app::setMode(app::MODE_DIAG);
-    display::gfx()->fillRect(v[0], v[1], v[2], v[3],
-                             display::gfx()->color565(v[4], v[5], v[6]));
+    display::gfx()->fillRect(v[0], v[1], v[2], v[3], (uint16_t)(v[4] & 0x7));
     Serial.println("OK");
     return;
   }
@@ -169,55 +168,14 @@ static void handle(String cmd) {
   if (cmd == "DIAG") {
     app::setMode(app::MODE_DIAG);
     auto *g = display::gfx();
-    g->fillScreen(display::C_BLACK);
-    g->fillRect(0, 0, 32, 16, display::C_RED);        // fillRect coords
-    g->drawRect(96, 0, 32, 16, display::C_GREEN);     // drawRect outline
-    g->drawLine(0, 0, CANVAS_W - 1, CANVAS_H - 1, display::C_BLUE);
-    for (int x = 0; x < CANVAS_W; x += 4)             // bare drawPixel
-      g->drawPixel(x, CANVAS_H - 1, display::C_WHITE);
-    display::drawAt("A", 50, 8, display::C_WHITE, 2);
-    display::drawAt("b", 50, 24, display::C_AMBER, 1);
-    Serial.println("OK");
-    return;
-  }
-
-  if (cmd.startsWith("SCAN:")) {
-    // Runtime scan-mapping swap. Kept because this panel category is known to
-    // be fiddly across firmware stacks, and a serial command costs one second
-    // where a reflash costs twenty. If a value other than 2 turns out to be
-    // correct, change FOUR_SCAN_32PX_HIGH in display.cpp and log why.
-    int n = cmd.substring(5).toInt();
-    switch (n) {
-      case 0: display::gfx()->setPhysicalPanelScanRate(NORMAL_TWO_SCAN);     break;
-      case 1: display::gfx()->setPhysicalPanelScanRate(NORMAL_ONE_SIXTEEN);  break;
-      case 2: display::gfx()->setPhysicalPanelScanRate(FOUR_SCAN_32PX_HIGH); break;
-      case 3: display::gfx()->setPhysicalPanelScanRate(FOUR_SCAN_16PX_HIGH); break;
-      case 4: display::gfx()->setPhysicalPanelScanRate(FOUR_SCAN_64PX_HIGH); break;
-      default: Serial.println("ERR scan 0-4"); return;
-    }
-    Serial.println("OK");
-    return;
-  }
-
-  if (cmd.startsWith("RAWSPAN:")) {
-    // A span in RAW physical coordinates (256x16), bypassing the remap layer
-    // entirely. Lighting one region at a time makes the correspondence
-    // between shift-register position and physical segment directly readable
-    // off the panel — the one fact preset-sweeping cannot produce.
-    int v[6];
-    if (parseInts(cmd.substring(8), v, 6) < 6) {
-      Serial.println("ERR expected RAWSPAN:x0,x1,y,r,g,b"); return;
-    }
-    app::setMode(app::MODE_DIAG);
-    uint16_t c = display::raw()->color565(v[3], v[4], v[5]);
-    for (int x = v[0]; x <= v[1]; x++) display::raw()->drawPixel(x, v[2], c);
-    Serial.println("OK");
-    return;
-  }
-
-  if (cmd == "RAWCLS") {
-    app::setMode(app::MODE_DIAG);
-    display::raw()->fillScreen(0);
+    g->fillScreen(HC_OFF);
+    g->fillRect(0, 0, 32, 16, HC_RED);                       // fillRect coords
+    g->drawRect(96, 0, 32, 16, HC_GREEN);                    // drawRect outline
+    g->drawLine(0, 0, CANVAS_W - 1, CANVAS_H - 1, HC_BLUE);  // drawLine
+    for (int x = 0; x < CANVAS_W; x += 4)                    // bare drawPixel
+      g->drawPixel(x, CANVAS_H - 1, HC_WHITE);
+    display::drawAt("A", 50, 8,  HC_WHITE,  2);              // scaled glyph
+    display::drawAt("b", 50, 24, HC_YELLOW, 1);              // base glyph
     Serial.println("OK");
     return;
   }

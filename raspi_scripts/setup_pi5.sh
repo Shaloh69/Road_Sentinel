@@ -50,11 +50,9 @@ REPO_DIR="$HOME/roadsentinel-repo"
 REPO_URL="https://github.com/Shaloh69/Road_Sentinel.git"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-LED_SLOWDOWN=4   # gpio slowdown passed to display_manager (4 = stable on Pi 5)
 
 # Absolute path to the LED binary, passed explicitly to the display service.
 # The service runs as root (User=root) but the library is built under this
-# login user's home — a bare "~" inside display_manager.py would expand to
 # /root and find nothing, which silently crash-looped this service before.
 # Passing it explicitly removes the dependency on HOME resolution entirely.
 VIEWER_BIN="$HOME/rpi-rgb-led-matrix/utils/led-image-viewer"
@@ -67,7 +65,6 @@ echo " AI service   : $AI_URL"
 echo " Camera B     : $CAM_B_RTSP"
 echo " Camera ID    : $CAMERA_ID"
 echo " Hostname     : $HOSTNAME"
-echo " LED backend  : led-image-viewer (coprocessor mode, slowdown=$LED_SLOWDOWN)"
 echo "================================================"
 echo
 
@@ -106,20 +103,17 @@ SRC_DIR="$REPO_DIR/raspi_scripts"
 echo "      Repo at $REPO_DIR"
 echo
 
-# ── [2] Build hzeller tools (led-image-viewer for Pi 5 display) ───────────────
-echo "[2/7] Building hzeller rpi-rgb-led-matrix tools..."
-if [ ! -d "$HOME/rpi-rgb-led-matrix" ]; then
-    git clone https://github.com/hzeller/rpi-rgb-led-matrix.git "$HOME/rpi-rgb-led-matrix"
-else
-    git -C "$HOME/rpi-rgb-led-matrix" pull
-fi
-# led-image-viewer — used by Pi 5 LedImageViewerBackend (coprocessor mode)
-make -C "$HOME/rpi-rgb-led-matrix/utils" led-image-viewer -j2
-echo "      led-image-viewer built at $HOME/rpi-rgb-led-matrix/utils/led-image-viewer"
-# ledcat — built as fallback / Pi 4 compatibility
-make -C "$HOME/rpi-rgb-led-matrix/examples-api-use" ledcat -j2
-echo "      ledcat built at $HOME/rpi-rgb-led-matrix/examples-api-use/ledcat"
+# ── [2] LED sign — nothing to build ───────────────────────────────────────────
+# The panel is no longer driven from this Pi's GPIO, so hzeller's
+# rpi-rgb-led-matrix is not built or installed any more. That whole approach
+# was abandoned after ~80 configurations failed to render legible text on
+# these 1/8-scan FM6124 panels; see LEDMatrixDrivers/esp32/DEBUG_LOG.md.
+#
+# The sign is driven by a microcontroller over USB serial instead, which also
+# removes the /dev/mem root requirement and the SPI/audio GPIO conflicts.
+echo "[2/7] LED sign: driven over USB serial, nothing to build."
 echo
+
 
 # ── [3] Python venv ────────────────────────────────────────────────────────────
 echo "[3/7] Creating Python venv..."
@@ -136,12 +130,10 @@ echo
 # ── [4] Copy scripts ───────────────────────────────────────────────────────────
 echo "[4/7] Installing scripts..."
 mkdir -p "$SCRIPTS_DIR" "$LOG_DIR"
-# Use the unified display_manager.py (auto-detects Pi 4 vs Pi 5 via /dev/pio0)
 cp "$SRC_DIR/camera/camera_sender.py"    "$SCRIPTS_DIR/camera_sender.py"
-cp "$SRC_DIR/display_manager.py"         "$SCRIPTS_DIR/display_manager.py"
 cp "$SRC_DIR/pi_agent.py"               "$SCRIPTS_DIR/pi_agent.py"
 chmod +x "$SCRIPTS_DIR/camera_sender.py"
-chmod +x "$SCRIPTS_DIR/display_manager.py"
+chmod +x "$SCRIPTS_DIR/led_sign_bridge.py"
 chmod +x "$SCRIPTS_DIR/pi_agent.py"
 echo "      Scripts installed to $SCRIPTS_DIR/"
 echo
@@ -176,10 +168,19 @@ StandardError=append:${LOG_DIR}/camera.log
 WantedBy=multi-user.target
 EOF
 
-# LED display service — Pi 5 uses --pi 5 flag
+# LED sign service — the panel is driven by a STM32 Black Pill over USB serial,
+# not by this Pi's GPIO. The Pi keeps everything needing a network or a
+# decision (polling Node, deciding road state, reconnecting); the board only
+# draws. If the sign shows the WRONG THING the bug is here; if it shows it
+# WRONGLY the bug is in the firmware.
+#
+# The Black Pill enumerates as native USB CDC, so it appears on /dev/ttyACM*.
+#
+# No sudo: unlike the old GPIO driver this needs no /dev/mem access, only
+# membership of the dialout group (added above).
 sudo tee /etc/systemd/system/roadsentinel-display.service > /dev/null <<EOF
 [Unit]
-Description=Road Sentinel LED Matrix Display (Pi 5)
+Description=Road Sentinel LED Sign Bridge (STM32 Black Pill)
 After=network-online.target roadsentinel-camera.service
 Wants=network-online.target
 StartLimitIntervalSec=60
@@ -187,14 +188,11 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-User=root
+User=${USER}
 WorkingDirectory=${SCRIPTS_DIR}
-ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py \
-    --api ${NODE_URL} \
-    --pi 5 \
-    --viewer ${VIEWER_BIN}
+ExecStart=${VENV}/bin/python3 ${SCRIPTS_DIR}/led_sign_bridge.py --api ${NODE_URL}
 Restart=always
-RestartSec=5
+RestartSec=10
 StandardOutput=append:${LOG_DIR}/display.log
 StandardError=append:${LOG_DIR}/display.log
 
@@ -266,7 +264,7 @@ HELPER
 cat > "$SCRIPTS_DIR/test_display.sh" <<HELPER
 #!/usr/bin/env bash
 # Run display in TEST mode (cycles fake alerts, no network needed)
-sudo ${VENV}/bin/python3 ${SCRIPTS_DIR}/display_manager.py --test --pi 5
+${VENV}/bin/python3 ${SCRIPTS_DIR}/led_sign_bridge.py --test
 HELPER
 
 cat > "$SCRIPTS_DIR/update.sh" <<'HELPER'
@@ -280,10 +278,10 @@ echo "Pulling latest from GitHub..."
 git -C "$REPO_DIR" pull origin main
 echo "Copying updated scripts..."
 cp "$REPO_DIR/raspi_scripts/camera/camera_sender.py" "$SCRIPTS_DIR/camera_sender.py"
-cp "$REPO_DIR/raspi_scripts/display_manager.py"      "$SCRIPTS_DIR/display_manager.py"
+cp "$REPO_DIR/raspi_scripts/led_sign_bridge.py" "$SCRIPTS_DIR/led_sign_bridge.py"
 cp "$REPO_DIR/raspi_scripts/pi_agent.py"             "$SCRIPTS_DIR/pi_agent.py"
 cp "$REPO_DIR/raspi_scripts/color_test.py"           "$SCRIPTS_DIR/color_test.py"
-chmod +x "$SCRIPTS_DIR/camera_sender.py" "$SCRIPTS_DIR/display_manager.py" \
+chmod +x "$SCRIPTS_DIR/camera_sender.py" "$SCRIPTS_DIR/led_sign_bridge.py" \
          "$SCRIPTS_DIR/pi_agent.py" "$SCRIPTS_DIR/color_test.py"
 echo "Restarting services..."
 sudo systemctl restart roadsentinel-camera roadsentinel-display roadsentinel-agent
@@ -306,7 +304,7 @@ echo "================================================"
 echo
 echo " Services (start on every boot):"
 echo "   roadsentinel-camera  — Camera B → AI → Node"
-echo "   roadsentinel-display — HUB75 128×32 LED matrix (led-image-viewer)"
+echo "   roadsentinel-display — LED sign bridge (STM32 Black Pill over USB serial)"
 echo "   roadsentinel-agent   — Admin Terminal relay (connects to $NODE_URL)"
 echo
 echo " Quick commands:"

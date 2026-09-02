@@ -22,7 +22,14 @@
 
 namespace status_mode {
 
-enum State { ST_BOOT, ST_CLEAR, ST_VEHICLE, ST_INCIDENT, ST_OFFLINE, ST_TEXT };
+// Named for what the sign SHOWS, so reading the code tells you what a driver
+// sees. The wire protocol keeps the server's vocabulary (clear / vehicle /
+// incident) because that comes from /api/public/status and must not drift.
+//
+//   ST_SAFE     -> "SAFE"                       green,  static
+//   ST_VEHICLE  -> "VEHICLE INCOMING/SLOW DOWN" yellow, flashing
+//   ST_STOP     -> "STOP"                       red,    flashing
+enum State { ST_BOOT, ST_SAFE, ST_VEHICLE, ST_STOP, ST_OFFLINE, ST_TEXT };
 
 void  setState(State s);
 State state();

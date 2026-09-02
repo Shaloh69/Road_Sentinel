@@ -278,6 +278,78 @@ full-brightness frame — the current draw browns the board out at the end of th
 write. `230400` is reliable. This cost two failed flashes before it was
 noticed.
 
+## 2026-09-03 - SOLVED (confirmed on the physical sign, with photos)
+
+The sign renders legible text. SAFE in green, VEHICLE INCOMING / SLOW DOWN in
+flashing yellow, STOP in flashing red, and the falling-sand test showing
+individual coloured grains - all confirmed by the user looking at the panel.
+
+### What fixed it: replacing the library with a hand-written driver
+
+The decisive observation was an asymmetry visible for a while without being
+acted on: **a bit-banged test drove this panel correctly on the first attempt,
+while the library failed under every configuration it offers.** Same panel,
+same wires, same FM6124 init, minutes apart.
+
+The reason is one unverifiable assumption. The library hands you a DMA
+framebuffer whose column index is *assumed* to equal the shift-register clock
+position. On this panel it does not, and no API in the library lets you correct
+for it. Chasing that with scan-mapping presets could never work, because the
+presets adjust a mapping sitting on top of the broken assumption.
+
+`src/hub75.cpp` emits the clock pulses itself, so position `p` **is** the p-th
+pulse. There is nothing left to assume.
+
+### The measured panel layout, now encoded in code
+
+| Property | Value |
+|---|---|
+| Scan | 1/8 - A/B/C only, no D line |
+| Rows per address | 4, spaced 8 apart |
+| Address 0 | the BOTTOM row (row order inverted) |
+| Register | 256 positions per channel |
+| Panel split | each panel owns 128 consecutive positions |
+| Within a panel | first 64 = upper line, second 64 = the line 8 rows below |
+| Channels | R1/G1/B1 drive rows 7-a and 15-a; R2/G2/B2 drive 23-a and 31-a |
+| Chain | reversed - first-clocked data travels furthest |
+
+Orientation took two further corrections, each read off the panel rather than
+reasoned about:
+
+1. **SWAP_PANELS** - centred text split to both outer edges with a gap in the
+   middle, the signature of two 64px halves trading places.
+2. **FLIP_X** - text then became *readable but rotated 180 degrees*. Readable is
+   the diagnostic word: a purely vertical error mirrors glyphs and leaves them
+   unreadable, so readable-but-inverted means both axes were wrong together,
+   which against this base mapping resolves to X only.
+
+### Verified
+
+| Check | Evidence |
+|---|---|
+| Compiles, flashes | `pio run -t upload` SUCCESS. RAM 11.6%, Flash 21.2% |
+| Refresh rate | `INFO` reports **fps=250**, measured on the board |
+| Legible text | photos of SAFE, STOP, VEHICLE INCOMING / SLOW DOWN |
+| Per-pixel addressing | falling sand shows individual coloured grains |
+| Colour correctness | green, yellow and red all render as intended |
+
+### What this cost, and the lesson
+
+Roughly eighty configuration attempts on the Pi, then five scan mappings, two
+line decoders, five geometries and a custom mapping on the ESP32 - none of
+which could have worked, because all were adjusting a layer above the faulty
+assumption.
+
+Two wrong conclusions were recorded as settled along the way (the D-line
+retraction above, and a premature breakthrough call on banded sand output).
+Both came from inferring structure instead of measuring it, then writing the
+inference down with more confidence than the evidence carried.
+
+What actually worked was the cheapest thing available the whole time: drive the
+pins directly, light one known thing, and look at the panel. The bit-banged
+address walk and the quarter-coloured register test together took under an hour
+and produced every number in the table above.
+
 ## Test-design notes worth keeping
 
 Carried forward from `docs/LED_TROUBLESHOOTING.md` because they were learned
