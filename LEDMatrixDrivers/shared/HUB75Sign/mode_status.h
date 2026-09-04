@@ -49,6 +49,15 @@ enum State {
   ST_STOPPED,
   ST_CONGESTION,
   ST_STOP,
+  // Lane-hazard and advisory screens. A 2-lane blind curve: one camera per
+  // lane, one sign per lane, and the danger is what the driver cannot see
+  // around the bend.
+  ST_WRONGWAY,     // "WRONG / WAY"       red     - head-on risk
+  ST_TRUCK,        // "TRUCK / AHEAD"     yellow  - wide vehicle in the curve
+  ST_BUS,          // "BUS / AHEAD"       yellow
+  ST_NOOVERTAKE,   // "NO / OVERTAKING"   yellow  - both lanes occupied
+  ST_KEEPRIGHT,    // "KEEP / RIGHT"      yellow  - lane discipline
+  ST_BLINDCURVE,   // "BLIND / CURVE"     amber   - standing advisory, static
   ST_OFFLINE,
   ST_TEXT,
 };

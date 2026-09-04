@@ -103,6 +103,21 @@ static void renderCongestion() {
   renderTwoLine("TRAFFIC", "AHEAD", HC_YELLOW, flashOn);
 }
 
+// Every phrase checked against the 128px width at size 2 (12px per character):
+// the widest used is "OVERTAKING" at 120px.
+static void renderWrongWay()  { renderTwoLine("WRONG", "WAY",        HC_RED,    flashOn); }
+static void renderTruck()     { renderTwoLine("TRUCK", "AHEAD",      HC_YELLOW, flashOn); }
+static void renderBus()       { renderTwoLine("BUS",   "AHEAD",      HC_YELLOW, flashOn); }
+static void renderNoOvertake(){ renderTwoLine("NO",    "OVERTAKING", HC_YELLOW, flashOn); }
+static void renderKeepRight() { renderTwoLine("KEEP",  "RIGHT",      HC_YELLOW, flashOn); }
+
+static void renderBlindCurve() {
+  // Standing advisory, not an alert: static rather than flashing. A sign that
+  // blinks continuously on a road where nothing is happening is one drivers
+  // stop reading, which would cost the real warnings their meaning.
+  renderTwoLine("BLIND", "CURVE", HC_YELLOW, false);
+}
+
 static void renderStop() {
   // Red is reserved system-wide for confirmed incidents, so it appears in no
   // other state. Flashing red-on-black at the largest size the panel can hold.
@@ -145,6 +160,12 @@ void render() {
     case ST_STOPPED:    renderStopped();    break;
     case ST_CONGESTION: renderCongestion(); break;
     case ST_STOP:       renderStop();       break;
+    case ST_WRONGWAY:   renderWrongWay();   break;
+    case ST_TRUCK:      renderTruck();      break;
+    case ST_BUS:        renderBus();        break;
+    case ST_NOOVERTAKE: renderNoOvertake(); break;
+    case ST_KEEPRIGHT:  renderKeepRight();  break;
+    case ST_BLINDCURVE: renderBlindCurve(); break;
     case ST_OFFLINE: renderOffline(); break;
     case ST_TEXT:    renderText();    break;
     default:         renderBoot();    break;
@@ -155,8 +176,12 @@ void tick(uint32_t now) {
   // Every alerting state flashes; only SAFE and the informational screens are
   // static. Listed explicitly rather than "not SAFE" so adding a calm state
   // later cannot make it blink by accident.
+  // ST_BLINDCURVE is deliberately absent: it is a standing advisory, not an
+  // alert, and must not blink.
   if ((cur == ST_VEHICLE || cur == ST_STOP || cur == ST_SPEEDING ||
-       cur == ST_CRASH || cur == ST_STOPPED || cur == ST_CONGESTION) &&
+       cur == ST_CRASH || cur == ST_STOPPED || cur == ST_CONGESTION ||
+       cur == ST_WRONGWAY || cur == ST_TRUCK || cur == ST_BUS ||
+       cur == ST_NOOVERTAKE || cur == ST_KEEPRIGHT) &&
       now - lastFlash >= FLASH_INTERVAL_MS) {
     lastFlash = now;
     flashOn = !flashOn;

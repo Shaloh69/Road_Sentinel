@@ -1,4 +1,5 @@
 from ultralytics import YOLO
+import os
 import cv2
 import numpy as np
 from typing import List, Dict, Any
@@ -146,12 +147,26 @@ class IncidentDetector:
             # Detect potential congestion by analyzing brightness variance
             brightness_var = np.var(gray)
 
-            if brightness_var < 500:  # Low variance might indicate congestion
+            # DISABLED 2026-09-04. This fired on brightness_var < 500, which
+            # measures how uniform the IMAGE is, not how much traffic is in it.
+            # In practice it triggered on darkness and low contrast — it would
+            # have reported "congestion" continuously every night — and it was
+            # observed live driving a roadside sign to TRAFFIC AHEAD on an
+            # empty road.
+            #
+            # A warning sign that is wrong is worse than one that is silent:
+            # drivers who learn the sign lies stop reading it, and it is then
+            # useless for the real incident it exists to announce.
+            #
+            # Left in place, disabled, rather than deleted so the replacement
+            # has something to be measured against. Set
+            # ENABLE_BRIGHTNESS_HEURISTIC=1 to restore it for experiments.
+            if os.getenv('ENABLE_BRIGHTNESS_HEURISTIC') == '1' and brightness_var < 500:
                 incidents.append({
                     'type': 'congestion',
                     'severity': 'low',
                     'confidence': 0.6,
-                    'description': 'Potential traffic congestion detected (heuristic)',
+                    'description': 'Potential traffic congestion detected (brightness heuristic)',
                     'is_heuristic': True,
                 })
 

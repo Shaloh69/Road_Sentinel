@@ -4,6 +4,8 @@ import math
 import time
 import numpy as np
 from typing import List, Dict, Any, Optional
+from collections import deque
+import statistics
 import logging
 
 logger = logging.getLogger(__name__)
@@ -26,7 +28,36 @@ class TrafficDetector:
     # Per-camera IoU tracker: {camera_id: {track_id: {bbox, time, class}}}
     # Tracks are pruned after TRACK_TTL seconds without a match.
     TRACK_TTL  = 2.0    # seconds before a track is dropped
-    IOU_THRESH = 0.25   # minimum IoU to count as the same vehicle
+
+    # ── Speed-estimation guards ───────────────────────────────────────────────
+    # Raised from 0.25. A loose IoU lets a NEW vehicle appearing near where an
+    # old one was inherit that track, and the "distance moved" then measured is
+    # the gap between two different vehicles. That was producing readings like
+    # "Car at 187 km/h" on a barangay road.
+    IOU_THRESH = 0.35
+
+    # A vehicle's bounding box cannot double or halve between consecutive
+    # frames. When it does, the match is almost certainly an identity switch,
+    # so the pair is unusable for speed even if the IoU passed.
+    MAX_SIZE_RATIO = 1.8
+
+    # dt here is the interval between frames ARRIVING at the AI service, not
+    # between captures. Adaptive sampling, network jitter and GPU queueing all
+    # stretch it, and speed divides by it — so a small dt inflates the result.
+    # Samples outside this band are discarded rather than trusted.
+    MIN_DT = 0.08       # below this, timing noise dominates the measurement
+    MAX_DT = 1.50       # above this, association across the gap is unreliable
+
+    # Nothing on this road travels faster than this. A sample above it is
+    # evidence the estimate is wrong, not evidence of a very fast vehicle.
+    MAX_PLAUSIBLE_KMH = 120.0
+
+    # Report a speed only after this many usable samples, and report the MEDIAN
+    # of the recent window rather than the latest reading. One bad frame pair
+    # can no longer become a "critical speeding" incident on its own — which is
+    # exactly how the bogus incidents were being generated.
+    SPEED_WINDOW      = 5
+    MIN_SPEED_SAMPLES = 3
 
     def __init__(self, model_path: str, device: str = 'cuda', confidence: float = 0.75):
         self.device = device
@@ -91,6 +122,36 @@ class TrafficDetector:
         px_dist = math.sqrt((ccx - pcx) ** 2 + (ccy - pcy) ** 2)
         return round((px_dist / ppm / dt) * 3.6, 1)  # km/h
 
+    def _plausible_pair(self, prev_bbox: dict, curr_bbox: dict, dt: float) -> bool:
+        """Reject frame pairs that cannot describe one vehicle moving."""
+        if not (self.MIN_DT <= dt <= self.MAX_DT):
+            return False
+
+        prev_area = max(prev_bbox['width'] * prev_bbox['height'], 1e-6)
+        curr_area = max(curr_bbox['width'] * curr_bbox['height'], 1e-6)
+        ratio = max(prev_area / curr_area, curr_area / prev_area)
+
+        return ratio <= self.MAX_SIZE_RATIO
+
+    def _smoothed_speed(self, track: dict, sample: Optional[float]) -> Optional[float]:
+        """Add a sample to the track's window and return a trustworthy speed.
+
+        Returns None until enough samples have accumulated, so a vehicle is
+        never assigned a speed from a single frame pair. The median is used
+        rather than the mean because one wild outlier — the usual failure mode
+        here — moves a mean a long way and a median hardly at all.
+        """
+        if sample is None or not (0.0 <= sample <= self.MAX_PLAUSIBLE_KMH):
+            return None
+
+        window = track.setdefault('speeds', deque(maxlen=self.SPEED_WINDOW))
+        window.append(sample)
+
+        if len(window) < self.MIN_SPEED_SAMPLES:
+            return None
+
+        return round(statistics.median(window), 1)
+
     def _update_tracks(self, camera_id: str, detections: list, ppm: float) -> None:
         """Match detections to existing tracks via IoU; attach speed; prune stale tracks."""
         now    = time.time()
@@ -115,9 +176,11 @@ class TrafficDetector:
             if best_id:
                 track = tracks[best_id]
                 dt    = now - track['time']
-                spd   = self._center_speed(track['bbox'], det['bbox'], dt, ppm)
-                if spd is not None:
-                    det['speed'] = spd
+                if self._plausible_pair(track['bbox'], det['bbox'], dt):
+                    smoothed = self._smoothed_speed(
+                        track, self._center_speed(track['bbox'], det['bbox'], dt, ppm))
+                    if smoothed is not None:
+                        det['speed'] = smoothed
                 track['bbox'] = det['bbox']
                 track['time'] = now
                 matched.add(best_id)
@@ -210,10 +273,13 @@ class TrafficDetector:
             if best_id:
                 track = tracks[best_id]
                 dt    = now - track['time']
-                spd   = self._homography_speed(matrix, track['bbox'], det['bbox'], dt)
-                if spd is not None:
-                    det['speed'] = spd
-                    det['speed_source'] = 'homography'
+                if self._plausible_pair(track['bbox'], det['bbox'], dt):
+                    smoothed = self._smoothed_speed(
+                        track,
+                        self._homography_speed(matrix, track['bbox'], det['bbox'], dt))
+                    if smoothed is not None:
+                        det['speed'] = smoothed
+                        det['speed_source'] = 'homography'
                 track['bbox'] = det['bbox']
                 track['time'] = now
                 matched.add(best_id)

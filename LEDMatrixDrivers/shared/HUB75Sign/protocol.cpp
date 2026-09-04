@@ -47,7 +47,9 @@ static void handle(String cmd) {
   }
 
   if (cmd == "HELP" || cmd == "?") {
-    Serial.println("STATE:clear|vehicle|speeding|crash|stopped|congestion|incident|offline");
+    Serial.println("STATE:clear|vehicle|speeding|crash|stopped|congestion");
+    Serial.println("      |wrongway|truck|bus|noovertake|keepright|blindcurve");
+    Serial.println("      |incident|offline");
     Serial.println("TEXT:line1|line2   MODE:status|char|sand");
     Serial.println("CHAR:A   SAND:reset   SAND:rate,N");
     Serial.println("FILL:c   RECT:x,y,w,h,c   CLS   DIAG   (c = 0-7)");
@@ -68,6 +70,12 @@ static void handle(String cmd) {
     else if (v == "crash")      s = status_mode::ST_CRASH;
     else if (v == "stopped")    s = status_mode::ST_STOPPED;
     else if (v == "congestion") s = status_mode::ST_CONGESTION;
+    else if (v == "wrongway")   s = status_mode::ST_WRONGWAY;
+    else if (v == "truck")      s = status_mode::ST_TRUCK;
+    else if (v == "bus")        s = status_mode::ST_BUS;
+    else if (v == "noovertake") s = status_mode::ST_NOOVERTAKE;
+    else if (v == "keepright")  s = status_mode::ST_KEEPRIGHT;
+    else if (v == "blindcurve") s = status_mode::ST_BLINDCURVE;
     else if (v == "incident")   s = status_mode::ST_STOP;
     else if (v == "offline")    s = status_mode::ST_OFFLINE;
     else { Serial.println("ERR unknown state"); return; }
