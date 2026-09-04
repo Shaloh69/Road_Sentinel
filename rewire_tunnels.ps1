@@ -19,8 +19,15 @@ $Dir  = "$Repo\.tunnels"
 function Get-TunnelUrl([string]$name) {
     $log = "$Dir\$name.log"
     if (-not (Test-Path $log)) { return $null }
-    $m = Select-String -Path $log -Pattern "https://[a-z0-9-]+\.trycloudflare\.com" | Select-Object -First 1
-    if ($m) { return $m.Matches[0].Value }
+    # -Last, NOT -First. cloudflared APPENDS to the same log file across
+    # restarts, so the first URL in the file is the OLDEST one — from a tunnel
+    # that no longer exists. Taking -First silently rewires the services to a
+    # dead hostname: ports come up, the script reports success, and the only
+    # symptom is "could not verify: The remote name could not be resolved"
+    # buried in the output while the dashboard is unreachable.
+    # Cost one confusing restart on 2026-09-04 before it was spotted.
+    $m = Select-String -Path $log -Pattern "https://[a-z0-9-]+\.trycloudflare\.com" | Select-Object -Last 1
+    if ($m) { return $m.Matches[$m.Matches.Count - 1].Value }
     return $null
 }
 

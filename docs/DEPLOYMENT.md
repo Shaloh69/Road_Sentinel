@@ -139,6 +139,22 @@ curl -s -i -H "Origin: <client-url>" <node-url>/api/analytics/summary
 
 If there's no `Access-Control-Allow-Origin` line in the response, that's the problem.
 
+**3. The script used to pick the *oldest* tunnel URL.** (Fixed 2026-09-04.)
+
+`cloudflared` **appends** to the same `.tunnels\*.log` file on every restart, so
+a log accumulates every URL that tunnel has ever had. `Get-TunnelUrl` took
+`Select-Object -First 1`, which is the oldest — a hostname from a tunnel that no
+longer exists.
+
+The failure is quiet and looks like success: both ports come up, the script
+prints a full set of URLs, and the only hint is one line reading
+`could not verify: The remote name could not be resolved` while the dashboard
+is unreachable. It now takes `-Last 1`.
+
+If you ever see the script report URLs that don't match the ones the tunnel
+tasks just printed, that is this bug returning — check the logs have not been
+hand-edited, or clear `.tunnels\*.log` before restarting the tunnels.
+
 **2. `Stop-ScheduledTask` doesn't actually stop Node.**
 The task launches `npm`, which spawns `nodemon`, which spawns `node`. Stopping the task leaves that child chain alive holding the **old** environment — so an edited `.env` silently has no effect and the symptom above persists through what looks like a restart. The node processes have to be killed explicitly:
 
