@@ -6,7 +6,7 @@ LED sign.
 | | Pi 4 | Pi 5 |
 |---|---|---|
 | Camera | `CAM-A-001` | `CAM-B-002` |
-| Sign controller | **ESP32** (`/dev/ttyUSB*`) | **STM32 Black Pill** (`/dev/ttyACM*`) |
+| Sign controller | **ESP32** (`/dev/ttyUSB*`) | **ESP32** (`/dev/ttyUSB*`) |
 | Tailscale | `100.98.53.95` | `100.94.18.9` |
 | User | `roadsentinel` | `raspi5` |
 
@@ -101,10 +101,9 @@ records what was running when a problem occurred.
 
 If `/dev/roadsentinel-sign` is missing but the board is plugged in:
 
-- **ESP32** — check the USB cable is a data cable, not charge-only.
-- **STM32** — the board is probably sitting in its DFU bootloader, which
-  enumerates as `0483:df11` and deliberately does not match the udev rule. Tap
-  NRST to run the firmware.
+- Check the USB cable is a **data** cable, not charge-only — this is by far the
+  most common cause.
+- Confirm the board enumerates at all: `dmesg | tail -20` after replugging.
 
 Talk to the board directly with any serial terminal at 115200; `HELP` lists
 every command.

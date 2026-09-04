@@ -33,8 +33,8 @@
  * shifting `panelmap::ch1/ch2` out of `fbuf::pixels`.
  *
  * Existing ports:
- *   esp32/src/hub75_esp32.cpp   ESP32 dev board  (Road Sentinel Pi 4 sign)
- *   stm32/src/hub75_stm32.cpp   WeAct Black Pill (Road Sentinel Pi 5 sign)
+ *   esp32/src/hub75_esp32.cpp   ESP32 dev board  — BOTH Road Sentinel signs
+ *   stm32/src/hub75_stm32.cpp   WeAct Black Pill — reference port, unused
  */
 
 #include <Arduino.h>

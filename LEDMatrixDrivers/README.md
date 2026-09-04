@@ -3,12 +3,19 @@
 Hand-written HUB75 drivers for 1/8-scan FM6124 outdoor panels, with a portable
 core shared across microcontrollers.
 
-Two signs run on this code:
+Both Road Sentinel signs run on this code:
 
 | Board | Drives | Refresh | Serial link |
 |---|---|---|---|
-| ESP32 dev board | Raspberry Pi 4 sign | 250 fps (measured) | USB via CP2102/CH340 |
-| WeAct Black Pill (STM32F411CE) | Raspberry Pi 5 sign | 125 fps (by design) | USB CDC, native |
+| ESP32 dev board | **Raspberry Pi 4 sign** | 250 fps (measured) | USB via CP2102/CH340 |
+| ESP32 dev board | **Raspberry Pi 5 sign** | 250 fps | USB via CP2102/CH340 |
+
+Both signs run **identical firmware** — there is no per-installation build.
+
+A **WeAct Black Pill (STM32F411CE)** port also exists in `stm32/`. It is a
+*reference port*, not used in this deployment: it demonstrates that supporting
+a new board really is one file, which is the central claim of this library's
+structure. It compiles and has never been run on hardware.
 
 ---
 
@@ -71,11 +78,11 @@ LEDMatrixDrivers/
 │   ├── mode_sand.*         falling-sand per-pixel test
 │   ├── protocol.*          serial command parsing
 │   └── sign_app.*          startup + non-blocking scheduler
-├── esp32/                  ESP32 port  (Pi 4)
+├── esp32/                  ESP32 port  — BOTH signs (Pi 4 and Pi 5)
 │   ├── src/hub75_esp32.cpp the ONLY board-specific file
 │   ├── WIRING.md
 │   └── DEBUG_LOG.md
-└── stm32/                  STM32 port  (Pi 5)
+└── stm32/                  STM32 port  — reference only, unused, never run
     ├── src/hub75_stm32.cpp the ONLY board-specific file
     ├── boards/             board manifest with CDC hwids
     └── WIRING.md
@@ -91,14 +98,15 @@ not the microcontroller.
 ## Quick start
 
 ```bash
-pio run -d esp32 -t upload        # Pi 4 sign
-pio run -d stm32 -t upload        # Pi 5 sign  (read stm32/WIRING.md first)
+pio run -d esp32 -t upload        # either sign — identical firmware
 ```
 
-The STM32 has real flashing gotchas — a temperature-marginal DFU bootloader
-and a one-session write requirement. They are documented in
-[`stm32/WIRING.md`](stm32/WIRING.md); read it before the first attempt rather
-than after.
+Flash each of the two ESP32s with the same build. Nothing distinguishes the
+Pi 4 board from the Pi 5 board.
+
+The `stm32/` reference port builds with `pio run -d stm32`, but read
+[`stm32/WIRING.md`](stm32/WIRING.md) first if you ever intend to run it — the
+Black Pill's DFU bootloader is temperature-marginal and has real gotchas.
 
 ## Protocol
 
@@ -160,14 +168,14 @@ splits high-weight planes into segments spread across the sequence to fix it.
 *Not needed for a warning sign, but it is the single biggest feature gap if
 this ever becomes a general-purpose library.*
 
-**STM32 DMA → GPIO BSRR** is the significant one for the Pi 5 sign. A timer can
+**STM32 DMA → GPIO BSRR** would matter if the STM32 port were ever deployed. A timer can
 trigger DMA2 to stream precomputed 32-bit words straight into `GPIOx->BSRR`,
 driving the panel with [almost no CPU involvement](https://community.st.com/t5/stm32-mcus-products/using-timer-to-trigger-dma-event-to-write-into-gpio-gt-bsrr/td-p/796874).
 It must be DMA2 — GPIO sits on AHB1 and DMA1 cannot reach it. Reference
 implementations reach [~549Hz with the CPU free](https://github.com/bikefrivolously/led_matrix).
 Our precomputed-`BSRR` table is already exactly the data such a stream needs,
-so this is a natural next step rather than a rewrite. Held back only because it
-cannot be verified without the board in hand.
+so this is a natural next step rather than a rewrite. Not pursued: both signs
+run ESP32, so the STM32 port is reference material only.
 
 **Double buffering** would remove tearing when a frame is redrawn mid-refresh.
 Not currently visible, because the sign's content changes rarely and 1-bit

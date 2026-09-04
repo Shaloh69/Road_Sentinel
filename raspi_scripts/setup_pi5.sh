@@ -23,7 +23,7 @@
 # RTSP URL is still a LAN address, since the cameras are on the Pi's own
 # local network and aren't Tailscale nodes.
 #
-# Pi 5 LED note: the sign is driven by an STM32 Black Pill over USB CDC.
+# Pi 5 LED note: the sign is driven by an ESP32 over USB serial, same as Pi 4.
 #   RIO mode (--led-rp1-rio=1) causes rapid GPIO de-sync — do NOT use it.
 #
 # After setup, SSH via:  ssh pi@pi5-sentinel.local  (no IP needed, ever)
@@ -108,7 +108,7 @@ echo
 # abandoned after ~80 configurations failed to render legible text on these
 # 1/8-scan FM6124 panels; see LEDMatrixDrivers/esp32/DEBUG_LOG.md.
 #
-# The sign is driven by a STM32 Black Pill over USB serial instead, which also
+# The sign is driven by an ESP32 over USB serial instead, which also
 # removes the /dev/mem root requirement and the SPI/audio GPIO conflicts that
 # made the old path fragile.
 #
@@ -181,19 +181,19 @@ StandardError=append:${LOG_DIR}/camera.log
 WantedBy=multi-user.target
 EOF
 
-# LED sign service — the panel is driven by a STM32 Black Pill over USB serial,
+# LED sign service — the panel is driven by an ESP32 over USB serial,
 # not by this Pi's GPIO. The Pi keeps everything needing a network or a
 # decision (polling Node, deciding road state, reconnecting); the board only
 # draws. If the sign shows the WRONG THING the bug is here; if it shows it
 # WRONGLY the bug is in the firmware.
 #
-# The Black Pill enumerates as native USB CDC, so it appears on /dev/ttyACM*.
+# The ESP32 appears on /dev/ttyUSB* via its CP2102/CH340 USB-serial bridge.
 #
 # No sudo: unlike the old GPIO driver this needs no /dev/mem access, only
 # membership of the dialout group (added above).
 sudo tee /etc/systemd/system/roadsentinel-display.service > /dev/null <<EOF
 [Unit]
-Description=Road Sentinel LED Sign Bridge (STM32 Black Pill)
+Description=Road Sentinel LED Sign Bridge (ESP32)
 After=network-online.target roadsentinel-camera.service
 Wants=network-online.target
 StartLimitIntervalSec=60
@@ -317,7 +317,7 @@ echo "================================================"
 echo
 echo " Services (start on every boot):"
 echo "   roadsentinel-camera  — Camera B → AI → Node"
-echo "   roadsentinel-display — LED sign bridge (STM32 Black Pill over USB serial)"
+echo "   roadsentinel-display — LED sign bridge (ESP32 over USB serial)"
 echo "   roadsentinel-agent   — Admin Terminal relay (connects to $NODE_URL)"
 echo
 echo " Quick commands:"

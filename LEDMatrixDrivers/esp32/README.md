@@ -1,7 +1,11 @@
-# ESP32 sign driver — Road Sentinel Pi 4
+# ESP32 sign driver — both Road Sentinel signs
 
 The ESP32 port of the HUB75Sign driver. Drives two chained 64x32 P5 outdoor
-panels as one 128x32 sign, taking state from the Raspberry Pi 4 over USB serial.
+panels as one 128x32 sign, taking state from a Raspberry Pi over USB serial.
+
+**Both installations use this** — the Pi 4 sign and the Pi 5 sign run
+identical firmware. Flash the same build to both ESP32s; nothing distinguishes
+them.
 
 - **Wiring and first-run checks:** [WIRING.md](WIRING.md)
 - **How the driver works, and why it is not a library:** [../README.md](../README.md)
@@ -13,7 +17,7 @@ The board is cabled to the Pi, so build there — no swapping cables between a
 laptop and the installation site.
 
 ```bash
-ssh roadsentinel@100.98.53.95
+ssh roadsentinel@100.98.53.95     # Pi 4  (Pi 5 is raspi5@100.94.18.9)
 cd ~/LEDMatrixDrivers/esp32
 
 ~/.pio-venv/bin/pio run                                      # compile

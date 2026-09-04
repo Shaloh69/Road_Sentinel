@@ -180,11 +180,11 @@ LEDMatrixDrivers/
 │   ├── mode_status/char/sand.*    #   sign states + two bring-up tests
 │   ├── protocol.*                 #   serial command parsing
 │   └── sign_app.*                 #   startup + non-blocking scheduler
-├── esp32/                         # ESP32 port -> Pi 4 sign (250fps, verified)
+├── esp32/                         # ESP32 port -> BOTH signs (250fps, verified)
 │   ├── src/hub75_esp32.cpp        #   the ONLY board-specific file
 │   ├── WIRING.md
 │   └── DEBUG_LOG.md               #   how the panel was reverse-engineered
-└── stm32/                         # STM32 Black Pill port -> Pi 5 sign
+└── stm32/                         # STM32 port -> reference only, unused
     ├── src/hub75_stm32.cpp        #   the ONLY board-specific file
     ├── boards/                    #   board manifest with USB CDC hwids
     └── WIRING.md

@@ -12,7 +12,7 @@ An AI-powered dual-camera vehicle detection, speed-estimation and incident-warni
 |---|---|---|
 | Vehicle detection | ✅ **Working** | Trained YOLO26n, mAP50 0.90 / mAP50-95 0.70 |
 | LED sign — Pi 4 (ESP32) | ✅ **Working** | Legible text, 250 fps, confirmed on the physical panel |
-| LED sign — Pi 5 (STM32) | 🟡 **Untested** | Port compiles; never flashed to a board |
+| LED sign — Pi 5 (ESP32) | 🟡 **Untested** | Identical firmware to the Pi 4 sign; second board not yet flashed |
 | Web dashboard | ✅ **Working** | Live view, incidents, analytics, public status page |
 | Auth & CORS | ✅ **Working** | JWT login, authenticated `/admin` namespace, allowlisted CORS |
 | MySQL logging | ✅ **Working** | `migrate.ts` is the authoritative schema |
@@ -36,7 +36,7 @@ Three things stand between here and an unsupervised deployment:
 
 2. **Speed figures are systematically biased.** Production math uses raw pixel distance over time. Without perspective correction, a vehicle far up the curve reads slower than one near the camera. A working homography implementation exists in `inference/camera_calibration.py` — the server just never calls it.
 
-3. **Half the physical output is unverified.** The Pi 4 sign is confirmed working. The Pi 5 sign has never been flashed. There has also been no recent clean end-to-end run with both cameras, both signs, the dashboard and the database observed together.
+3. **Half the physical output is unverified.** The Pi 4 sign is confirmed working. The Pi 5 sign runs identical firmware but its board has not been flashed yet. There has also been no recent clean end-to-end run with both cameras, both signs, the dashboard and the database observed together.
 
 Beyond those: nothing alerts anyone when a component fails. For a roadside safety device that fails silently, that is the wrong failure mode — and it is cheap to fix.
 
@@ -71,7 +71,7 @@ Full checklist: **[`docs/FUTURE_IMPROVEMENTS.md`](docs/FUTURE_IMPROVEMENTS.md)**
       ▼                                       │ public ns: live feeds, incidents
  ┌──────────────────┐                         │ /admin ns: JWT-authenticated terminal
  │ ESP32  (Pi 4) ✅ │                         ▼
- │ STM32  (Pi 5) 🟡 │              Next.js client (:3000)
+ │ ESP32  (Pi 5) 🟡 │              Next.js client (:3000)
  │  HUB75 128×32    │              dashboard · monitor · analytics · incidents
  └──────────────────┘              history · reports · cameras · settings
    250 fps, own driver             admin terminal · /status (public, no login)
@@ -117,7 +117,7 @@ Ordered by what would most improve the system, not by effort. Full list in
 
 1. **Train the crash/incident model.** The dataset is prepared. This closes the largest gap between claim and reality.
 2. **Wire homography into production speed.** The code exists; it needs connecting and validating against ground truth.
-3. **Flash and verify the Pi 5 sign**, then re-verify the Pi 4 sign after the driver restructure.
+3. **Flash and verify the second ESP32 for the Pi 5 sign**, then re-verify the Pi 4 sign after the driver restructure.
 4. **Move detection onto the Pis.** Decided: Pi-only, no accelerator. The win is resilience — today, if the network or `irm-pc` is unreachable the sign goes blind. Local inference at ~5 fps keeps it warning drivers regardless. This is a restructure, not an addition: local detection removes the per-frame JPEG upload, so the pipeline gets *lighter* even with inference added.
 5. **Failure alerting and a chain watchdog.** The sign's timeout covers a dead Pi; nothing covers a live Pi whose camera silently stopped.
 6. **Publish the LED driver as its own repository.** There is no working public driver for 1/8-scan FM6124 panels, and the measurement method is the reusable part.
@@ -184,11 +184,14 @@ Installs packages, venv, scripts, three systemd services and the udev rule that 
 ### Flashing a sign
 
 ```bash
-pio run -d LEDMatrixDrivers/esp32 -t upload      # Pi 4 sign
-pio run -d LEDMatrixDrivers/stm32 -t upload      # Pi 5 sign
+pio run -d LEDMatrixDrivers/esp32 -t upload      # either sign
 ```
 
-Read the port's `WIRING.md` first — the STM32 in particular has a temperature-marginal DFU bootloader with real gotchas.
+**Both signs use an ESP32 and run identical firmware** — flash the same build
+to both boards. Wiring in [`LEDMatrixDrivers/esp32/WIRING.md`](LEDMatrixDrivers/esp32/WIRING.md).
+
+An STM32 Black Pill port exists in `LEDMatrixDrivers/stm32/` as a reference —
+unused in this deployment, and never run on hardware.
 
 ### Testing
 
@@ -213,7 +216,7 @@ python test_video.py path/to/video.mp4
 
 ## 📋 Prerequisites
 
-**Hardware** — 8GB RAM minimum (16GB+ recommended); a GPU for training (this project used an RTX 3060 Ti); two Raspberry Pis (4 and 5), each with a camera, a microcontroller and a HUB75 LED sign; a 5V 8A supply per sign.
+**Hardware** — 8GB RAM minimum (16GB+ recommended); a GPU for training (this project used an RTX 3060 Ti); two Raspberry Pis (4 and 5), each with a camera, an ESP32 and a HUB75 LED sign; a 5V 8A supply per sign.
 
 **Software** — Python 3.9–3.12 for `training/` (3.10–3.12 for the AI service); Node.js 18+; MySQL 8.0 bound to localhost only, never exposed publicly — not even through Tailscale. `migrate.ts` is the authoritative, idempotent schema; point a fresh empty database at it and start the server. PlatformIO for the sign firmware.
 
@@ -235,7 +238,7 @@ python test_video.py path/to/video.mp4
 
 ## ⚠️ Unverified — do not treat as working
 
-- **Pi 5 STM32 sign** — compiles; never flashed to a board
+- **Pi 5 sign** — same firmware as the verified Pi 4 sign, but its ESP32 has not been flashed or wired yet
 - **ESP32 sign since the `LEDMatrixDrivers` restructure** — behaviour-identical and compiles, but not re-flashed
 - **The bridge's udev rule, connect handshake and liveness check** — none have run on a Pi
 - **Camera reachability on both Pis**, including Camera B's auto-discovery recovery path persisting a new IP in practice

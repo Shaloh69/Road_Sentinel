@@ -21,9 +21,11 @@ Things that would make the system dishonest or unsafe in the field.
       *This is the single largest gap between what the system claims and what
       it does.* It is a GPU training job — run deliberately, never in the
       background.
-- [ ] **Verify the Pi 5 sign end-to-end.** The STM32 port compiles but has
-      never been flashed to a board. Refresh rate, USB CDC enumeration and the
-      panel mapping are all unproven on that hardware. ⛔ needs the board.
+- [ ] **Build and verify the Pi 5 sign.** Decided 2026-09-04: both signs use
+      **ESP32**, not STM32 — same board, same firmware, same wiring as the
+      verified Pi 4 sign. Flash the second ESP32, wire the panel per
+      `LEDMatrixDrivers/esp32/WIRING.md`, confirm on the panel. Lower risk than
+      the STM32 route since nothing is new.
 - [ ] **Re-verify the ESP32 sign after the library restructure.** Behaviour is
       unchanged and it compiles, but it has not been re-flashed since moving to
       `LEDMatrixDrivers/`. 🟡
@@ -137,13 +139,13 @@ rows as estimates until the benchmark above exists.
 
 - [x] ESP32 sign: hand-written driver, legible text at 250 fps ✅
 - [x] Portable core shared across boards ✅
-- [x] STM32 Black Pill port written and compiling 🟡
-- [ ] **Flash and verify the STM32 sign.** ⛔ needs the board.
-- [ ] **STM32 DMA → GPIO BSRR.** A timer can trigger DMA2 to stream
-      precomputed words straight into `GPIOx->BSRR`, driving the panel with
-      almost no CPU. Must be DMA2 — GPIO is on AHB1 and DMA1 cannot reach it.
-      The precomputed `bsrrData` table is already exactly the data such a
-      stream needs, so this is a natural extension rather than a rewrite.
+- [x] STM32 Black Pill port written and compiling — **reference only**, not
+      deployed. Kept because it proves a new board is genuinely one file, which
+      is this library's central claim. Never run on hardware.
+- [ ] **Flash the second ESP32 for the Pi 5 sign.** Identical firmware to the
+      working Pi 4 sign; no new code, no new wiring.
+- [ ] ~~STM32 DMA → GPIO BSRR~~ — not pursued. Would matter only if the STM32
+      port were deployed, and it is not.
 - [ ] **Binary Code Modulation** for 256 levels per channel instead of 2. Not
       needed for a warning sign — saturated colour is the right choice there —
       but it is the main gap if this ever becomes a general-purpose library.

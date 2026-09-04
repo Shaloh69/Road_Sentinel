@@ -17,7 +17,10 @@
 #
 #   10c4:ea60   Silicon Labs CP2102     ESP32 dev boards (most common)
 #   1a86:7523   WCH CH340               ESP32 dev boards (cheaper clones)
-#   0483:5740   ST Virtual COM Port     STM32 Black Pill, native USB CDC
+#   0483:5740   ST Virtual COM Port     STM32 Black Pill (reference port only —
+#                                       both Road Sentinel signs use ESP32;
+#                                       kept so the rule still works if a Black
+#                                       Pill is ever swapped in)
 #
 # The STM32 entry matters for a second reason: 0483:5740 is ST's own VCP id, so
 # the Black Pill only presents it in APPLICATION mode. In DFU (bootloader) mode

@@ -8,7 +8,7 @@ Audit date: 2026-08-03. Branch `main` @ `ed6c0fd`. This document describes what 
 
 Road Sentinel is a two-camera traffic-monitoring rig for a blind curve at Barangay Busay, Cebu. As actually implemented:
 
-- Two Raspberry Pis each own one IP camera **and one roadside LED sign**. **Pi 4** runs Camera A (`CAM-A-001`) with an **ESP32**-driven sign; **Pi 5** runs Camera B (`CAM-B-002`) with an **STM32 Black Pill**-driven sign. Neither Pi drives the panel itself — it sends state over USB serial (`raspi_scripts/setup_pi4.sh`, `raspi_scripts/setup_pi5.sh`).
+- Two Raspberry Pis each own one IP camera **and one roadside LED sign**. **Pi 4** runs Camera A (`CAM-A-001`) with an **ESP32**-driven sign; **Pi 5** runs Camera B (`CAM-B-002`) with an **ESP32**-driven sign. Neither Pi drives the panel itself — it sends state over USB serial (`raspi_scripts/setup_pi4.sh`, `raspi_scripts/setup_pi5.sh`).
 - On each Pi, `raspi_scripts/camera/camera_sender.py` pulls the RTSP stream with OpenCV, JPEG-encodes frames, and POSTs them to the FastAPI **AI service** (`server/ai-service`) at `/api/detect`, passing the camera's `pixels_per_meter` and `speed_limit` so the AI service can estimate speed and auto-generate speeding incidents.
 - The AI service runs two YOLOv8/YOLO26 models — `TrafficDetector` (vehicle detection + an in-process IoU tracker for speed) and `IncidentDetector` (crash/incident detection) — and returns detections + incidents as JSON (`server/ai-service/app/main.py`, `app/models/traffic_detector.py`, `app/models/incident_detector.py`).
 - `camera_sender.py` forwards those results to the **Node service** (`server/node-service`) via `POST /api/detections` and `POST /api/incidents`, which persist to MySQL and broadcast over Socket.IO. It also pushes the raw JPEG to Node's in-memory frame buffer for live viewing — via a Socket.IO `pi_frame` event (primary, zero-HTTP-round-trip path added in commit `ed6c0fd`) with an HTTP `PUT /api/cameras/:id/frame` fallback.
@@ -256,8 +256,7 @@ Two coexisting camera-launch approaches are present in the repo simultaneously (
 - `led_sign_bridge.py` — the **current** LED path. Polls Node's
 `/api/public/status`, maps the three server states onto the sign's screens, and
 sends them over USB serial to whichever controller is attached (ESP32 on
-`/dev/ttyUSB*`, STM32 Black Pill on `/dev/ttyACM*`, or the udev-pinned
-`/dev/roadsentinel-sign`). Verifies the board with a `PING`/`INFO` handshake on
+`/dev/ttyUSB*`, or the udev-pinned `/dev/roadsentinel-sign`). Verifies the board with a `PING`/`INFO` handshake on
 every connect and logs the firmware's live configuration, re-applies brightness
 after a reconnect, and re-opens the port if the board stops answering.
 
@@ -288,7 +287,7 @@ panels require.
 |---|---|
 | Firmware | `LEDMatrixDrivers/shared/HUB75Sign/` — portable core, shared by both boards |
 | Hardware config | `shared/HUB75Sign/panel_config.h` — pins, geometry and orientation for both boards |
-| Boards | ESP32 dev board (Pi 4 sign) and WeAct Black Pill STM32F411CE (Pi 5 sign) |
+| Boards | ESP32 dev board on BOTH signs — identical firmware. An STM32 Black Pill port exists as unused reference material |
 | Panel | 2x 64x32 P5 outdoor, chained -> 128x32, **1/8 scan (no D line)**, **FM6124** driver IC |
 | Protocol | newline ASCII @115200, every command acked `OK`/`ERR` |
 | Pi bridge | `raspi_scripts/led_sign_bridge.py`, polls `/api/public/status`; serves both boards |

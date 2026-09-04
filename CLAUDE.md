@@ -30,7 +30,7 @@ deliberately. Never start it in the background.
 | `server/node-service` | Express + Socket.IO + MySQL | 3001 |
 | `client/web` | Next.js 15 + HeroUI, "Night Watch" design system | 3000 |
 | `raspi_scripts` | camera_sender, led_sign_bridge, pi_agent | — |
-| `LEDMatrixDrivers` | HUB75 sign firmware: shared core + ESP32 (Pi 4) / STM32 (Pi 5) | — |
+| `LEDMatrixDrivers` | HUB75 sign firmware: shared core + ESP32 port (both signs); STM32 port is unused reference | — |
 
 `migrate.ts` is the authoritative DB schema. `mysql_schema.sql` is a generated
 reference — do not edit it by hand and expect it to take effect.

@@ -2,13 +2,13 @@
 """
 Road Sentinel — Pi → LED sign bridge.
 
-Drives the roadside sign over USB serial. Works with either board:
+Drives the roadside sign over USB serial. Both installations use an ESP32:
 
-    Pi 4  ->  ESP32          (/dev/ttyUSB*, CP2102/CH340 bridge)
-    Pi 5  ->  STM32 Black Pill (/dev/ttyACM*, native USB CDC)
+    Pi 4  ->  ESP32  (/dev/ttyUSB*, CP2102/CH340 bridge)
+    Pi 5  ->  ESP32  (same board, same firmware)
 
-Both run the same firmware core and speak the same protocol, so this script
-does not care which is attached — it opens whichever device it finds.
+The device probing still accepts ttyACM* as well, so a board with native USB
+CDC can be swapped in without touching this script.
 
 This replaced the Pi-GPIO LED driver entirely. That approach never worked on
 these 1/8-scan FM6124 panels (~80 configurations tried) and has been removed;
@@ -80,9 +80,9 @@ def find_port() -> str | None:
     Order matters. The stable symlink is authoritative when present; the
     globs are the fallback for a Pi whose udev rule has not been installed.
 
-    ESP32 boards appear as ttyUSB* (external CP2102/CH340 bridge); the STM32
-    Black Pill appears as ttyACM* (native USB CDC). Checking both means one
-    script serves both installations with no configuration.
+    ESP32 boards appear as ttyUSB* (external CP2102/CH340 bridge). ttyACM* is
+    checked too, which costs nothing and covers a board with native USB CDC if
+    one is ever swapped in.
     """
     if os.path.exists(STABLE_LINK):
         return STABLE_LINK
@@ -114,9 +114,10 @@ class EspLink:
 
             # Opening the port toggles DTR, which resets most ESP32 boards.
             # Give the firmware time to boot before the first command, or it
-            # lands in the bootloader's lap and is silently lost. The STM32's
-            # native CDC does not reset on open, so this wait is wasted there
-            # but harmless — not worth a board-specific branch.
+            # lands in the bootloader's lap and is silently lost. A board with
+            # native USB CDC would not reset on open, making the wait
+            # unnecessary there — but it is harmless, so no board-specific
+            # branch.
             time.sleep(2.0)
             self._ser.reset_input_buffer()
 
@@ -263,7 +264,7 @@ def run_test(link: EspLink) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Pi -> LED sign bridge (ESP32 or STM32)")
+    ap = argparse.ArgumentParser(description="Pi -> LED sign bridge (ESP32)")
     ap.add_argument("--api", default="http://100.120.27.110:3001",
                     help="Node service base URL")
     ap.add_argument("--port", default=None,

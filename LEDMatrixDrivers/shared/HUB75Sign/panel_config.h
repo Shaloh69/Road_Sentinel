@@ -47,8 +47,11 @@
 
 #if defined(ARDUINO_ARCH_ESP32)
 
-  // ESP32 dev board (drives the Pi 4 sign). Every pin is below GPIO 32 so the
-  // single 32-bit W1TS/W1TC registers cover all of them.
+  // ESP32 dev board — drives BOTH signs (Pi 4 and Pi 5). The two boards run
+  // identical firmware; nothing here is per-installation.
+  //
+  // Every pin is below GPIO 32 so the single 32-bit W1TS/W1TC registers cover
+  // all of them.
   //
   // Proven good by direct measurement: a bit-banged walk of addresses 0..7 lit
   // 8 distinct rows, and a quarter-coloured register test placed all four
@@ -68,7 +71,12 @@
 
 #elif defined(ARDUINO_ARCH_STM32)
 
-  // WeAct Black Pill V3.0, STM32F411CEU6 (drives the Pi 5 sign).
+  // WeAct Black Pill V3.0, STM32F411CEU6.
+  //
+  // REFERENCE PORT — not used in the Road Sentinel deployment. Both signs run
+  // on ESP32. Kept because it demonstrates that a new board is genuinely one
+  // file, which is the whole claim of this library's structure. Never
+  // hardware-verified: it compiles and nothing more.
   //
   // Data and address lines are all on GPIOB so one BSRR write moves them
   // together. PB2 is deliberately skipped: it is the BOOT1 strapping pin, and
