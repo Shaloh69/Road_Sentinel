@@ -91,3 +91,53 @@
 .page-transition-container {
   min-height: 100vh;
 }
+
+/* Logo reaction: a short rotational shake that settles before the burst.
+   Rotation rather than translation keeps the sidebar layout perfectly still —
+   a horizontal shake would nudge the heading text beside it. */
+@keyframes logo-shake {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+  10% {
+    transform: rotate(-9deg) scale(1.04);
+  }
+  20% {
+    transform: rotate(8deg) scale(1.06);
+  }
+  30% {
+    transform: rotate(-8deg) scale(1.08);
+  }
+  40% {
+    transform: rotate(7deg) scale(1.1);
+  }
+  50% {
+    transform: rotate(-6deg) scale(1.12);
+  }
+  60% {
+    transform: rotate(5deg) scale(1.1);
+  }
+  70% {
+    transform: rotate(-4deg) scale(1.07);
+  }
+  80% {
+    transform: rotate(3deg) scale(1.04);
+  }
+  90% {
+    transform: rotate(-2deg) scale(1.02);
+  }
+}
+
+.animate-logo-shake {
+  animation: logo-shake 0.7s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* Respect the same accessibility contract as the rest of the design system;
+   canvas-confetti is separately told to stand down via
+   disableForReducedMotion. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-logo-shake {
+    animation: none;
+  }
+}

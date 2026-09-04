@@ -31,4 +31,9 @@ void reset();
 void step();                 // advance one frame; call on the millis() tick
 void setRate(uint8_t grains_per_frame);
 uint16_t grainCount();
+
+// True once the one-shot sequence has finished (build -> hold -> collapse).
+// The caller hands the panel back to status duty on this, so the animation
+// cannot outlive itself on a roadside sign.
+bool isDone();
 }

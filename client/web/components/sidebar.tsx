@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { Logo } from "@/components/icons";
 import { useLogoSequence } from "@/components/logo-sequence";
+import { useLogoCelebration } from "@/components/logo-celebration";
 
 export const Sidebar = () => {
   const pathname = usePathname();
@@ -215,9 +216,15 @@ export const Sidebar = () => {
     },
   ];
 
+  const { celebrate, shaking, anchorRef } = useLogoCelebration();
+
   const onLogoClick = useLogoSequence(() => {
     const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+    // Celebrate regardless of whether the sign is reachable — the reaction is
+    // feedback that the sequence was recognised, and swallowing it on a
+    // network error would make a correct sequence look like a failed one.
+    celebrate();
     fetch(`${api}/api/sign/attract`, { method: "POST" }).catch(() => {});
   });
 
@@ -230,7 +237,12 @@ export const Sidebar = () => {
           href="/"
           onClick={onLogoClick}
         >
-          <div className="bg-brand p-2 rounded-lg shadow-lg shadow-brand/20">
+          <div
+            ref={anchorRef}
+            className={`bg-brand p-2 rounded-lg shadow-lg shadow-brand/20${
+              shaking ? " animate-logo-shake" : ""
+            }`}
+          >
             <Logo className="w-8 h-8 text-brand-foreground" />
           </div>
           <div>

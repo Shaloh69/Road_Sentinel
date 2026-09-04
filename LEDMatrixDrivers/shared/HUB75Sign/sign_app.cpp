@@ -98,6 +98,14 @@ void tick() {
       if (now - lastSandStep >= SAND_INTERVAL_MS) {
         lastSandStep = now;
         sand::step();
+
+        // The sequence is one-shot. When it finishes, return to status duty
+        // by itself rather than waiting to be told — nothing external has to
+        // remember to put a safety sign back to work.
+        if (sand::isDone()) {
+          app::setMode(app::MODE_STATUS);
+          status_mode::render();
+        }
       }
       break;
 

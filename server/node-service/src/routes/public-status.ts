@@ -47,10 +47,19 @@ router.get("/", async (req: Request, res: Response) => {
            ORDER BY timestamp DESC LIMIT 1`,
           [INCIDENT_ALERT_SECS],
         ),
-        query<{ camera_id: string; timestamp: string }[]>(
-          `SELECT camera_id, timestamp FROM detections
+        // VEHICLE INCOMING requires a recent detection on BOTH approaches,
+        // not either. On a blind curve a single vehicle is the normal case and
+        // warning on it would leave the sign lit almost continuously, which
+        // costs the warning its meaning. Two vehicles converging from opposite
+        // sides is the situation neither driver can see, and the one the sign
+        // exists for.
+        //
+        // GROUP BY camera_id so this counts DISTINCT approaches — twenty
+        // detections from one camera must not look like two cameras agreeing.
+        query<{ camera_id: string; last_seen: string }[]>(
+          `SELECT camera_id, MAX(timestamp) AS last_seen FROM detections
            WHERE timestamp >= NOW() - INTERVAL ? SECOND
-           ORDER BY timestamp DESC LIMIT 1`,
+           GROUP BY camera_id`,
           [VEHICLE_ALERT_SECS],
         ),
         query<{ online: number; total: number }[]>(
@@ -74,9 +83,12 @@ router.get("/", async (req: Request, res: Response) => {
         severity: inc.severity,
         camera_id: inc.camera_id,
       };
-    } else if (recentDetectionRows.length > 0) {
+    } else if (recentDetectionRows.length >= 2) {
       state = "vehicle_incoming";
-      detail = { camera_id: recentDetectionRows[0].camera_id };
+      detail = {
+        camera_ids: recentDetectionRows.map((r) => r.camera_id),
+        approaches: recentDetectionRows.length,
+      };
     }
 
     res.json({
@@ -85,13 +97,15 @@ router.get("/", async (req: Request, res: Response) => {
         state, // "clear" | "vehicle_incoming" | "incident"
         // Transient display-mode override. Null in normal operation.
         //
-        // Deliberately suppressed unless the road is CLEAR. The endpoint that
-        // sets it needs no authentication, so without this a caller could hold
-        // the sign off status duty for as long as they kept calling — on a
-        // roadside safety device that is not an acceptable failure mode.
-        // Gating on "clear" means a real vehicle or incident always wins, and
-        // the override can only ever occupy a sign that has nothing to say.
-        sign_mode: state === "clear" ? activeSignMode() : null,
+        // Takes precedence over the road state, by request: activating it
+        // overwrites whatever the sign is currently showing.
+        //
+        // Two things keep that safe rather than merely brief. It self-expires
+        // server-side, and the animation itself is one-shot — the firmware
+        // returns the panel to status duty when the sequence ends, so the sign
+        // resumes warning even if this endpoint were never called again.
+        // Worth knowing: while it runs, a genuine incident will not be shown.
+        sign_mode: activeSignMode(),
         detail,
         cameras_online: cameraRows[0]?.online ?? 0,
         cameras_total: cameraRows[0]?.total ?? 0,

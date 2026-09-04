@@ -164,9 +164,19 @@ class EspLink:
 
             self._ser.write(b"INFO\n")
             self._ser.flush()
-            info = self._ser.readline().decode(errors="replace").strip()
-            if info:
-                log.info("Board: %s", info)
+
+            # Read until the config line appears rather than taking whatever
+            # comes back first. A leftover PONG can still be in the buffer, and
+            # logging that instead defeats the point of this line, which is to
+            # record which firmware and mapping were live at connect time.
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                line = self._ser.readline().decode(errors="replace").strip()
+                if not line:
+                    continue
+                if "canvas=" in line:
+                    log.info("Board: %s", line)
+                    break
             return True
         except (serial.SerialException, OSError):
             return False
