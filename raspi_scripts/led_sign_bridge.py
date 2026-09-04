@@ -64,6 +64,18 @@ VEHICLE_HOLD_SECS = 8
 INCIDENT_HOLD_SECS = 12
 
 POLL_INTERVAL = 2.0
+
+# Re-send the current state at least this often, even when nothing changed.
+#
+# The firmware falls back to "NO DATA" if no command arrives for 15s, which is
+# deliberate: a dead cable or a dead Pi should produce an honest blank rather
+# than a stale SAFE. But send() suppresses unchanged commands, so on a quiet
+# road the bridge would fall silent after the first STATE and the board would
+# time out on a perfectly healthy link — the sign showing NO DATA while
+# everything worked.
+#
+# Well under the firmware's timeout so a single dropped write cannot trip it.
+RESEND_INTERVAL = 5.0
 BAUD = 115200
 
 
@@ -100,6 +112,7 @@ class EspLink:
         self._explicit_port = port
         self._ser: serial.Serial | None = None
         self._last_sent: str | None = None
+        self._last_sent_at = 0.0
         # Reapplied on every (re)connect. Sending it only at startup meant a
         # board that reset overnight came back at its firmware default, and
         # nobody would notice until the sign looked wrong in daylight.
@@ -188,8 +201,11 @@ class EspLink:
             return False
 
     def send(self, cmd: str, force: bool = False) -> bool:
-        """Send a command; skip if unchanged, unless forced."""
-        if cmd == self._last_sent and not force:
+        """Send a command; skip if unchanged, unless forced or gone stale."""
+        now = time.monotonic()
+        stale = (now - self._last_sent_at) >= RESEND_INTERVAL
+
+        if cmd == self._last_sent and not force and not stale:
             return True
 
         if self._ser is None and not self._open():
@@ -199,6 +215,7 @@ class EspLink:
             self._ser.write((cmd + "\n").encode())   # type: ignore[union-attr]
             self._ser.flush()                        # type: ignore[union-attr]
             self._last_sent = cmd
+            self._last_sent_at = now
             log.debug("sent %s", cmd)
             return True
         except (serial.SerialException, OSError) as exc:
@@ -228,6 +245,7 @@ class EspLink:
             return False
 
     def close(self) -> None:
+        self._last_sent_at = 0.0
         if self._ser:
             try:
                 self._ser.close()

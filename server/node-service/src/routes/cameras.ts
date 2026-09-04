@@ -7,6 +7,33 @@ import { io } from "../server";
 
 const router = Router();
 
+/**
+ * Strip credentials out of an RTSP URL before it leaves the server.
+ *
+ * `rtsp_url` is stored with embedded credentials because that is what
+ * OpenCV/FFmpeg needs to open the stream. But GET /api/cameras is
+ * unauthenticated and is reachable through the public Cloudflare tunnel, so
+ * `SELECT *` was handing camera passwords to anyone who asked.
+ *
+ * Nothing legitimately needs the password back out of the API: the Pi holds
+ * its own copy in its systemd unit, and the dashboard only ever displays the
+ * URL. So the host and path survive — enough to see which device a camera
+ * points at — and the secret does not.
+ *
+ * rtsp://admin:hunter2@192.168.8.110:554/path -> rtsp://admin:***@192.168.8.110:554/path
+ */
+function redactRtspUrl<T extends { rtsp_url?: string | null }>(camera: T): T {
+  if (!camera?.rtsp_url) return camera;
+
+  return {
+    ...camera,
+    rtsp_url: camera.rtsp_url.replace(
+      /(:\/\/[^:/@]+):[^@]*@/,
+      "$1:***@",
+    ),
+  };
+}
+
 // ── In-memory MJPEG frame buffer ──────────────────────────────────────────────
 const frameBuffer = new Map<string, Buffer>();
 const frameEmitters = new Map<string, EventEmitter>();
@@ -69,7 +96,11 @@ router.get("/", async (req: Request, res: Response) => {
     const cameras = await query<Camera[]>(
       "SELECT * FROM cameras ORDER BY name",
     );
-    res.json({ success: true, data: cameras } as ApiResponse<Camera[]>);
+
+    res.json({
+      success: true,
+      data: cameras.map(redactRtspUrl),
+    } as ApiResponse<Camera[]>);
   } catch (err) {
     res.status(500).json({ success: false, error: "Failed to fetch cameras" });
   }
@@ -86,7 +117,10 @@ router.get("/:id", async (req: Request, res: Response) => {
         .status(404)
         .json({ success: false, error: "Camera not found" });
     }
-    res.json({ success: true, data: rows[0] } as ApiResponse<Camera>);
+    res.json({
+      success: true,
+      data: redactRtspUrl(rows[0]),
+    } as ApiResponse<Camera>);
   } catch (err) {
     res.status(500).json({ success: false, error: "Failed to fetch camera" });
   }
