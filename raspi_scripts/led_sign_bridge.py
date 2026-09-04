@@ -235,7 +235,16 @@ def road_state(api: str, session: requests.Session) -> str:
     if not data.get("success"):
         raise RuntimeError("status endpoint returned success=false")
 
-    state = data["data"]["state"]
+    payload = data["data"]
+
+    # Transient display-mode override, set server-side and self-expiring. When
+    # present it replaces the road state entirely; when it lapses the sign
+    # returns to normal status duty on the next poll with no further action.
+    mode = payload.get("sign_mode")
+    if mode:
+        return f"@{mode}"
+
+    state = payload["state"]
     return {
         "incident": "incident",
         "vehicle_incoming": "vehicle",
@@ -306,6 +315,22 @@ def main() -> int:
             consecutive_errors = 0
 
             now = time.monotonic()
+
+            # An override is passed straight through as a mode switch. It also
+            # bypasses the alert-hold logic below, which exists to stop urgent
+            # road states flickering and has no meaning here.
+            if state.startswith("@"):
+                if state != last_state:
+                    # Logged like any other state change. An unlogged command
+                    # to a roadside sign is a gap: if someone reports the sign
+                    # showing something unexpected, the service log has to be
+                    # able to say what it was told and when.
+                    log.info("mode -> %s", state[1:])
+                    last_change = now
+                    last_state = state
+                link.send(f"MODE:{state[1:]}")
+                time.sleep(POLL_INTERVAL)
+                continue
             # Hold urgent states briefly so a single frame's detection does not
             # flicker the sign off again immediately. Drivers need time to read
             # it, and a sign that blinks between two messages reads as broken.

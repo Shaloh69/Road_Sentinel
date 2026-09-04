@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { query } from "../config/database";
+import { activeSignMode } from "./sign-mode";
 
 const router = Router();
 
@@ -12,6 +13,21 @@ const router = Router();
 // SystemState uses, so the LED sign and this page agree on "current state."
 
 const VEHICLE_ALERT_SECS = 8;
+
+// How long an incident keeps driving the physical signs and this page.
+//
+// WHY THIS EXISTS: the incident query used to filter on `status = 'active'`
+// with no time bound at all, so ANY unresolved incident pinned the state to
+// "incident" indefinitely. A speeding record from 2026-08-20 was still putting
+// both roadside signs into flashing STOP two weeks later, with zero cameras
+// online. For a safety sign that is worse than showing nothing: a warning that
+// is always on is one drivers learn to ignore.
+//
+// Five minutes is long enough for an incident to be seen and acted on, short
+// enough that a forgotten row cannot hold the sign hostage. Unresolved older
+// incidents still appear in the dashboard and the incidents API — they just
+// stop driving the sign.
+const INCIDENT_ALERT_SECS = Number(process.env.INCIDENT_ALERT_SECS || 300);
 
 router.get("/", async (req: Request, res: Response) => {
   try {
@@ -26,7 +42,10 @@ router.get("/", async (req: Request, res: Response) => {
           }[]
         >(
           `SELECT incident_type, severity, camera_id, timestamp FROM incidents
-           WHERE status = 'active' ORDER BY timestamp DESC LIMIT 1`,
+           WHERE status = 'active'
+             AND timestamp >= NOW() - INTERVAL ? SECOND
+           ORDER BY timestamp DESC LIMIT 1`,
+          [INCIDENT_ALERT_SECS],
         ),
         query<{ camera_id: string; timestamp: string }[]>(
           `SELECT camera_id, timestamp FROM detections
@@ -64,6 +83,15 @@ router.get("/", async (req: Request, res: Response) => {
       success: true,
       data: {
         state, // "clear" | "vehicle_incoming" | "incident"
+        // Transient display-mode override. Null in normal operation.
+        //
+        // Deliberately suppressed unless the road is CLEAR. The endpoint that
+        // sets it needs no authentication, so without this a caller could hold
+        // the sign off status duty for as long as they kept calling — on a
+        // roadside safety device that is not an acceptable failure mode.
+        // Gating on "clear" means a real vehicle or incident always wins, and
+        // the override can only ever occupy a sign that has nothing to say.
+        sign_mode: state === "clear" ? activeSignMode() : null,
         detail,
         cameras_online: cameraRows[0]?.online ?? 0,
         cameras_total: cameraRows[0]?.total ?? 0,

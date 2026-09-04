@@ -20,6 +20,7 @@ import incidentRoutes from "./routes/incidents";
 import analyticsRoutes from "./routes/analytics";
 import authRoutes from "./routes/auth";
 import recordingRoutes from "./routes/recordings";
+import signModeRoutes from "./routes/sign-mode";
 import publicStatusRoutes from "./routes/public-status";
 
 // Load environment variables
@@ -107,6 +108,7 @@ app.use("/api/detections", detectionRoutes);
 app.use("/api/incidents", incidentRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/recordings", recordingRoutes);
+app.use("/api/sign", signModeRoutes);
 app.use("/api/public/status", publicStatusRoutes);
 
 // ── Socket.IO — default namespace (public: camera streams, incidents feed) ───

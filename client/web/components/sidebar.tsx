@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { ThemeSwitch } from "@/components/theme-switch";
 import { Logo } from "@/components/icons";
+import { useLogoSequence } from "@/components/logo-sequence";
 
 export const Sidebar = () => {
   const pathname = usePathname();
@@ -214,11 +215,21 @@ export const Sidebar = () => {
     },
   ];
 
+  const onLogoClick = useLogoSequence(() => {
+    const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+    fetch(`${api}/api/sign/attract`, { method: "POST" }).catch(() => {});
+  });
+
   return (
     <aside className="fixed left-0 top-0 h-screen w-64 bg-surface/90 backdrop-blur-xl border-r border-border shadow-2xl z-50 flex flex-col">
       {/* Logo Section */}
       <div className="p-6 border-b border-border">
-        <NextLink className="flex items-center gap-3" href="/">
+        <NextLink
+          className="flex items-center gap-3"
+          href="/"
+          onClick={onLogoClick}
+        >
           <div className="bg-brand p-2 rounded-lg shadow-lg shadow-brand/20">
             <Logo className="w-8 h-8 text-brand-foreground" />
           </div>
