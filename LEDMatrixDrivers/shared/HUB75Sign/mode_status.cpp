@@ -66,6 +66,43 @@ static void renderVehicle() {
   display::drawCentered("SLOW DOWN",       14, fg, 2);
 }
 
+// Two lines of size 2, stacked to fill the 32px canvas exactly (16px each).
+// Every phrase below was checked against the 128px width at size 2: the GFX
+// font is 6px per character per size step, so the longest word used here
+// ("STOPPED", 7 chars) is 84px and clears it comfortably.
+static void renderTwoLine(const char *top, const char *bottom,
+                          uint16_t colour, bool invert) {
+  uint16_t bg = invert ? colour : HC_OFF;
+  uint16_t fg = invert ? HC_OFF : colour;
+
+  display::gfx()->fillScreen(bg);
+  display::drawCentered(top, 1, fg, 2);
+  display::drawCentered(bottom, 17, fg, 2);
+}
+
+static void renderSpeeding() {
+  // Single hazard on THIS approach: tell the driver in front of the sign to
+  // slow down. No "vehicle incoming" — nothing is coming the other way.
+  uint16_t bg = flashOn ? HC_YELLOW : HC_OFF;
+  uint16_t fg = flashOn ? HC_OFF : HC_YELLOW;
+
+  display::gfx()->fillScreen(bg);
+  display::drawCentered("SLOW", 1, fg, 2);
+  display::drawCentered("DOWN", 17, fg, 2);
+}
+
+static void renderCrash() {
+  renderTwoLine("CRASH", "AHEAD", HC_RED, flashOn);
+}
+
+static void renderStopped() {
+  renderTwoLine("STOPPED", "VEHICLE", HC_RED, flashOn);
+}
+
+static void renderCongestion() {
+  renderTwoLine("TRAFFIC", "AHEAD", HC_YELLOW, flashOn);
+}
+
 static void renderStop() {
   // Red is reserved system-wide for confirmed incidents, so it appears in no
   // other state. Flashing red-on-black at the largest size the panel can hold.
@@ -101,9 +138,13 @@ static void renderText() {
 
 void render() {
   switch (cur) {
-    case ST_SAFE:    renderSafe();    break;
-    case ST_VEHICLE: renderVehicle(); break;
-    case ST_STOP:    renderStop();    break;
+    case ST_SAFE:       renderSafe();       break;
+    case ST_VEHICLE:    renderVehicle();    break;
+    case ST_SPEEDING:   renderSpeeding();   break;
+    case ST_CRASH:      renderCrash();      break;
+    case ST_STOPPED:    renderStopped();    break;
+    case ST_CONGESTION: renderCongestion(); break;
+    case ST_STOP:       renderStop();       break;
     case ST_OFFLINE: renderOffline(); break;
     case ST_TEXT:    renderText();    break;
     default:         renderBoot();    break;
@@ -111,7 +152,11 @@ void render() {
 }
 
 void tick(uint32_t now) {
-  if ((cur == ST_VEHICLE || cur == ST_STOP) &&
+  // Every alerting state flashes; only SAFE and the informational screens are
+  // static. Listed explicitly rather than "not SAFE" so adding a calm state
+  // later cannot make it blink by accident.
+  if ((cur == ST_VEHICLE || cur == ST_STOP || cur == ST_SPEEDING ||
+       cur == ST_CRASH || cur == ST_STOPPED || cur == ST_CONGESTION) &&
       now - lastFlash >= FLASH_INTERVAL_MS) {
     lastFlash = now;
     flashOn = !flashOn;

@@ -47,7 +47,7 @@ static void handle(String cmd) {
   }
 
   if (cmd == "HELP" || cmd == "?") {
-    Serial.println("STATE:clear|vehicle|incident|offline");
+    Serial.println("STATE:clear|vehicle|speeding|crash|stopped|congestion|incident|offline");
     Serial.println("TEXT:line1|line2   MODE:status|char|sand");
     Serial.println("CHAR:A   SAND:reset   SAND:rate,N");
     Serial.println("FILL:c   RECT:x,y,w,h,c   CLS   DIAG   (c = 0-7)");
@@ -59,10 +59,17 @@ static void handle(String cmd) {
   if (cmd.startsWith("STATE:")) {
     String v = cmd.substring(6); v.trim();
     status_mode::State s;
-    if      (v == "clear")    s = status_mode::ST_SAFE;
-    else if (v == "vehicle")  s = status_mode::ST_VEHICLE;
-    else if (v == "incident") s = status_mode::ST_STOP;
-    else if (v == "offline")  s = status_mode::ST_OFFLINE;
+    // The vocabulary mirrors the server's incidents.incident_type ENUM, so
+    // the Pi never has to decide what a given incident should look like — it
+    // forwards what happened and the sign owns the presentation.
+    if      (v == "clear")      s = status_mode::ST_SAFE;
+    else if (v == "vehicle")    s = status_mode::ST_VEHICLE;
+    else if (v == "speeding")   s = status_mode::ST_SPEEDING;
+    else if (v == "crash")      s = status_mode::ST_CRASH;
+    else if (v == "stopped")    s = status_mode::ST_STOPPED;
+    else if (v == "congestion") s = status_mode::ST_CONGESTION;
+    else if (v == "incident")   s = status_mode::ST_STOP;
+    else if (v == "offline")    s = status_mode::ST_OFFLINE;
     else { Serial.println("ERR unknown state"); return; }
     app::setMode(app::MODE_STATUS);
     status_mode::setState(s);

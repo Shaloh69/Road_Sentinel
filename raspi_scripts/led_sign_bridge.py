@@ -162,6 +162,10 @@ class EspLink:
             else:
                 return False
 
+            # Drain first: responses queued from the PING exchange (or from
+            # the board's own boot chatter) otherwise concatenate into one
+            # unreadable line when readline stitches partial chunks together.
+            self._ser.reset_input_buffer()
             self._ser.write(b"INFO\n")
             self._ser.flush()
 
@@ -175,7 +179,9 @@ class EspLink:
                 if not line:
                     continue
                 if "canvas=" in line:
-                    log.info("Board: %s", line)
+                    # Truncated: a garbled or doubled response should not put
+                    # a thousand-character line in the service log.
+                    log.info("Board: %s", line[:140])
                     break
             return True
         except (serial.SerialException, OSError):
@@ -231,13 +237,21 @@ class EspLink:
         self._last_sent = None
 
 
-def road_state(api: str, session: requests.Session) -> str:
-    """
-    Ask Node what the road looks like right now.
+def road_state(api: str, session: requests.Session, camera_id: str | None) -> str:
+    """Ask Node what THIS approach should be showing.
 
-    Uses /api/public/status, which already computes this server-side for the
-    public status page — so the sign and the web page cannot disagree, which
-    they would if this recomputed the rule itself.
+    Each camera has its own sign directly beneath it, both facing outward from
+    the blind curve, so state is per-approach rather than global:
+
+      * An incident on this approach shows here and only here — the driver in
+        front of this sign is the one it concerns.
+      * A vehicle on BOTH approaches shows on both signs. That is the case
+        neither driver can see around the curve, and the reason for the system.
+
+    The server does the deciding and returns a ready `signs` map; this reads
+    its own entry. Recomputing the rule here would let the sign and the public
+    web page drift apart, which is exactly what putting the logic server-side
+    avoids.
     """
     r = session.get(f"{api}/api/public/status", timeout=5)
     r.raise_for_status()
@@ -247,19 +261,23 @@ def road_state(api: str, session: requests.Session) -> str:
 
     payload = data["data"]
 
-    # Transient display-mode override, set server-side and self-expiring. When
-    # present it replaces the road state entirely; when it lapses the sign
-    # returns to normal status duty on the next poll with no further action.
+    # Transient display-mode override, set server-side and self-expiring.
     mode = payload.get("sign_mode")
     if mode:
         return f"@{mode}"
 
-    state = payload["state"]
+    # Per-approach state when this bridge knows which camera it sits under.
+    signs = payload.get("signs") or {}
+    if camera_id and camera_id in signs:
+        return signs[camera_id].get("state", "clear")
+
+    # Fall back to the overall state — an unconfigured bridge still warns
+    # rather than sitting silent, which is the safe direction to fail.
     return {
         "incident": "incident",
         "vehicle_incoming": "vehicle",
         "clear": "clear",
-    }.get(state, "clear")
+    }.get(payload.get("state"), "clear")
 
 
 def run_test(link: EspLink) -> int:
@@ -292,6 +310,10 @@ def main() -> int:
                     help="Panel brightness 0-255, set once at startup")
     ap.add_argument("--test", action="store_true",
                     help="Cycle all screens and exit — no server needed")
+    ap.add_argument("--camera-id", default=None,
+                    help="This sign's camera id (e.g. CAM-A-001). Selects the "
+                         "per-approach state; without it the bridge follows "
+                         "the overall road state instead.")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -307,7 +329,8 @@ def main() -> int:
         return run_test(link)
 
     session = requests.Session()
-    log.info("Bridging %s -> LED sign", args.api)
+    log.info("Bridging %s -> LED sign (approach: %s)", args.api,
+             args.camera_id or "overall state")
 
     last_state = None
     last_change = 0.0
@@ -321,7 +344,7 @@ def main() -> int:
 
     while True:
         try:
-            state = road_state(args.api, session)
+            state = road_state(args.api, session, args.camera_id)
             consecutive_errors = 0
 
             now = time.monotonic()

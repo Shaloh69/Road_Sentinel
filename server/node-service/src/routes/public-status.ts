@@ -4,13 +4,32 @@ import { activeSignMode } from "./sign-mode";
 
 const router = Router();
 
-// GET /api/public/status — minimal, unauthenticated road-status summary for
-// the community "live status" page (Phase 2 new feature). Deliberately
-// exposes only a safety-relevant state (safe / vehicle-incoming / incident),
-// camera online counts, and a same-day vehicle/incident tally — no camera
-// feeds, no admin surface, no RTSP URLs or other configuration. Mirrors the
-// same VEHICLE_ALERT_SECS convention raspi_scripts/led_sign_bridge.py's
-// SystemState uses, so the LED sign and this page agree on "current state."
+// GET /api/public/status — road-status summary for the community "live status"
+// page AND the per-approach state each physical sign follows.
+//
+// ── PHYSICAL LAYOUT, which drives everything below ────────────────────────
+//
+// Two cameras face OUTWARD from the blind curve, one on each approach, with an
+// LED sign mounted directly beneath each camera. A sign therefore faces the
+// traffic its own camera is watching.
+//
+//        approach A                 approach B
+//     [cam A] --> ) ) )  curve  ( ( ( <-- [cam B]
+//     [sign A]                          [sign B]
+//
+// That makes state PER-APPROACH, not global:
+//
+//   * An incident seen by camera A concerns the driver in front of sign A, so
+//     only sign A reacts. Sign B has nothing to warn about and stays SAFE.
+//     Lighting both would train drivers to ignore a sign that is often lit for
+//     something happening where they cannot see it.
+//
+//   * A vehicle on BOTH approaches at once is the case neither driver can see
+//     around the curve, and the reason this system exists. Both signs show
+//     VEHICLE INCOMING together.
+//
+// `state` remains the overall figure for the public web page; `signs` carries
+// the per-approach state the bridges follow.
 
 const VEHICLE_ALERT_SECS = 8;
 
@@ -29,32 +48,43 @@ const VEHICLE_ALERT_SECS = 8;
 // stop driving the sign.
 const INCIDENT_ALERT_SECS = Number(process.env.INCIDENT_ALERT_SECS || 300);
 
-router.get("/", async (req: Request, res: Response) => {
+// incidents.incident_type (an ENUM in migrate.ts) -> the wire word the sign
+// firmware understands. Anything unmapped falls back to a generic STOP, which
+// is the safe direction to fail: an unrecognised incident still warns.
+const INCIDENT_SIGN_STATE: Record<string, string> = {
+  crash: "crash", // CRASH / AHEAD      red
+  stopped_vehicle: "stopped", // STOPPED / VEHICLE  red
+  congestion: "congestion", // TRAFFIC / AHEAD    yellow
+  speeding: "speeding", // SLOW / DOWN        yellow
+  // wrong_way, illegal_parking, other -> "incident" (generic STOP)
+};
+
+router.get("/", async (_req: Request, res: Response) => {
   try {
-    const [activeIncidentRows, recentDetectionRows, cameraRows, todayRows] =
+    const [incidentRows, detectionRows, cameraRows, todayRows] =
       await Promise.all([
+        // Most recent qualifying incident per approach.
         query<
           {
+            camera_id: string;
             incident_type: string;
             severity: string;
-            camera_id: string;
             timestamp: string;
           }[]
         >(
-          `SELECT incident_type, severity, camera_id, timestamp FROM incidents
-           WHERE status = 'active'
-             AND timestamp >= NOW() - INTERVAL ? SECOND
-           ORDER BY timestamp DESC LIMIT 1`,
+          `SELECT i.camera_id, i.incident_type, i.severity, i.timestamp
+             FROM incidents i
+             JOIN (
+               SELECT camera_id, MAX(timestamp) AS mt FROM incidents
+                WHERE status = 'active'
+                  AND timestamp >= NOW() - INTERVAL ? SECOND
+                GROUP BY camera_id
+             ) latest
+               ON latest.camera_id = i.camera_id AND latest.mt = i.timestamp
+            WHERE i.status = 'active'`,
           [INCIDENT_ALERT_SECS],
         ),
-        // VEHICLE INCOMING requires a recent detection on BOTH approaches,
-        // not either. On a blind curve a single vehicle is the normal case and
-        // warning on it would leave the sign lit almost continuously, which
-        // costs the warning its meaning. Two vehicles converging from opposite
-        // sides is the situation neither driver can see, and the one the sign
-        // exists for.
-        //
-        // GROUP BY camera_id so this counts DISTINCT approaches — twenty
+        // Grouped by camera so this counts DISTINCT approaches — twenty
         // detections from one camera must not look like two cameras agreeing.
         query<{ camera_id: string; last_seen: string }[]>(
           `SELECT camera_id, MAX(timestamp) AS last_seen FROM detections
@@ -62,8 +92,8 @@ router.get("/", async (req: Request, res: Response) => {
            GROUP BY camera_id`,
           [VEHICLE_ALERT_SECS],
         ),
-        query<{ online: number; total: number }[]>(
-          `SELECT SUM(status = 'online') AS online, COUNT(*) AS total FROM cameras`,
+        query<{ id: string; online: number }[]>(
+          `SELECT id, (status = 'online') AS online FROM cameras`,
         ),
         query<{ vehicles: number; incidents: number }[]>(
           `SELECT
@@ -72,43 +102,71 @@ router.get("/", async (req: Request, res: Response) => {
         ),
       ]);
 
+    const camerasWithVehicles = new Set(detectionRows.map((d) => d.camera_id));
+    // Both approaches occupied is what makes this a blind-curve conflict.
+    const bothApproaches = camerasWithVehicles.size >= 2;
+
+    const incidentByCamera = new Map(incidentRows.map((i) => [i.camera_id, i]));
+
+    // ── Per-approach state ────────────────────────────────────────────────
+    const signs: Record<string, Record<string, unknown>> = {};
+
+    for (const cam of cameraRows) {
+      const inc = incidentByCamera.get(cam.id);
+      let signState = "clear";
+      const signDetail: Record<string, unknown> = {};
+
+      if (inc) {
+        // An incident on THIS approach outranks the converging-vehicle case:
+        // it is more specific, and more urgent to the driver in front of it.
+        signState = INCIDENT_SIGN_STATE[inc.incident_type] ?? "incident";
+        signDetail.incident_type = inc.incident_type;
+        signDetail.severity = inc.severity;
+      } else if (bothApproaches) {
+        signState = "vehicle";
+        signDetail.approaches = camerasWithVehicles.size;
+      }
+
+      signs[cam.id] = { state: signState, detail: signDetail };
+    }
+
+    // ── Overall state, for the public page ────────────────────────────────
     let state: "incident" | "vehicle_incoming" | "clear" = "clear";
     let detail: Record<string, unknown> = {};
 
-    if (activeIncidentRows.length > 0) {
+    if (incidentRows.length > 0) {
       state = "incident";
-      const inc = activeIncidentRows[0];
+      const first = incidentRows[0];
+
       detail = {
-        incident_type: inc.incident_type,
-        severity: inc.severity,
-        camera_id: inc.camera_id,
+        incident_type: first.incident_type,
+        severity: first.severity,
+        camera_id: first.camera_id,
       };
-    } else if (recentDetectionRows.length >= 2) {
+    } else if (bothApproaches) {
       state = "vehicle_incoming";
-      detail = {
-        camera_ids: recentDetectionRows.map((r) => r.camera_id),
-        approaches: recentDetectionRows.length,
-      };
+      detail = { approaches: camerasWithVehicles.size };
     }
 
     res.json({
       success: true,
       data: {
         state, // "clear" | "vehicle_incoming" | "incident"
+        detail,
+        // Per-approach state, keyed by camera id. Each bridge reads its own
+        // entry; a bridge with no camera id configured falls back to `state`.
+        signs,
         // Transient display-mode override. Null in normal operation.
         //
-        // Takes precedence over the road state, by request: activating it
-        // overwrites whatever the sign is currently showing.
-        //
-        // Two things keep that safe rather than merely brief. It self-expires
-        // server-side, and the animation itself is one-shot — the firmware
-        // returns the panel to status duty when the sequence ends, so the sign
-        // resumes warning even if this endpoint were never called again.
-        // Worth knowing: while it runs, a genuine incident will not be shown.
+        // Takes precedence over road state, by request: activating it
+        // overwrites whatever the sign is showing. Two things keep that safe
+        // rather than merely brief — it self-expires server-side, and the
+        // animation is one-shot, so the firmware returns the panel to status
+        // duty when the sequence ends. Worth knowing: while it runs, a genuine
+        // incident will not be displayed.
         sign_mode: activeSignMode(),
-        detail,
-        cameras_online: cameraRows[0]?.online ?? 0,
-        cameras_total: cameraRows[0]?.total ?? 0,
+        cameras_online: cameraRows.filter((c) => c.online).length,
+        cameras_total: cameraRows.length,
         vehicles_today: todayRows[0]?.vehicles ?? 0,
         incidents_today: todayRows[0]?.incidents ?? 0,
         updated_at: new Date().toISOString(),

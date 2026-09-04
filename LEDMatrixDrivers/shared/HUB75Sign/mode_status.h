@@ -29,7 +29,29 @@ namespace status_mode {
 //   ST_SAFE     -> "SAFE"                       green,  static
 //   ST_VEHICLE  -> "VEHICLE INCOMING/SLOW DOWN" yellow, flashing
 //   ST_STOP     -> "STOP"                       red,    flashing
-enum State { ST_BOOT, ST_SAFE, ST_VEHICLE, ST_STOP, ST_OFFLINE, ST_TEXT };
+// Named for what the sign SHOWS. The incident types come straight from the
+// `incidents.incident_type` ENUM in migrate.ts, so the sign can say what is
+// actually wrong instead of collapsing every incident into a generic STOP.
+//
+//   ST_SAFE        "SAFE"                        green,  static
+//   ST_VEHICLE     "SLOW DOWN / VEHICLE INCOMING" yellow, flashing  (both approaches)
+//   ST_SPEEDING    "SLOW DOWN"                   yellow, flashing
+//   ST_CRASH       "CRASH / AHEAD"               red,    flashing
+//   ST_STOPPED     "STOPPED / VEHICLE"           red,    flashing
+//   ST_CONGESTION  "TRAFFIC / AHEAD"             yellow, flashing
+//   ST_STOP        "STOP"                        red,    flashing  (generic fallback)
+enum State {
+  ST_BOOT,
+  ST_SAFE,
+  ST_VEHICLE,
+  ST_SPEEDING,
+  ST_CRASH,
+  ST_STOPPED,
+  ST_CONGESTION,
+  ST_STOP,
+  ST_OFFLINE,
+  ST_TEXT,
+};
 
 void  setState(State s);
 State state();
