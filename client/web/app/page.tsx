@@ -7,6 +7,7 @@ import { addToast } from "@heroui/toast";
 
 import { StatCard } from "@/components/stat-card";
 import { VideoFeed } from "@/components/video-feed";
+import { useDetectionBoxes } from "@/components/use-detection-boxes";
 import { AlertCard } from "@/components/alert-card";
 import { CameraStatus } from "@/components/camera-status";
 import { getSocket } from "@/lib/socket";
@@ -72,6 +73,10 @@ interface Incident {
 export default function Home() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [cameras, setCameras] = useState<Camera[]>([]);
+
+  // Live detection overlays. Previously hardcoded to [], so the dashboard
+  // feeds could never draw a box no matter what the cameras saw.
+  const detectionBoxes = useDetectionBoxes(cameras);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -308,7 +313,7 @@ export default function Home() {
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <VideoFeed
-            boundingBoxes={[]}
+            boundingBoxes={detectionBoxes[camA?.id ?? "CAM-A-001"] ?? []}
             cameraId={camA?.id ?? "CAM-A-001"}
             cameraName={
               camA
@@ -318,11 +323,11 @@ export default function Home() {
             fps={camA?.fps ?? 30}
             isLive={camA?.status === "online"}
             latency={42}
-            showBoundingBoxes={false}
+            showBoundingBoxes={true}
             videoUrl={camA ? streamUrl(camA.id) : undefined}
           />
           <VideoFeed
-            boundingBoxes={[]}
+            boundingBoxes={detectionBoxes[camB?.id ?? "CAM-B-002"] ?? []}
             cameraId={camB?.id ?? "CAM-B-002"}
             cameraName={
               camB
@@ -332,7 +337,7 @@ export default function Home() {
             fps={camB?.fps ?? 30}
             isLive={camB?.status === "online"}
             latency={38}
-            showBoundingBoxes={false}
+            showBoundingBoxes={true}
             videoUrl={camB ? streamUrl(camB.id) : undefined}
           />
         </div>
