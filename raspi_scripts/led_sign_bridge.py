@@ -36,9 +36,11 @@ Requires: pyserial  (pip install pyserial)
 from __future__ import annotations
 
 import argparse
+import datetime
 import glob
 import os
 import logging
+import subprocess
 import sys
 import time
 
@@ -77,6 +79,89 @@ POLL_INTERVAL = 2.0
 # Well under the firmware's timeout so a single dropped write cannot trip it.
 RESEND_INTERVAL = 5.0
 BAUD = 115200
+
+# ── Time-of-day brightness ──────────────────────────────────────────────────
+#
+# The panel is sized for daylight legibility, which after dark is glare in the
+# face of a driver entering a blind curve. So the sign runs full brightness by
+# day and drops to a low level at night.
+#
+# The schedule lives here and not in firmware because the board has no clock —
+# no RTC, no WiFi, no notion of the date (see sign_app.cpp). The Pi is the only
+# device in the sign that knows what time it is.
+#
+# Fixed clock times rather than a solar almanac: Busay is at ~10.3 degrees N,
+# where sunrise and sunset move by only about 20 minutes across the whole year.
+# A sunrise library would add a dependency and a failure mode to buy accuracy
+# the panel cannot even display.
+DAWN_DEFAULT = "05:30"
+DUSK_DEFAULT = "17:45"
+
+# Night is dim, NOT off. 0 would blank a safety sign outright, so the floor
+# stays above it. 5 was chosen on site by eye — the panel is bright enough that
+# a low number still reads clearly in the dark, and anything higher was glare
+# for a driver coming into the curve.
+NIGHT_BRIGHT_DEFAULT = 5
+DAY_BRIGHT_DEFAULT = 255
+
+# Ramp, in minutes, so the sign fades rather than snapping between levels.
+# Brightening begins at dawn and completes RAMP minutes later; dimming begins
+# at dusk and completes RAMP minutes after that.
+RAMP_MINUTES_DEFAULT = 30
+
+# Below this change, do not bother the board. The ramp would otherwise emit a
+# BRIGHT: every poll for half an hour, and a difference of one step is not
+# visible on an 8-colour panel anyway.
+BRIGHT_EPSILON = 4
+
+
+def _clock_is_trustworthy() -> bool:
+    """Has the system clock actually been synchronised?
+
+    This matters more than it looks. Both Pis boot with a stale RTC and think
+    it is still the date they were last shut down on, until NTP corrects them
+    seconds-to-minutes later. A brightness schedule that trusts that clock
+    would happily run the sign at 20/255 through the middle of the morning.
+
+    systemd-timesyncd drops this file once it has a real time; the timedatectl
+    call is the fallback for images using a different sync daemon.
+    """
+    if os.path.exists("/run/systemd/timesync/synchronized"):
+        return True
+    try:
+        out = subprocess.run(
+            ["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
+            capture_output=True, text=True, timeout=3)
+        return out.stdout.strip() == "yes"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def parse_hhmm(s: str) -> int:
+    """'17:45' -> minutes since midnight."""
+    h, _, m = s.partition(":")
+    mins = int(h) * 60 + int(m or 0)
+    if not 0 <= mins < 1440:
+        raise ValueError(f"time out of range: {s}")
+    return mins
+
+
+def scheduled_brightness(now_min: int, dawn: int, dusk: int,
+                         night: int, day: int, ramp: int) -> int:
+    """Brightness for a given minute-of-day, with linear ramps."""
+    if ramp <= 0:
+        return day if dawn <= now_min < dusk else night
+
+    def lerp(a: int, b: int, f: float) -> int:
+        return int(round(a + (b - a) * max(0.0, min(1.0, f))))
+
+    if dawn <= now_min < dawn + ramp:            # brightening
+        return lerp(night, day, (now_min - dawn) / ramp)
+    if dawn + ramp <= now_min < dusk:            # full day
+        return day
+    if dusk <= now_min < dusk + ramp:            # dimming
+        return lerp(day, night, (now_min - dusk) / ramp)
+    return night
 
 
 # A udev rule (installed by setup_pi4.sh / setup_pi5.sh) points this symlink at
@@ -223,6 +308,31 @@ class EspLink:
             self.close()
             return False
 
+    def set_brightness(self, value: int) -> bool:
+        """Apply a brightness level and remember it across reconnects.
+
+        Storing it rather than only writing it is the point: a board that
+        browns out and resets at 02:00 comes back at the firmware default,
+        which is full brightness. _open() reapplies whatever was last set, so
+        the sign returns to its night level instead of blazing until dawn.
+
+        BRIGHT: bypasses send()'s dedup deliberately — that cache tracks the
+        STATE line, and letting a brightness write reset it would suppress the
+        next state resend and trip the board's 15s NO DATA timeout.
+        """
+        value = max(0, min(255, int(value)))
+        self._brightness = value
+        if self._ser is None:
+            return False
+        try:
+            self._ser.write(f"BRIGHT:{value}\n".encode())
+            self._ser.flush()
+            return True
+        except (serial.SerialException, OSError) as exc:
+            log.warning("Brightness write failed (%s) — will reconnect", exc)
+            self.close()
+            return False
+
     def alive(self) -> bool:
         """Round-trip check. Returns False if the board stopped answering.
 
@@ -325,7 +435,21 @@ def main() -> int:
     ap.add_argument("--port", default=None,
                     help="Serial device (default: first /dev/ttyUSB* or ttyACM*)")
     ap.add_argument("--brightness", type=int, default=None,
-                    help="Panel brightness 0-255, set once at startup")
+                    help="Pin a FIXED brightness 0-255 and disable the "
+                         "day/night schedule entirely")
+    ap.add_argument("--day-brightness", type=int, default=DAY_BRIGHT_DEFAULT,
+                    help=f"Daytime level (default {DAY_BRIGHT_DEFAULT})")
+    ap.add_argument("--night-brightness", type=int,
+                    default=NIGHT_BRIGHT_DEFAULT,
+                    help=f"Night level (default {NIGHT_BRIGHT_DEFAULT}). Kept "
+                         "above zero on purpose: this is a safety sign.")
+    ap.add_argument("--dawn", default=DAWN_DEFAULT,
+                    help=f"HH:MM brightening starts (default {DAWN_DEFAULT})")
+    ap.add_argument("--dusk", default=DUSK_DEFAULT,
+                    help=f"HH:MM dimming starts (default {DUSK_DEFAULT})")
+    ap.add_argument("--ramp-minutes", type=int, default=RAMP_MINUTES_DEFAULT,
+                    help=f"Fade length in minutes, 0 to switch instantly "
+                         f"(default {RAMP_MINUTES_DEFAULT})")
     ap.add_argument("--test", action="store_true",
                     help="Cycle all screens and exit — no server needed")
     ap.add_argument("--camera-id", default=None,
@@ -341,6 +465,18 @@ def main() -> int:
         datefmt="%H:%M:%S",
     )
 
+    try:
+        dawn = parse_hhmm(args.dawn)
+        dusk = parse_hhmm(args.dusk)
+    except ValueError as exc:
+        log.error("Bad --dawn/--dusk: %s", exc)
+        return 2
+    if not dawn < dusk:
+        log.error("--dawn (%s) must be earlier in the day than --dusk (%s)",
+                  args.dawn, args.dusk)
+        return 2
+
+    scheduled = args.brightness is None
     link = EspLink(args.port, args.brightness)
 
     if args.test:
@@ -360,8 +496,58 @@ def main() -> int:
     # enough that the PING traffic is negligible.
     HEALTH_INTERVAL = 30.0
 
+    applied_bright: int | None = None
+    clock_ok = False
+
+    if scheduled:
+        log.info("Brightness schedule: %s day=%d -> %s night=%d (ramp %dm)",
+                 args.dawn, args.day_brightness, args.dusk,
+                 args.night_brightness, args.ramp_minutes)
+    else:
+        log.info("Brightness pinned at %d (schedule disabled)", args.brightness)
+
     while True:
         try:
+            # Brightness first, and deliberately OUTSIDE the API call below:
+            # nightfall is not conditional on the server being reachable. A Pi
+            # that has lost the network should still dim at dusk rather than
+            # sit at full glare until someone notices.
+            if scheduled:
+                if not clock_ok:
+                    clock_ok = _clock_is_trustworthy()
+                    if not clock_ok:
+                        # Fail toward DAY. An unreadable sign is a worse
+                        # failure than a bright one: legibility is the whole
+                        # function. This self-corrects within one poll of NTP
+                        # landing, which is seconds after boot.
+                        if applied_bright != args.day_brightness:
+                            log.warning("Clock not yet synchronised — holding "
+                                        "day brightness until it is")
+                            link.set_brightness(args.day_brightness)
+                            applied_bright = args.day_brightness
+
+                if clock_ok:
+                    t = datetime.datetime.now()
+                    want = scheduled_brightness(
+                        t.hour * 60 + t.minute, dawn, dusk,
+                        args.night_brightness, args.day_brightness,
+                        args.ramp_minutes)
+
+                    # Apply on a meaningful move, or whenever the value has
+                    # settled exactly on a plateau — otherwise the last ramp
+                    # step stops up to EPSILON short and the sign sits a
+                    # fraction off its true day or night level all day.
+                    settled = want in (args.day_brightness,
+                                       args.night_brightness)
+                    moved = (applied_bright is None
+                             or abs(want - applied_bright) >= BRIGHT_EPSILON)
+
+                    if (moved or (settled and want != applied_bright)) \
+                            and link.set_brightness(want):
+                        log.info("brightness -> %d (%s)", want,
+                                 t.strftime("%H:%M"))
+                        applied_bright = want
+
             state = road_state(args.api, session, args.camera_id)
             consecutive_errors = 0
 

@@ -81,6 +81,49 @@ switches itself to `NO DATA`. The bridge deliberately never sends that state,
 so a dead serial cable produces the same honest result as a dead API rather
 than the sign confidently holding a stale `SAFE`.
 
+### Day/night brightness
+
+The panel is sized for daylight legibility, which after dark is glare in the
+face of a driver entering the curve. The bridge therefore drives brightness on
+a clock:
+
+| Time | Level |
+|---|---|
+| 05:30 → 06:00 | ramps 5 → 255 |
+| 06:00 → 17:45 | **255** (full) |
+| 17:45 → 18:15 | ramps 255 → 5 |
+| 18:15 → 05:30 | **5** (night floor) |
+
+```bash
+--day-brightness 255  --night-brightness 5
+--dawn 05:30  --dusk 17:45  --ramp-minutes 30
+--brightness N          # pin a fixed level, disabling the schedule
+```
+
+Three things worth knowing:
+
+**The schedule is on the Pi because the board has no clock** — no RTC, no WiFi,
+no notion of the date. The Pi is the only part of the sign that knows the time.
+
+**Night is 5, never 0.** Zero would blank a safety sign. Measured on the board,
+brightness 5 also raises refresh from 334 to 500 fps, since a lower OE duty
+cycle leaves more of each frame to scan.
+
+**It waits for the clock.** Pi 4 has no RTC and boots believing whatever date
+it shut down on, until NTP corrects it seconds later. A schedule that trusted
+that clock could run the sign at 5/255 through the morning. The bridge checks
+`systemd-timesyncd` first and holds **day** brightness until time is
+trustworthy — failing toward legible, because an unreadable sign is a worse
+failure than a bright one.
+
+Fixed clock times rather than a solar almanac: at Busay's latitude (~10.3°N)
+sunrise and sunset shift by only about 20 minutes across the year, which is
+less than the ramp.
+
+> Both Pis must be on `Asia/Manila`. Pi 5 was found on `Asia/Singapore` —
+> the same +0800 offset, so nothing misbehaved, but it was corrected.
+> Check with `timedatectl`.
+
 ### Testing without a server
 
 ```bash
