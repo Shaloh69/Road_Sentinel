@@ -171,6 +171,204 @@ function LoginForm({ onSuccess }: { onSuccess: (token: string) => void }) {
   );
 }
 
+// ── Sign & recording controls (rendered once authenticated) ─────────────────────
+
+interface SignCamera {
+  id: string;
+  name: string;
+  location: string;
+  status: "online" | "offline" | "error";
+}
+
+const CLIP_MINUTES = [15, 30] as const;
+
+function SignControls({ token }: { token: string }) {
+  const [cams, setCams] = useState<SignCamera[]>([]);
+  const [disabled, setDisabled] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const authHeader = { Authorization: `Bearer ${token}` };
+
+  const refresh = useCallback(async () => {
+    try {
+      const [camRes, stRes] = await Promise.all([
+        fetch(`${API}/api/cameras`),
+        fetch(`${API}/api/public/status`),
+      ]);
+      const camJson = await camRes.json();
+      const stJson = await stRes.json();
+
+      if (camJson.success) setCams(camJson.data);
+      if (stJson.success) {
+        const signs = (stJson.data?.signs ?? {}) as Record<
+          string,
+          { disabled?: boolean }
+        >;
+        const next: Record<string, boolean> = {};
+
+        for (const id of Object.keys(signs))
+          next[id] = Boolean(signs[id].disabled);
+        setDisabled(next);
+      }
+    } catch {
+      /* transient — the panel refreshes on a timer */
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 10_000);
+
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const toggleSign = async (cam: SignCamera, off: boolean) => {
+    setBusy(`sign-${cam.id}`);
+    setMsg(null);
+    try {
+      const res = await fetch(
+        `${API}/api/sign/${cam.id}/${off ? "disable" : "enable"}`,
+        { method: "POST", headers: authHeader },
+      );
+      const json = await res.json();
+
+      if (json.success) {
+        setDisabled((p) => ({ ...p, [cam.id]: off }));
+        setMsg({
+          text: `${cam.name} sign ${off ? "disabled — panel blanked" : "enabled — back in service"}. Camera and detection keep running.`,
+          ok: true,
+        });
+      } else {
+        setMsg({ text: json.error ?? "Request failed", ok: false });
+      }
+    } catch {
+      setMsg({ text: "Cannot reach server", ok: false });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const requestClip = async (cam: SignCamera, minutes: number) => {
+    setBusy(`clip-${cam.id}`);
+    setMsg(null);
+    try {
+      const res = await fetch(`${API}/api/recordings/request`, {
+        method: "POST",
+        headers: { ...authHeader, "Content-Type": "application/json" },
+        body: JSON.stringify({ camera_id: cam.id, minutes }),
+      });
+      const json = await res.json();
+
+      setMsg(
+        json.success
+          ? {
+              text: `${cam.name}: ${minutes}-minute clip requested. It records on the Pi and appears in History when finished.`,
+              ok: true,
+            }
+          : { text: json.error ?? "Request failed", ok: false },
+      );
+    } catch {
+      setMsg({ text: "Cannot reach server", ok: false });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="p-4 bg-surface-2/60 rounded-xl border border-border space-y-4">
+      <div>
+        <p className="text-[10px] uppercase tracking-widest text-fg-muted/70">
+          Sign &amp; Recording Controls
+        </p>
+        <p className="text-xs text-fg-muted/70 mt-1">
+          Blank a roadside LED sign without stopping its camera, or capture a
+          training clip on demand.
+        </p>
+      </div>
+
+      {cams.length === 0 ? (
+        <p className="text-xs text-fg-muted/70">Loading cameras…</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {cams.map((cam) => {
+            const off = disabled[cam.id] ?? false;
+
+            return (
+              <div
+                key={cam.id}
+                className="p-4 rounded-xl border border-border bg-surface-2/40 space-y-3"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`w-2 h-2 rounded-full flex-shrink-0 ${cam.status === "online" ? "bg-success animate-pulse" : "bg-danger/60"}`}
+                  />
+                  <span className="font-semibold text-sm text-fg">
+                    {cam.name}
+                  </span>
+                  <span className="text-[11px] text-fg-muted/70">
+                    {cam.location}
+                  </span>
+                  <span
+                    className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-mono ${off ? "bg-warning/15 text-warning" : "bg-success/15 text-success"}`}
+                  >
+                    {off ? "SIGN OFF" : "SIGN ON"}
+                  </span>
+                </div>
+
+                {/* LED enable/disable */}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-fg-muted">LED sign</span>
+                  <button
+                    className={`px-3 py-1.5 text-xs rounded-lg border font-medium transition-colors duration-150 ease-standard disabled:opacity-40 ${
+                      off
+                        ? "bg-success/15 text-success border-success/30 hover:bg-success/25"
+                        : "bg-warning/15 text-warning border-warning/30 hover:bg-warning/25"
+                    }`}
+                    disabled={busy === `sign-${cam.id}`}
+                    onClick={() => toggleSign(cam, !off)}
+                  >
+                    {busy === `sign-${cam.id}`
+                      ? "Working…"
+                      : off
+                        ? "Enable sign"
+                        : "Disable sign"}
+                  </button>
+                </div>
+
+                {/* Clip capture */}
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-border">
+                  <span className="text-xs text-fg-muted">Clip footage</span>
+                  <div className="flex gap-2">
+                    {CLIP_MINUTES.map((m) => (
+                      <button
+                        key={m}
+                        className="px-3 py-1.5 text-xs rounded-lg bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25 font-mono transition-colors duration-150 ease-standard disabled:opacity-40"
+                        disabled={busy === `clip-${cam.id}`}
+                        onClick={() => requestClip(cam, m)}
+                      >
+                        {busy === `clip-${cam.id}` ? "…" : `${m} min`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {msg && (
+        <p
+          className={`text-xs px-3 py-2 rounded-lg border ${msg.ok ? "text-success bg-success/10 border-success/30" : "text-danger bg-danger/10 border-danger/30"}`}
+        >
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Terminal (only rendered once authenticated) ────────────────────────────────
 
 function AdminTerminal({
@@ -390,6 +588,9 @@ function AdminTerminal({
             </button>
           </div>
         </div>
+
+        {/* Sign & recording controls */}
+        <SignControls token={token} />
 
         {/* Target selector */}
         <div className="p-4 bg-surface-2/60 rounded-xl border border-border">

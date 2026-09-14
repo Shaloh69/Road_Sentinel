@@ -2,8 +2,94 @@ import { Router, Request, Response } from "express";
 import { query } from "../config/database";
 import { logger } from "../config/logger";
 import { Recording, ApiResponse } from "../types";
+import { requireAuth } from "../middleware/auth";
 
 const router = Router();
+
+// ── On-demand clip requests ──────────────────────────────────────────────────
+//
+// The admin presses "clip the next 15/30 min" and this holds the request until
+// the camera's own sender claims it. The sender already has the decoded RTSP
+// stream in hand, so it does the recording itself (a second RTSP connection
+// just to record would double the load on the camera and risk its connection
+// limit) — this is only the hand-off point.
+//
+// In-memory and self-expiring: a request the sender never claims (its Pi is
+// offline) must not sit around and fire hours later when the Pi returns. One
+// pending request per camera — pressing again replaces the last.
+const CLIP_REQUEST_TTL_MS = 2 * 60_000; // unclaimed requests lapse after 2 min
+const ALLOWED_CLIP_MINUTES = new Set([15, 30]);
+
+interface ClipRequest {
+  id: string;
+  camera_id: string;
+  minutes: number;
+  requested_at: number;
+}
+
+const pendingClips = new Map<string, ClipRequest>();
+
+function freshPending(cameraId: string): ClipRequest | null {
+  const req = pendingClips.get(cameraId);
+  if (!req) return null;
+  if (Date.now() - req.requested_at > CLIP_REQUEST_TTL_MS) {
+    pendingClips.delete(cameraId);
+    return null;
+  }
+  return req;
+}
+
+// POST /api/recordings/request — admin asks a camera to clip the next N minutes.
+router.post("/request", requireAuth, (req: Request, res: Response) => {
+  const camera_id = String(req.body?.camera_id ?? "").trim();
+  const minutes = Number(req.body?.minutes);
+
+  if (!camera_id) {
+    return res
+      .status(400)
+      .json({ success: false, error: "camera_id is required" });
+  }
+  if (!ALLOWED_CLIP_MINUTES.has(minutes)) {
+    return res.status(400).json({
+      success: false,
+      error: `minutes must be one of ${[...ALLOWED_CLIP_MINUTES].join(", ")}`,
+    });
+  }
+
+  const request: ClipRequest = {
+    id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    camera_id,
+    minutes,
+    requested_at: Date.now(),
+  };
+  pendingClips.set(camera_id, request);
+  logger.info(
+    `🎬 Clip requested [${camera_id}] ${minutes} min (${request.id})`,
+  );
+
+  res.status(201).json({ success: true, data: request });
+});
+
+// GET /api/recordings/pending — admin UI: what is queued but not yet claimed.
+router.get("/pending", requireAuth, (_req: Request, res: Response) => {
+  const pending = [...pendingClips.keys()]
+    .map((cam) => freshPending(cam))
+    .filter((r): r is ClipRequest => r !== null);
+  res.json({ success: true, data: { pending } });
+});
+
+// GET /api/recordings/pending/:cameraId — the camera_sender claims its request.
+//
+// Claim-on-read: returning it also clears it, so the same clip cannot start
+// twice. There is exactly one sender per camera, so no two callers race for it.
+// Unauthenticated to match the sender's other Node calls (it posts detections
+// and recordings without a token); the request it claims was itself created by
+// an authenticated admin, so nothing unprivileged is exposed here.
+router.get("/pending/:cameraId", (req: Request, res: Response) => {
+  const req0 = freshPending(req.params.cameraId);
+  if (req0) pendingClips.delete(req.params.cameraId);
+  res.json({ success: true, data: { pending: req0 ?? null } });
+});
 
 // GET /api/recordings?camera_id=&date=YYYY-MM-DD&limit=
 router.get("/", async (req: Request, res: Response) => {

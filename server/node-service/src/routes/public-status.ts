@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { query } from "../config/database";
-import { activeSignMode } from "./sign-mode";
+import { activeSignMode, isSignDisabled } from "./sign-mode";
 
 const router = Router();
 
@@ -56,7 +56,10 @@ const INCIDENT_SIGN_STATE: Record<string, string> = {
   stopped_vehicle: "stopped", // STOPPED / VEHICLE  red
   congestion: "congestion", // TRAFFIC / AHEAD    yellow
   speeding: "speeding", // SLOW / DOWN        yellow
-  // wrong_way, illegal_parking, other -> "incident" (generic STOP)
+  // wrong_way, illegal_parking, other -> "incident" (generic STOP).
+  // wrong_way has no dedicated screen: nothing in the pipeline can detect it
+  // (detections.direction is never populated), so a screen for it would be
+  // unreachable by design rather than merely unused.
 };
 
 router.get("/", async (_req: Request, res: Response) => {
@@ -127,7 +130,15 @@ router.get("/", async (_req: Request, res: Response) => {
         signDetail.approaches = camerasWithVehicles.size;
       }
 
-      signs[cam.id] = { state: signState, detail: signDetail };
+      // An admin can blank a sign without stopping its camera. The bridge reads
+      // this and clears its panel; state is still computed and reported above so
+      // the public page and the dashboard are unaffected — only the LED goes
+      // dark. Kept separate from `state` for exactly that reason.
+      signs[cam.id] = {
+        state: signState,
+        detail: signDetail,
+        disabled: isSignDisabled(cam.id),
+      };
     }
 
     // ── Overall state, for the public page ────────────────────────────────

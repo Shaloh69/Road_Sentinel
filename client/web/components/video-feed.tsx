@@ -41,6 +41,10 @@ export const VideoFeed = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hasFrames, setHasFrames] = useState(false);
 
+  // The element made fullscreen: the whole feed card, so the overlays (boxes,
+  // detection count, FPS) come with it rather than just the bare <img>.
+  const containerRef = useRef<HTMLDivElement>(null);
+
   // Real-time FPS and frame-interval measured from frame load events
   const imgRef = useRef<HTMLImageElement>(null);
   const blobUrlRef = useRef<string | null>(null);
@@ -74,6 +78,30 @@ export const VideoFeed = ({
 
       setLiveFps(Math.round((count - 1) / span));
     }
+  }, []);
+
+  // Fullscreen. The button used to only flip a state flag that nothing read,
+  // so it did nothing at all. This drives the real Fullscreen API and keeps the
+  // flag in sync with the browser — including when the user leaves fullscreen
+  // with Esc, which fires `fullscreenchange` without touching our button.
+  const toggleFullscreen = useCallback(() => {
+    const el = containerRef.current;
+
+    if (!el) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      el.requestFullscreen().catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    const onChange = () =>
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+
+    document.addEventListener("fullscreenchange", onChange);
+
+    return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
   // Update stale-frame age every second
@@ -207,7 +235,14 @@ export const VideoFeed = ({
         </div>
       </CardHeader>
       <CardBody className="p-0">
-        <div className="relative aspect-video bg-black overflow-hidden">
+        <div
+          ref={containerRef}
+          className={`relative bg-black overflow-hidden ${
+            isFullscreen
+              ? "w-screen h-screen flex items-center justify-center"
+              : "aspect-video"
+          }`}
+        >
           {/* WebSocket binary frames (primary) */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -286,8 +321,10 @@ export const VideoFeed = ({
 
           {/* Fullscreen toggle */}
           <button
+            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
             className="absolute bottom-4 right-4 bg-surface/90 p-2 rounded-lg hover:bg-surface transition-colors duration-150 ease-standard border border-border hover:border-brand"
-            onClick={() => setIsFullscreen(!isFullscreen)}
+            title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            onClick={toggleFullscreen}
           >
             <svg
               className="w-5 h-5 text-fg-muted"
@@ -295,12 +332,21 @@ export const VideoFeed = ({
               stroke="currentColor"
               viewBox="0 0 24 24"
             >
-              <path
-                d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-              />
+              {isFullscreen ? (
+                <path
+                  d="M9 9L4 4m0 0v4m0-4h4m7 5l5-5m0 0v4m0-4h-4M9 15l-5 5m0 0v-4m0 4h4m7-5l5 5m0 0v-4m0 4h-4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                />
+              ) : (
+                <path
+                  d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                />
+              )}
             </svg>
           </button>
         </div>

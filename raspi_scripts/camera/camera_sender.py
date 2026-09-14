@@ -370,6 +370,7 @@ class Recorder:
         record_dir: str,
         segment_secs: float,
         fps: int,
+        one_shot: bool = False,
     ):
         self._camera_id    = camera_id
         self._ai_url       = ai_url.rstrip("/")
@@ -381,6 +382,12 @@ class Recorder:
         self._dir           = Path(record_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
 
+        # One-shot mode backs the admin "clip the next N minutes" button: record
+        # exactly ONE segment of segment_secs, then stop for good rather than
+        # rolling into the next segment the way continuous --record does.
+        self._one_shot     = one_shot
+        self._done         = False
+
         self._writer: Optional[cv2.VideoWriter] = None
         self._path: Optional[Path] = None
         self._start_time: Optional[datetime] = None
@@ -388,6 +395,16 @@ class Recorder:
         self._vehicle_count = 0
         self._incident_count = 0
         self._frames_with_vehicle: set = set()  # dedupe within a segment, approx
+
+    @property
+    def done(self) -> bool:
+        """One-shot clip has finished its single segment (no-op from here)."""
+        return self._done
+
+    @property
+    def active(self) -> bool:
+        """A segment is currently being written."""
+        return self._writer is not None
 
     def note_result(self, result: dict) -> None:
         """Called from ai_task with each AI response — accumulates counts for the segment."""
@@ -397,6 +414,8 @@ class Recorder:
             self._incident_count += len(result["incidents"])
 
     def add_frame(self, frame) -> None:
+        if self._done:
+            return
         if self._writer is None:
             self._start_segment(frame)
         if self._writer is not None:
@@ -435,6 +454,11 @@ class Recorder:
         self._writer = None
         self._path = None
         self._start_time = None
+
+        # A one-shot clip is finished the moment its single segment closes —
+        # set this before the await below so a late add_frame cannot reopen it.
+        if self._one_shot:
+            self._done = True
 
         if writer is None or path is None or start_time is None:
             return
@@ -519,6 +543,106 @@ class Recorder:
             path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+# ── On-demand clips (admin "clip the next 15/30 min" button) ──────────────────
+# The admin presses a button in the dashboard; Node holds the request; this
+# claims it and records exactly that long into ONE segment, reusing the same
+# upload-and-register path as continuous recording so the clip shows up in
+# History like any other. Works whether or not --record is on: this is the
+# operator's manual "capture some footage for the dataset right now" path.
+
+CLIP_POLL_INTERVAL = 5.0  # seconds between checks for a pending clip request
+
+
+class ClipController:
+    def __init__(
+        self,
+        camera_id: str,
+        ai_url: str,
+        node_url: str,
+        ai_session: aiohttp.ClientSession,
+        node_session: aiohttp.ClientSession,
+        record_dir: str,
+        fps: int,
+    ):
+        self._camera_id    = camera_id
+        self._ai_url       = ai_url
+        self._node_url     = node_url.rstrip("/")
+        self._ai_session   = ai_session
+        self._node_session = node_session
+        self._record_dir   = record_dir
+        self._fps          = fps
+        self._clip: Optional[Recorder] = None
+
+    @property
+    def active(self) -> bool:
+        return self._clip is not None and not self._clip.done
+
+    def add_frame(self, frame) -> None:
+        if self.active:
+            self._clip.add_frame(frame)   # type: ignore[union-attr]
+
+    def note_result(self, result: dict) -> None:
+        if self.active:
+            self._clip.note_result(result)  # type: ignore[union-attr]
+
+    async def maybe_finish(self) -> None:
+        if self._clip is not None:
+            await self._clip.maybe_rotate()
+            if self._clip.done:
+                self._clip = None
+
+    async def poll(self) -> None:
+        """Claim a pending clip request from Node and begin recording it.
+
+        Claim-on-read on the server side: the GET both returns and clears the
+        request, so one press records one clip. Skipped while a clip is already
+        running — the request stays queued (or lapses) rather than interrupting
+        the one in progress.
+        """
+        if self.active:
+            return
+        try:
+            async with self._node_session.get(
+                f"{self._node_url}/api/recordings/pending/{self._camera_id}",
+                timeout=aiohttp.ClientTimeout(total=NODE_TIMEOUT),
+            ) as resp:
+                if resp.status != 200:
+                    return
+                data = (await resp.json()).get("data") or {}
+        except Exception as exc:
+            log.debug("[%s] Clip poll error: %s", self._camera_id, exc)
+            return
+
+        pending = data.get("pending")
+        if not pending:
+            return
+
+        try:
+            minutes = int(pending.get("minutes", 15))
+        except (TypeError, ValueError):
+            minutes = 15
+        secs = max(1, minutes) * 60
+
+        self._clip = Recorder(
+            camera_id=self._camera_id,
+            ai_url=self._ai_url,
+            node_url=self._node_url,
+            ai_session=self._ai_session,
+            node_session=self._node_session,
+            record_dir=self._record_dir,
+            segment_secs=secs,
+            fps=self._fps,
+            one_shot=True,
+        )
+        log.info("[%s] 🎬 Clip requested by admin — recording %d min (%s)",
+                 self._camera_id, minutes, pending.get("id", "?"))
+
+    async def close(self) -> None:
+        if self._clip is not None:
+            await self._clip.close()
+            self._clip = None
 
 
 # ── Camera IP Auto-Discovery ──────────────────────────────────────────────────
@@ -893,6 +1017,32 @@ async def run(
                 log.info("[%s] Recording enabled → %s (%.0fs segments)",
                          camera_id, os.path.expanduser(record_dir), record_segment_secs)
 
+            # On-demand clips are available whenever Node is reachable, whether
+            # or not continuous --record is on — it is the admin's manual
+            # "grab footage now" button, independent of background recording.
+            clip: Optional[ClipController] = None
+            if node_url:
+                clip = ClipController(
+                    camera_id=camera_id,
+                    ai_url=ai_url,
+                    node_url=node_url,
+                    ai_session=ai_session,
+                    node_session=node_session,
+                    record_dir=os.path.expanduser(record_dir),
+                    fps=TARGET_FPS,
+                )
+
+                async def clip_poll_loop():
+                    # Separate from the capture loop so a slow Node GET never
+                    # stalls frame timing; all clip writes still happen in the
+                    # capture loop below.
+                    while not shutdown.is_set():
+                        if clip:
+                            await clip.poll()
+                        await asyncio.sleep(CLIP_POLL_INTERVAL)
+
+                asyncio.create_task(clip_poll_loop())
+
             # Sequential frame push loop — one PUT at a time so frames always
             # arrive at Node in the order they were captured (no revert glitch).
             frame_q: asyncio.Queue = asyncio.Queue(maxsize=1)
@@ -972,6 +1122,8 @@ async def run(
                         sampler.note_result(result)
                         if recorder:
                             recorder.note_result(result)
+                        if clip:
+                            clip.note_result(result)
                         if forwarder:
                             await forwarder.handle(result)
                         else:
@@ -996,6 +1148,10 @@ async def run(
                         if recorder:
                             recorder.add_frame(frame)
                             await recorder.maybe_rotate()
+
+                        if clip:
+                            clip.add_frame(frame)
+                            await clip.maybe_finish()
 
                         try:
                             jpeg = await asyncio.get_event_loop().run_in_executor(
@@ -1046,6 +1202,11 @@ async def run(
                         # Finalize whatever was captured this session rather than
                         # losing it or leaving a writer open across a reconnect gap.
                         await recorder.close()
+                    if clip:
+                        # A clip interrupted by a stream drop is finalized with
+                        # what it captured, rather than left holding an open
+                        # writer across the reconnect gap.
+                        await clip.close()
 
                 if not shutdown.is_set():
                     log.info("[%s] Reconnecting in %.0fs…", camera_id, RECONNECT_WAIT)
@@ -1053,6 +1214,8 @@ async def run(
 
     if recorder:
         await recorder.close()
+    if clip:
+        await clip.close()
     if forwarder:
         await forwarder.disconnect_socketio()
     log.info("[%s] Stopped. sent=%d errors=%d dropped=%d",

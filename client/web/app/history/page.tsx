@@ -6,10 +6,10 @@ import { Input } from "@heroui/input";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
-// Phase 2 note: recording is real now (raspi_scripts/camera/camera_sender.py
-// --record, opt-in, off by default) but hasn't been exercised on real camera
-// hardware yet — so this page will typically show zero recordings until
-// that flag is turned on and verified in Phase 4. The detection log below
+// Recordings come from two paths: on-demand clips requested from the Admin page
+// (Sign & Recording Controls → Clip footage) and continuous segmenting when a
+// camera runs with --record. Both upload to the AI service's media store and
+// register here. Until one is used, this list is empty; the detection log below
 // always has real data regardless, so it stays as the primary view.
 
 interface Detection {
@@ -145,9 +145,10 @@ export default function HistoryPage() {
                       No recordings for {selectedDate}
                     </p>
                     <p className="text-fg-muted/70 text-sm mt-2">
-                      Recording is opt-in (`camera_sender.py --record`) and off
-                      by default. The detection log below always reflects real
-                      logged data regardless.
+                      Capture footage on demand from the Admin page (Sign &amp;
+                      Recording Controls → Clip footage), or turn on continuous
+                      recording with `camera_sender.py --record`. The detection
+                      log below always reflects real logged data regardless.
                     </p>
                   </div>
                 </div>
@@ -197,16 +198,18 @@ export default function HistoryPage() {
           <CardBody className="p-4">
             <div className="space-y-2">
               {recordings.map((r) => (
-                <button
+                <div
                   key={r.id}
-                  className={`w-full flex items-center justify-between p-3 rounded-lg border text-left transition-colors duration-150 ease-standard ${
+                  className={`w-full flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors duration-150 ease-standard ${
                     selectedRecording?.id === r.id
                       ? "bg-surface-2 border-brand/40"
                       : "bg-surface-2/60 border-border hover:bg-surface-2/80"
                   }`}
-                  onClick={() => setSelectedRecording(r)}
                 >
-                  <div className="flex items-center gap-3">
+                  <button
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                    onClick={() => setSelectedRecording(r)}
+                  >
                     <span className="text-fg-muted text-sm">{r.camera_id}</span>
                     <span className="text-fg font-semibold font-mono">
                       {new Date(r.start_time).toLocaleTimeString()}
@@ -214,13 +217,28 @@ export default function HistoryPage() {
                     <span className="text-fg-muted/70 text-xs uppercase">
                       {r.status}
                     </span>
-                  </div>
-                  <div className="flex items-center gap-4 text-sm text-fg-muted font-mono">
+                  </button>
+                  <div className="flex items-center gap-4 text-sm text-fg-muted font-mono flex-shrink-0">
                     <span>{r.duration_seconds ?? "?"}s</span>
-                    <span>{r.vehicle_count} vehicle frames</span>
-                    <span>{r.incident_count} incidents</span>
+                    <span className="hidden sm:inline">
+                      {r.vehicle_count} vehicle frames
+                    </span>
+                    <span className="hidden sm:inline">
+                      {r.incident_count} incidents
+                    </span>
+                    {r.video_url && (
+                      <a
+                        download
+                        className="px-2.5 py-1 rounded-lg bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25 transition-colors duration-150 ease-standard no-underline"
+                        href={r.video_url}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Download
+                      </a>
+                    )}
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           </CardBody>

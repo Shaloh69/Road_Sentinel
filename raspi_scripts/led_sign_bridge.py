@@ -80,6 +80,11 @@ POLL_INTERVAL = 2.0
 RESEND_INTERVAL = 5.0
 BAUD = 115200
 
+# Returned by road_state() when an admin has blanked this sign. Not a firmware
+# STATE value on purpose — the loop intercepts it and clears the panel instead
+# of sending it, since the board would reject an unknown STATE.
+OFF_SENTINEL = "__off__"
+
 # ── Time-of-day brightness ──────────────────────────────────────────────────
 #
 # The panel is sized for daylight legibility, which after dark is glare in the
@@ -388,6 +393,14 @@ def road_state(api: str, session: requests.Session, camera_id: str | None) -> st
         raise RuntimeError("status endpoint returned success=false")
 
     payload = data["data"]
+    signs = payload.get("signs") or {}
+
+    # Admin blank overrides EVERYTHING, including the attract sequence. A sign an
+    # operator turned off for maintenance must stay dark even if someone triggers
+    # the easter egg — so this is checked before the mode override below. The
+    # camera and detections are untouched; only this panel goes blank.
+    if camera_id and signs.get(camera_id, {}).get("disabled"):
+        return OFF_SENTINEL
 
     # Transient display-mode override, set server-side and self-expiring.
     mode = payload.get("sign_mode")
@@ -395,7 +408,6 @@ def road_state(api: str, session: requests.Session, camera_id: str | None) -> st
         return f"@{mode}"
 
     # Per-approach state when this bridge knows which camera it sits under.
-    signs = payload.get("signs") or {}
     if camera_id and camera_id in signs:
         return signs[camera_id].get("state", "clear")
 
@@ -552,6 +564,28 @@ def main() -> int:
             consecutive_errors = 0
 
             now = time.monotonic()
+
+            # Admin blanked this sign. Clear the panel and stop sending state.
+            # CLS puts the board in its static diagnostic mode, so it holds the
+            # blank rather than falling back to NO DATA the way an idle status
+            # screen would. send()'s heartbeat re-asserts CLS every few seconds,
+            # so even if the board browns out and reboots to its SAFE default it
+            # is blanked again within one poll. The health check still runs so a
+            # wedged board is caught while disabled.
+            if state == OFF_SENTINEL:
+                if state != last_state:
+                    log.info("sign DISABLED by admin — blanking panel "
+                             "(camera and detections keep running)")
+                    last_change = now
+                    last_state = state
+                link.send("CLS")
+                if now - last_health >= HEALTH_INTERVAL:
+                    last_health = now
+                    if not link.alive():
+                        log.warning("Board stopped answering PING — reconnecting")
+                        link.close()
+                time.sleep(POLL_INTERVAL)
+                continue
 
             # An override is passed straight through as a mode switch. It also
             # bypasses the alert-hold logic below, which exists to stop urgent
