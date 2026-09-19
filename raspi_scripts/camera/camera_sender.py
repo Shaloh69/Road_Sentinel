@@ -765,7 +765,20 @@ def discover_camera_ip(original_rtsp: str, camera_id: str) -> Optional[str]:
     """
     parsed = urlparse(original_rtsp)
     old_ip = parsed.hostname or ""
-    subnet = _get_local_subnet()
+
+    # Scan the CAMERA's subnet, taken from its last known IP — not the subnet of
+    # whichever interface happens to hold the default route.
+    #
+    # _get_local_subnet() asks the OS which source address it would use to reach
+    # 8.8.8.8, i.e. the default-route interface. On a Pi whose camera sits on an
+    # isolated wired segment while the internet arrives over WiFi, that is the
+    # WRONG interface: discovery scanned 10.85.2.0/24 (WiFi) while the camera
+    # lived on 192.168.8.0/24 (eth0), so it could never find it and every
+    # re-discovery reported "no candidates" no matter how long it ran.
+    #
+    # The camera's last known address is the far better hint: cameras get a new
+    # DHCP lease on reboot but stay on the same segment.
+    subnet = ".".join(old_ip.split(".")[:3]) if old_ip.count(".") == 3 else _get_local_subnet()
 
     log.info("[%s] 🔍 Auto-discovering camera (last known IP: %s) …", camera_id, old_ip)
 
