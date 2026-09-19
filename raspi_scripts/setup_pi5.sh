@@ -293,9 +293,8 @@ echo "Copying updated scripts..."
 cp "$REPO_DIR/raspi_scripts/camera/camera_sender.py" "$SCRIPTS_DIR/camera_sender.py"
 cp "$REPO_DIR/raspi_scripts/led_sign_bridge.py" "$SCRIPTS_DIR/led_sign_bridge.py"
 cp "$REPO_DIR/raspi_scripts/pi_agent.py"             "$SCRIPTS_DIR/pi_agent.py"
-cp "$REPO_DIR/raspi_scripts/color_test.py"           "$SCRIPTS_DIR/color_test.py"
 chmod +x "$SCRIPTS_DIR/camera_sender.py" "$SCRIPTS_DIR/led_sign_bridge.py" \
-         "$SCRIPTS_DIR/pi_agent.py" "$SCRIPTS_DIR/color_test.py"
+         "$SCRIPTS_DIR/pi_agent.py"
 echo "Restarting services..."
 sudo systemctl restart roadsentinel-camera roadsentinel-display roadsentinel-agent
 echo "Done! All services restarted with latest code."
