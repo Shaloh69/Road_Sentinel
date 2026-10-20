@@ -220,6 +220,15 @@ def wifi_is_up(dev: str) -> bool:
     return True
 
 
+def ap_is_active(dev: str) -> bool:
+    """True if our own setup AP is the connection currently on `dev`."""
+    rc, out, _ = run(["nmcli", "-t", "-f", "DEVICE,CONNECTION", "device"])
+    return any(
+        line.split(":", 1) == [dev, AP_CONN_NAME]
+        for line in out.splitlines()
+    )
+
+
 def scan_networks(dev: str) -> list[dict]:
     run(["nmcli", "device", "wifi", "rescan"], timeout=25)
     time.sleep(2)
@@ -552,6 +561,17 @@ def watch(led: StatusLed) -> None:
     failures = 0
 
     while True:
+        # Outside run_portal() the setup AP should never be up. If it is, it
+        # was left behind (seen on Pi 4 after a reboot, 2026-10-20) and
+        # wifi_is_up() cannot tell: in AP mode nmcli reports the device
+        # "connected", and the outward socket check succeeds over eth0. The Pi
+        # then sits on its own hotspot forever and never retries saved networks.
+        if ap_is_active(dev):
+            log.warning("Stale setup AP on %s — taking it down to retry saved networks", dev)
+            stop_ap()
+            time.sleep(3)
+            run(["nmcli", "device", "connect", dev], timeout=45)
+
         if wifi_is_up(dev):
             if failures:
                 log.info("WiFi recovered after %d failure(s)", failures)

@@ -49,9 +49,16 @@ function Register-RSTask {
         Unregister-ScheduledTask -TaskName $Name -Confirm:$false
     }
 
+    # S4U = "run whether the user is logged on or not", without storing a
+    # password. Registering with -User alone gives LogonType Interactive, and an
+    # Interactive task's AtStartup trigger fires at boot BEFORE anyone has
+    # logged on, so it is silently skipped — and nothing re-fires it at logon.
+    # That kept every service down for two days after a reboot (2026-10-18).
+    $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType S4U -RunLevel Highest
+
     Register-ScheduledTask -TaskName $Name `
         -Action $action -Trigger $trigger -Settings $settings `
-        -RunLevel Highest -User $User -Force | Out-Null
+        -Principal $principal -Force | Out-Null
 
     Write-Output "  registered: $Name"
 }

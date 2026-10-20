@@ -198,7 +198,11 @@ PI_AGENT_TOKEN=<token> bash setup_pi4.sh https://<node-url>.trycloudflare.com ""
 
 ## Known blockers
 
-- **The services do not come back after a reboot unless someone logs in at `irm-pc`.** (Found 2026-10-20.) The scheduled tasks are registered with `LogonType: Interactive` — "run only when user is logged on" — so the `AtStartup` trigger does nothing on an unattended boot. `irm-pc` rebooted on 2026-10-18 and every service (AI, Node, client, tunnels) stayed down for two days with only MySQL (a real Windows service) running. Until the tasks are re-registered to run without a logon, after any reboot: start the three service tasks, bring the tunnels up, then run `rewire_tunnels.ps1`.
+- **The services do not come back after a reboot.** (Found 2026-10-20.) The scheduled tasks are registered with `LogonType: Interactive` — "run only when user is logged on". The `AtStartup` trigger fires at boot, *before* anyone has logged on, so it is skipped — and logging on afterwards does not re-fire it. `irm-pc` rebooted at 18:59 on 2026-10-18, someone logged on at 19:00, and every service (AI, Node, client, tunnels) still stayed down for two days; only MySQL (a real Windows service) came back. (An earlier version of this note blamed nobody logging on — the `query user` output disproved that.)
+
+  **Fix:** `install_services.ps1` now registers with `LogonType S4U` ("run whether the user is logged on or not", no stored password). Re-run it elevated on `irm-pc`, and switch the three `RoadSentinel-Tunnel-*` tasks the same way (Task Scheduler → task → *Run whether user is logged on or not*). Not yet applied as of 2026-10-20. Even with it applied, a reboot rotates the quick-tunnel URLs, so `rewire_tunnels.ps1` still has to run afterwards.
+
+  Until then, after any reboot: start the three service tasks, bring the tunnels up, then run `rewire_tunnels.ps1`.
 
 ## Remote access
 
