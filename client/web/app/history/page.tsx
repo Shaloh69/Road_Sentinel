@@ -6,6 +6,9 @@ import { Input } from "@heroui/input";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
+// Clips are stored as relative "/media/..." paths, served by the Node service.
+const mediaUrl = (url: string) => (url.startsWith("/") ? `${API}${url}` : url);
+
 // Recordings come from two paths: on-demand clips requested from the Admin page
 // (Sign & Recording Controls → Clip footage) and continuous segmenting when a
 // camera runs with --record. Both upload to the AI service's media store and
@@ -34,8 +37,10 @@ interface Recording {
 }
 
 export default function HistoryPage() {
+  // Local date, not toISOString() (UTC) — in UTC+8 that opened on yesterday
+  // until 08:00. en-CA formats as YYYY-MM-DD, which <input type="date"> wants.
   const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().slice(0, 10),
+    new Date().toLocaleDateString("en-CA"),
   );
   const [detections, setDetections] = useState<Detection[]>([]);
   const [recordings, setRecordings] = useState<Recording[]>([]);
@@ -117,7 +122,7 @@ export default function HistoryPage() {
                 <video
                   controls
                   className="w-full aspect-video bg-black"
-                  src={selectedRecording.video_url}
+                  src={mediaUrl(selectedRecording.video_url)}
                 />
               ) : (
                 <div className="aspect-video bg-surface-2/60 backdrop-blur-sm flex items-center justify-center">
@@ -230,7 +235,7 @@ export default function HistoryPage() {
                       <a
                         download
                         className="px-2.5 py-1 rounded-lg bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25 transition-colors duration-150 ease-standard no-underline"
-                        href={r.video_url}
+                        href={mediaUrl(r.video_url)}
                         rel="noreferrer"
                         target="_blank"
                       >

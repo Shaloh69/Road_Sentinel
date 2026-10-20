@@ -313,9 +313,12 @@ async def storage_upload(
     content = await file.read()
     dest.write_bytes(content)
 
-    # Build public URL from Cloudflare tunnel base or fall back to localhost
-    base = STORAGE_BASE_URL or f"http://localhost:{os.getenv('PORT', '8000')}"
-    public_url = f"{base}/media/{safe_path}"
+    # Absolute only when STORAGE_BASE_URL is set. Otherwise return a relative
+    # "/media/..." path: the Node service serves this same directory, and the
+    # client resolves the path against its API URL. The old fallback,
+    # http://localhost:8000, was stored in the DB and only ever loaded on the
+    # host itself; a quick-tunnel URL would go stale on the next restart.
+    public_url = f"{STORAGE_BASE_URL}/media/{safe_path}" if STORAGE_BASE_URL else f"/media/{safe_path}"
 
     logger.info(f"Storage upload: {safe_path}  ({len(content):,} bytes) → {public_url}")
     return JSONResponse({"success": True, "url": public_url, "path": safe_path})

@@ -5,6 +5,7 @@ import { Server, Socket } from "socket.io";
 import http from "http";
 import { spawn } from "child_process";
 import os from "os";
+import path from "path";
 import { logger } from "./config/logger";
 import { testConnection, closePool } from "./config/database";
 import { initializeStorageBuckets } from "./config/supabase";
@@ -110,6 +111,18 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/recordings", recordingRoutes);
 app.use("/api/sign", signModeRoutes);
 app.use("/api/public/status", publicStatusRoutes);
+
+// Recorded clips and snapshots. The AI service writes them to its media dir on
+// this same machine (as with AI_SERVICE_URL=localhost) and returns relative
+// "/media/..." URLs; serving them here puts them behind the Node tunnel, which
+// rewire_tunnels.ps1 already keeps the client pointed at. express.static
+// handles Range requests, which <video> needs for seeking.
+const MEDIA_DIR = path.resolve(
+  process.env.MEDIA_DIR ||
+    path.join(process.cwd(), "..", "ai-service", "media"),
+);
+
+app.use("/media", express.static(MEDIA_DIR));
 
 // ── Socket.IO — default namespace (public: camera streams, incidents feed) ───
 // Nothing here executes a command or reaches admin/Pi-control surfaces.
