@@ -187,8 +187,9 @@ PI_AGENT_TOKEN=<token> bash setup_pi4.sh https://<node-url>.trycloudflare.com ""
 
 | Check | How |
 |---|---|
-| MySQL up | `docker compose ps` — `roadsentinel-mysql` shows `healthy` |
-| Database contents | Adminer at `http://localhost:8080` (server `mysql`, credentials per `docker-compose.yml`) |
+| MySQL up | On `irm-pc`: `sc query RoadSentinelMySQL` shows `RUNNING` and port 3307 is listening. (Dev machine: `docker compose ps` — `roadsentinel-mysql` shows `healthy`) |
+| Database contents | Dev machine only: Adminer at `http://localhost:8080` (server `mysql`, credentials per `docker-compose.yml`) |
+| Cameras streaming | `curl <node-url>/api/public/status` — `cameras_online` should equal `cameras_total`. On a Pi, `tail ~/roadsentinel/logs/camera.log`: `sent=` must keep rising; a rising `dropped=` with a flat `sent=` means the camera works but the Pi's uplink to the server does not |
 | AI service + model | `curl http://localhost:8000/api/stats` — `traffic_model.loaded` should be `true` after the first detection; the startup log must say `custom_model=True` (`False` means it silently fell back to the untrained stock model) |
 | Node service | `curl http://localhost:3001/health`; startup log should show `Database: Connected` and `AI Service: Connected` |
 | Client | `http://localhost:3000` |
@@ -197,14 +198,17 @@ PI_AGENT_TOKEN=<token> bash setup_pi4.sh https://<node-url>.trycloudflare.com ""
 
 ## Known blockers
 
-- **Tailscale SSH is not permitted by the tailnet ACL.** `ssh <user>@100.98.53.95` returns `tailnet policy does not permit you to SSH as user "..."` for every username tried. Network reachability is fine (ping works, services are reachable by IP:port) — this only blocks interactive shell access. Fix by adding an `ssh` section to the Access Controls in the Tailscale admin console.
-- **SSH into `irm-pc` requires an authorized key.** The `ivanraybagnol` account exists but rejects key and password auth from outside. To allow remote administration from the development laptop, add its public key to `irm-pc`'s `C:\ProgramData\ssh\administrators_authorized_keys` (with the correct restrictive ACLs) or the user's `~\.ssh\authorized_keys`:
+- **The services do not come back after a reboot unless someone logs in at `irm-pc`.** (Found 2026-10-20.) The scheduled tasks are registered with `LogonType: Interactive` — "run only when user is logged on" — so the `AtStartup` trigger does nothing on an unattended boot. `irm-pc` rebooted on 2026-10-18 and every service (AI, Node, client, tunnels) stayed down for two days with only MySQL (a real Windows service) running. Until the tasks are re-registered to run without a logon, after any reboot: start the three service tasks, bring the tunnels up, then run `rewire_tunnels.ps1`.
 
-  ```
-  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAT2XcxaYhbAB17iHfpUEUIY5Nsim7W4Rgk7kjulm8XS shaloh@MinnieDumpor
-  ```
+## Remote access
 
-  Until then, everything on `irm-pc` has to be run at the machine itself.
+SSH works from the development laptop (key-based, no prompt):
+
+| Host | Command |
+|---|---|
+| `irm-pc` | `ssh "malubay ivan ray@100.120.27.110"` — note the spaces in the username; the shell is `cmd`, so run PowerShell scripts as `powershell -NoProfile -ExecutionPolicy Bypass -File <script>` |
+| Pi 4 | `ssh roadsentinel@100.98.53.95` (sudo needs a password) |
+| Pi 5 | `ssh raspi5@100.94.18.9` (passwordless sudo; Tailscale SSH may ask for a one-time browser re-auth) |
 
 ## Disk space
 
