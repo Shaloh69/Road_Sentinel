@@ -48,4 +48,11 @@ extern uint16_t ch2[SCAN_ADDRESSES][REGISTER_LEN];
 
 void build();
 
+// Runtime 180-degree rotation on top of FLIP_X/FLIP_Y, for one sign mounted
+// the other way up while every board runs the same build. Rebuilds the
+// tables; the refresh loop may show one mixed frame while that happens.
+// Not persisted — the Pi bridge resends ROTATE: on every connect.
+void setRotate180(bool on);
+bool rotate180();
+
 } // namespace panelmap

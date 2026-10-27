@@ -4,8 +4,14 @@ The ESP32 port of the HUB75Sign driver. Drives two chained 64x32 P5 outdoor
 panels as one 128x32 sign, taking state from a Raspberry Pi over USB serial.
 
 **Both installations use this** — the Pi 4 sign and the Pi 5 sign run
-identical firmware. Flash the same build to both ESP32s; nothing distinguishes
-them.
+identical firmware. Flash the same build to both ESP32s; nothing in the build
+distinguishes them.
+
+**Orientation is per sign, at runtime.** The Pi 4 sign is mounted the other way
+up, so its bridge runs with `--rotate 180` and sends `ROTATE:180` on every
+connect (the firmware does not persist it). The bridge logs the board's reply
+as `rotate -> 180 (board: OK)`. Do not toggle `FLIP_X`/`FLIP_Y` for this — that
+would flip the Pi 5 sign too.
 
 - **Wiring and first-run checks:** [WIRING.md](WIRING.md)
 - **How the driver works, and why it is not a library:** [../README.md](../README.md)

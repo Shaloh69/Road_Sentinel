@@ -24,9 +24,9 @@ echo "Found board on $PORT"
 
 # The bridge holds the same port; two processes cannot share it and the
 # failure mode is a silent timeout rather than a clear error.
-if systemctl is-active --quiet roadsentinel-esp32-bridge 2>/dev/null; then
+if systemctl is-active --quiet roadsentinel-display 2>/dev/null; then
     echo "Stopping bridge service while flashing..."
-    sudo systemctl stop roadsentinel-esp32-bridge
+    sudo systemctl stop roadsentinel-display
     RESTART=1
 fi
 
@@ -35,6 +35,6 @@ cd "$PROJ"
 
 if [ "${RESTART:-0}" = "1" ]; then
     echo "Restarting bridge service..."
-    sudo systemctl start roadsentinel-esp32-bridge
+    sudo systemctl start roadsentinel-display
 fi
 echo "Done. Check with: ~/.pio-venv/bin/pio device monitor -b 115200"

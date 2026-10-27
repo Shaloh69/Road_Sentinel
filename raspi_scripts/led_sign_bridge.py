@@ -198,7 +198,8 @@ def find_port() -> str | None:
 class EspLink:
     """Serial link to the sign board, reconnecting on its own."""
 
-    def __init__(self, port: str | None, brightness: int | None = None):
+    def __init__(self, port: str | None, brightness: int | None = None,
+                 rotate: int = 0):
         self._explicit_port = port
         self._ser: serial.Serial | None = None
         self._last_sent: str | None = None
@@ -207,6 +208,9 @@ class EspLink:
         # board that reset overnight came back at its firmware default, and
         # nobody would notice until the sign looked wrong in daylight.
         self._brightness = brightness
+        # Same reasoning: the firmware does not persist ROTATE:, so a board
+        # reset would otherwise come back upside down.
+        self._rotate = rotate
 
     def _open(self) -> bool:
         port = self._explicit_port or find_port()
@@ -235,6 +239,18 @@ class EspLink:
 
             log.info("Connected to sign board on %s", port)
             self._last_sent = None      # force a resend after any reconnect
+            # Always sent, 0 included, so dropping --rotate also undoes it.
+            # The reply is logged because INFO (logged above, during the
+            # handshake) predates this command and so always says rot=0.
+            # Firmware older than ROTATE: answers "ERR unknown command".
+            self._ser.reset_input_buffer()
+            self._ser.write(f"ROTATE:{self._rotate}\n".encode())
+            self._ser.flush()
+            reply = ""
+            deadline = time.monotonic() + 1.5
+            while time.monotonic() < deadline and not reply.startswith(("OK", "ERR")):
+                reply = self._ser.readline().decode(errors="replace").strip()
+            log.info("rotate -> %d (board: %s)", self._rotate, reply or "no reply")
             if self._brightness is not None:
                 self._ser.write(f"BRIGHT:{self._brightness}\n".encode())
                 self._ser.flush()
@@ -468,6 +484,9 @@ def main() -> int:
                     help="This sign's camera id (e.g. CAM-A-001). Selects the "
                          "per-approach state; without it the bridge follows "
                          "the overall road state instead.")
+    ap.add_argument("--rotate", type=int, choices=(0, 180), default=0,
+                    help="Rotate this sign's picture 180 degrees, for a panel "
+                         "mounted the other way up (default 0)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -489,7 +508,7 @@ def main() -> int:
         return 2
 
     scheduled = args.brightness is None
-    link = EspLink(args.port, args.brightness)
+    link = EspLink(args.port, args.brightness, args.rotate)
 
     if args.test:
         return run_test(link)

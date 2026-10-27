@@ -5,6 +5,7 @@
 #include "mode_char.h"
 #include "mode_sand.h"
 #include "hub75.h"
+#include "panel_map.h"
 
 namespace protocol {
 
@@ -39,10 +40,10 @@ static void handle(String cmd) {
     // one-second question rather than a guess. During hardware bring-up that
     // distinction matters more than it sounds.
     Serial.printf("canvas=%dx%d addresses=%d reglen=%d driver=own-bitbang "
-                  "fm6124=yes d_line=none bright=%d fps=%lu mode=%d\n",
+                  "fm6124=yes d_line=none bright=%d fps=%lu mode=%d rot=%d\n",
                   CANVAS_W, CANVAS_H, SCAN_ADDRESSES, REGISTER_LEN,
                   display::brightness(), (unsigned long)hub75::framesPerSecond(),
-                  (int)app::mode());
+                  (int)app::mode(), panelmap::rotate180() ? 180 : 0);
     return;
   }
 
@@ -53,7 +54,7 @@ static void handle(String cmd) {
     Serial.println("TEXT:line1|line2   MODE:status|char|sand");
     Serial.println("CHAR:A   SAND:reset   SAND:rate,N");
     Serial.println("FILL:c   RECT:x,y,w,h,c   CLS   DIAG   (c = 0-7)");
-    Serial.println("BRIGHT:0-255   INFO   PING");
+    Serial.println("BRIGHT:0-255   ROTATE:0|180   INFO   PING");
     return;
   }
 
@@ -198,6 +199,17 @@ static void handle(String cmd) {
   if (cmd.startsWith("BRIGHT:")) {
     int v = constrain(cmd.substring(7).toInt(), 0, 255);
     display::setBrightness((uint8_t)v);
+    Serial.println("OK");
+    return;
+  }
+
+  if (cmd.startsWith("ROTATE:")) {
+    int v = cmd.substring(7).toInt();
+    if (v != 0 && v != 180) {
+      Serial.println("ERR ROTATE:0|180");
+      return;
+    }
+    panelmap::setRotate180(v == 180);
     Serial.println("OK");
     return;
   }

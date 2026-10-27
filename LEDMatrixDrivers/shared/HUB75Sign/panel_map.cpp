@@ -5,6 +5,15 @@ namespace panelmap {
 uint16_t ch1[SCAN_ADDRESSES][REGISTER_LEN];
 uint16_t ch2[SCAN_ADDRESSES][REGISTER_LEN];
 
+static bool s_rot180 = false;
+
+void setRotate180(bool on) {
+  s_rot180 = on;
+  build();
+}
+
+bool rotate180() { return s_rot180; }
+
 void build() {
   for (int a = 0; a < SCAN_ADDRESSES; a++) {
     for (int p = 0; p < REGISTER_LEN; p++) {
@@ -33,6 +42,14 @@ void build() {
       // changed if the sign is ever remounted.
       if (FLIP_X) lx = CANVAS_W - 1 - lx;
       if (FLIP_Y) { ly1 = CANVAS_H - 1 - ly1; ly2 = CANVAS_H - 1 - ly2; }
+
+      // Per-sign 180 rotation (ROTATE:180): both axes together, as the
+      // panel_config.h note on remounting requires — one axis alone mirrors.
+      if (s_rot180) {
+        lx  = CANVAS_W - 1 - lx;
+        ly1 = CANVAS_H - 1 - ly1;
+        ly2 = CANVAS_H - 1 - ly2;
+      }
 
       ch1[a][p] = (uint16_t)(ly1 * CANVAS_W + lx);
       ch2[a][p] = (uint16_t)(ly2 * CANVAS_W + lx);
