@@ -404,6 +404,8 @@ class Recorder:
         self._frame_size: Optional[tuple] = None
         self._frames_written = 0
         self._codec = ""
+        self._boxes: list = []
+        self._boxes_at = 0.0
         self._vehicle_count = 0
         self._incident_count = 0
         self._frames_with_vehicle: set = set()  # dedupe within a segment, approx
@@ -420,6 +422,13 @@ class Recorder:
 
     def note_result(self, result: dict) -> None:
         """Called from ai_task with each AI response — accumulates counts for the segment."""
+        # Keep the latest boxes so add_frame can burn them into the recording;
+        # History then shows what was detected, not just bare footage.
+        self._boxes = [
+            (d.get("bbox") or {}, d.get("class", "vehicle"), d.get("confidence", 0), d.get("speed"))
+            for d in result.get("detections") or []
+        ]
+        self._boxes_at = time.monotonic()
         if result.get("detections"):
             self._vehicle_count += 1  # frames-with-a-vehicle, not unique vehicles (no cross-frame ID here)
         if result.get("incidents"):
@@ -438,12 +447,36 @@ class Recorder:
             # frames to match elapsed time keeps playback at real speed.
             elapsed = (datetime.now(timezone.utc) - self._start_time).total_seconds()
             due = int(elapsed * self._fps) + 1
+            if self._frames_written < due:
+                frame = self._draw_boxes(frame)
             try:
                 while self._frames_written < due:
                     self._writer.write(frame)
                     self._frames_written += 1
             except Exception as exc:
                 log.warning("[%s] Recording write failed: %s", self._camera_id, exc)
+
+    BOX_HOLD_SECS = 1.5  # results arrive ~1/s on 4G; hold boxes until the next
+
+    def _draw_boxes(self, frame):
+        """Return a COPY with the latest detections drawn. Never draw on `frame`
+        itself: the same array goes on to the live view and to the AI, which
+        would then be detecting our own rectangles."""
+        if not self._boxes or time.monotonic() - self._boxes_at > self.BOX_HOLD_SECS:
+            return frame
+        out = frame.copy()
+        for bbox, label, conf, speed in self._boxes:
+            x, y = int(bbox.get("x", 0)), int(bbox.get("y", 0))
+            w, h = int(bbox.get("width", 0)), int(bbox.get("height", 0))
+            if w <= 0 or h <= 0:
+                continue
+            text = f"{label} {conf * 100:.0f}%" + (f" {speed:.0f} km/h" if speed else "")
+            cv2.rectangle(out, (x, y), (x + w, y + h), (0, 200, 255), 2)
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            ty = max(th + 4, y)
+            cv2.rectangle(out, (x, ty - th - 4), (x + tw + 4, ty), (0, 200, 255), -1)
+            cv2.putText(out, text, (x + 2, ty - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1)
+        return out
 
     def _start_segment(self, frame) -> None:
         h, w = frame.shape[:2]
