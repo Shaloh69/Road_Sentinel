@@ -167,29 +167,33 @@ export default function Home() {
       }
     });
 
-    socket.on("detection", (_event: { data: { camera_id: string } }) => {
+    const handleDetection = () => {
       setSummary((prev) =>
         prev ? { ...prev, vehicles_today: prev.vehicles_today + 1 } : prev,
       );
-    });
+    };
 
-    socket.on(
-      "camera_status",
-      (event: { data: { camera_id: string; status: Camera["status"] } }) => {
-        setCameras((prev) =>
-          prev.map((c) =>
-            c.id === event.data.camera_id
-              ? { ...c, status: event.data.status }
-              : c,
-          ),
-        );
-      },
-    );
+    const handleStatus = (event: {
+      data: { camera_id: string; status: Camera["status"] };
+    }) => {
+      setCameras((prev) =>
+        prev.map((c) =>
+          c.id === event.data.camera_id
+            ? { ...c, status: event.data.status }
+            : c,
+        ),
+      );
+    };
+
+    socket.on("detection", handleDetection);
+    socket.on("camera_status", handleStatus);
 
     return () => {
       socket.off("incident");
-      socket.off("detection");
-      socket.off("camera_status");
+      // Only our own handlers: the socket is shared, and a bare
+      // off("detection") would also remove useDetectionBoxes' listener.
+      socket.off("detection", handleDetection);
+      socket.off("camera_status", handleStatus);
     };
   }, []);
 

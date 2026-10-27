@@ -102,7 +102,7 @@ export default function MonitorPage() {
       cameras.forEach((cam) => socket.emit("subscribe_camera", cam.id));
     }
 
-    socket.on("detection", (event: { type: string; data: Detection }) => {
+    const handleDetection = (event: { type: string; data: Detection }) => {
       const det = event.data;
       const cam = cameras.find((c) => c.id === det.camera_id);
 
@@ -127,26 +127,32 @@ export default function MonitorPage() {
       };
 
       setLog((prev) => [entry, ...prev].slice(0, 50));
-    });
+    };
 
-    socket.on(
-      "camera_status",
-      (event: { data: { camera_id: string; status: Camera["status"] } }) => {
-        setCameras((prev) =>
-          prev.map((c) =>
-            c.id === event.data.camera_id
-              ? { ...c, status: event.data.status }
-              : c,
-          ),
-        );
-      },
-    );
+    const handleStatus = (event: {
+      data: { camera_id: string; status: Camera["status"] };
+    }) => {
+      setCameras((prev) =>
+        prev.map((c) =>
+          c.id === event.data.camera_id
+            ? { ...c, status: event.data.status }
+            : c,
+        ),
+      );
+    };
+
+    socket.on("detection", handleDetection);
+    socket.on("camera_status", handleStatus);
 
     return () => {
       cameras.forEach((cam) => socket.emit("unsubscribe_camera", cam.id));
       socket.off("connect", handleConnect);
-      socket.off("detection");
-      socket.off("camera_status");
+      // Remove only OUR handlers. The socket is shared: a bare
+      // socket.off("detection") also removed useDetectionBoxes' listener,
+      // and since this effect re-runs on every camera refresh, Live Monitor
+      // drew no boxes while its log and counter (re-added here) kept working.
+      socket.off("detection", handleDetection);
+      socket.off("camera_status", handleStatus);
     };
   }, [cameras]);
 
