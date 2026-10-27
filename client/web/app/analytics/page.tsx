@@ -52,7 +52,7 @@ export default function AnalyticsPage() {
   const fetchData = useCallback(async () => {
     try {
       const hours = hoursForRange[timeRange] ?? 24;
-      const today = new Date().toISOString().slice(0, 10);
+      const today = new Date().toLocaleDateString("en-CA");
 
       const [sumRes, hourlyRes, speedRes] = await Promise.all([
         fetch(`${API}/api/analytics/summary`),
@@ -145,7 +145,7 @@ export default function AnalyticsPage() {
 
   const exportCsv = () => {
     downloadCsv(
-      `road-sentinel-analytics-${timeRange}-${new Date().toISOString().slice(0, 10)}`,
+      `road-sentinel-analytics-${timeRange}-${new Date().toLocaleDateString("en-CA")}`,
       [
         "hour",
         "total_vehicles",

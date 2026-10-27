@@ -49,7 +49,7 @@ const REPORT_TYPES = [
     id: "hourly",
     name: "Hourly Traffic Analytics",
     description: "Aggregated per-hour vehicle counts and speeds, today",
-    endpoint: `/api/analytics/hourly?date=${new Date().toISOString().slice(0, 10)}`,
+    endpoint: `/api/analytics/hourly?date=${new Date().toLocaleDateString("en-CA")}`,
     columns: [
       "hour_timestamp",
       "camera_id",
@@ -64,7 +64,7 @@ const REPORT_TYPES = [
     name: "Speed Violations by Hour (thesis figure)",
     description:
       "Speed-limit violations bucketed by hour of day, today — all 24 hours included (0 where none)",
-    endpoint: `/api/analytics/violations?date=${new Date().toISOString().slice(0, 10)}`,
+    endpoint: `/api/analytics/violations?date=${new Date().toLocaleDateString("en-CA")}`,
     columns: ["hour", "violations", "avg_speed", "max_speed"] as const,
   },
 ];
@@ -91,7 +91,7 @@ export default function ReportsPage() {
         return;
       }
       downloadCsv(
-        `road-sentinel-${report.id}-${new Date().toISOString().slice(0, 10)}`,
+        `road-sentinel-${report.id}-${new Date().toLocaleDateString("en-CA")}`,
         [...report.columns],
         json.data.map((row: Record<string, unknown>) =>
           report.columns.map((c) => row[c] as string | number | null),

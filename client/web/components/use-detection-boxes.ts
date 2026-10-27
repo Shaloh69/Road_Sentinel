@@ -62,9 +62,27 @@ export function useDetectionBoxes(cameras: CameraLike[]) {
 
   // Kept in a ref so the socket effect does not resubscribe on every camera
   // refresh — the list is re-fetched on a timer and is usually identical.
+  //
+  // But it must still SUBSCRIBE when the list arrives. Pages start with [] and
+  // fetch cameras afterwards; the live video has usually connected the shared
+  // socket by then, so the mount-time subscribe below ran against an empty list
+  // and nothing ever subscribed again — every detection event was dropped and
+  // no box was drawn. Keyed on the ids so the periodic refresh does not resend;
+  // re-joining a room the socket is already in is a no-op on the server.
+  const cameraIds = cameras.map((c) => c.id).join(",");
+
   useEffect(() => {
     camerasRef.current = cameras;
   }, [cameras]);
+
+  useEffect(() => {
+    if (!cameraIds) return;
+    const socket = getSocket();
+
+    if (socket.connected) {
+      cameraIds.split(",").forEach((id) => socket.emit("subscribe_camera", id));
+    }
+  }, [cameraIds]);
 
   useEffect(() => {
     const socket = getSocket();

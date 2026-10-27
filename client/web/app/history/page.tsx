@@ -57,7 +57,10 @@ export default function HistoryPage() {
       const nextDay = new Date(`${selectedDate}T00:00:00`);
 
       nextDay.setDate(nextDay.getDate() + 1);
-      const until = nextDay.toISOString().slice(0, 19).replace("T", " ");
+      // Local midnight, like `since`. toISOString() converted it to UTC, which
+      // in UTC+8 ended the window at 16:00 — so an evening's detections
+      // never appeared (found 2026-10-27, when all of them were after 16:57).
+      const until = `${nextDay.toLocaleDateString("en-CA")} 00:00:00`;
 
       const [detRes, recRes] = await Promise.all([
         fetch(

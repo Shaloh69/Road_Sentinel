@@ -45,24 +45,74 @@ router.get("/summary", async (req: Request, res: Response) => {
 });
 
 // GET /api/analytics/hourly?camera_id=&date=YYYY-MM-DD
+//
+// Aggregated live from `detections` and `incidents`. It used to read the
+// `hourly_analytics` table, which migrate.ts creates but nothing ever writes,
+// so this always returned [] — leaving the hourly chart, the vehicle-type
+// cards (summed from these rows), the peak hour and the CSV exports empty
+// while detections held 1,500+ rows for the day (found 2026-10-27).
+//
+// Rows are per hour across the selected cameras, in the HourlyAnalytics shape
+// the clients already read. Timestamps are stored in server-local time, so
+// HOUR() buckets are local hours. Counts are CAST because MySQL returns SUM()
+// as DECIMAL, which mysql2 hands over as a string ("3"), and the client adds
+// them up.
 router.get("/hourly", async (req: Request, res: Response) => {
   try {
     const { camera_id, date } = req.query as Record<string, string>;
+    const day = date || new Date().toLocaleDateString("en-CA");
+    const camFilter = camera_id ? " AND camera_id = ?" : "";
+    const params: string[] = camera_id ? [day, day, camera_id] : [day, day];
+    const range =
+      "timestamp >= ? AND timestamp < DATE_ADD(?, INTERVAL 1 DAY)" + camFilter;
+    const hourOf =
+      "TIMESTAMP(DATE(timestamp), MAKETIME(HOUR(timestamp), 0, 0))";
 
-    let sql = `
-      SELECT * FROM hourly_analytics
-      WHERE DATE(hour_timestamp) = ?
-    `;
-    const params: string[] = [date || new Date().toISOString().slice(0, 10)];
+    const [det, inc] = await Promise.all([
+      query<HourlyAnalytics[]>(
+        `SELECT ${hourOf} AS hour_timestamp,
+                COUNT(*) AS total_vehicles,
+                AVG(speed) AS avg_speed,
+                MAX(speed) AS max_speed,
+                MIN(speed) AS min_speed,
+                CAST(SUM(vehicle_type = 'car')        AS SIGNED) AS car_count,
+                CAST(SUM(vehicle_type = 'truck')      AS SIGNED) AS truck_count,
+                CAST(SUM(vehicle_type = 'bus')        AS SIGNED) AS bus_count,
+                CAST(SUM(vehicle_type = 'motorcycle') AS SIGNED) AS motorcycle_count,
+                CAST(SUM(vehicle_type = 'bicycle')    AS SIGNED) AS bicycle_count
+           FROM detections
+          WHERE ${range}
+          GROUP BY hour_timestamp
+          ORDER BY hour_timestamp ASC`,
+        params,
+      ),
+      query<
+        { hour_timestamp: Date; incident_count: number; speeding: number }[]
+      >(
+        `SELECT ${hourOf} AS hour_timestamp,
+                COUNT(*) AS incident_count,
+                CAST(SUM(incident_type = 'speeding') AS SIGNED) AS speeding
+           FROM incidents
+          WHERE ${range}
+          GROUP BY hour_timestamp`,
+        params,
+      ),
+    ]);
 
-    if (camera_id) {
-      sql += " AND camera_id = ?";
-      params.push(camera_id);
-    }
+    const incByHour = new Map(
+      inc.map((r) => [new Date(r.hour_timestamp).getTime(), r]),
+    );
+    const rows: HourlyAnalytics[] = det.map((r) => {
+      const i = incByHour.get(new Date(r.hour_timestamp).getTime());
 
-    sql += " ORDER BY hour_timestamp ASC";
+      return {
+        ...r,
+        camera_id: camera_id || "all",
+        incident_count: i?.incident_count ?? 0,
+        speeding_violations: i?.speeding ?? 0,
+      };
+    });
 
-    const rows = await query<HourlyAnalytics[]>(sql, params);
     res.json({ success: true, data: rows } as ApiResponse<HourlyAnalytics[]>);
   } catch (err) {
     res
