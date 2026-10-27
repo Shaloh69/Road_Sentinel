@@ -1178,7 +1178,12 @@ async def run(
                         # Enqueue latest frame for sequential push (drops stale if busy)
                         if forwarder:
                             _now = time.monotonic()
-                            if _now - last_frame_push >= FRAME_PUSH_INTERVAL:
+                            # 0.75x tolerance: the camera also runs at ~30 fps, so
+                            # frame gaps jitter around exactly FRAME_PUSH_INTERVAL.
+                            # A strict >= rejected every frame that arrived a hair
+                            # early — measured 15.0 fps reaching Node from a 30 fps
+                            # camera (2026-10-27).
+                            if _now - last_frame_push >= FRAME_PUSH_INTERVAL * 0.75:
                                 last_frame_push = _now
                                 if frame_q.full():
                                     try:

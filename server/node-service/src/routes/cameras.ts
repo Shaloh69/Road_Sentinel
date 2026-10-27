@@ -27,10 +27,7 @@ function redactRtspUrl<T extends { rtsp_url?: string | null }>(camera: T): T {
 
   return {
     ...camera,
-    rtsp_url: camera.rtsp_url.replace(
-      /(:\/\/[^:/@]+):[^@]*@/,
-      "$1:***@",
-    ),
+    rtsp_url: camera.rtsp_url.replace(/(:\/\/[^:/@]+):[^@]*@/, "$1:***@"),
   };
 }
 
@@ -225,8 +222,9 @@ router.put(
     const isFirst = !frameBuffer.has(id);
     frameBuffer.set(id, jpeg);
     getEmitter(id).emit("frame", jpeg);
-    // Broadcast binary frame to WebSocket stream subscribers (low-latency path)
-    io.to(`stream:${id}`).emit(`camera_frame:${id}`, jpeg);
+    // Broadcast binary frame to WebSocket stream subscribers (low-latency path).
+    // volatile: see handlePiFrame.
+    io.to(`stream:${id}`).volatile.emit(`camera_frame:${id}`, jpeg);
     if (isFirst)
       logger.info(
         `📹 Camera ${id} — first frame received (MJPEG + WS stream live)`,
@@ -252,6 +250,9 @@ router.get("/:id/stream", (req: Request, res: Response) => {
   });
 
   const sendFrame = (jpeg: Buffer) => {
+    // Skip while the previous frame is still unflushed, so a slow viewer gets
+    // fewer, current frames instead of an ever-growing backlog.
+    if (res.writableNeedDrain) return;
     try {
       res.write(
         `--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`,
@@ -281,7 +282,12 @@ export function handlePiFrame(cameraId: string, jpeg: Buffer): void {
   const isFirst = !frameBuffer.has(cameraId);
   frameBuffer.set(cameraId, jpeg);
   getEmitter(cameraId).emit("frame", jpeg);
-  io.to(`stream:${cameraId}`).emit(`camera_frame:${cameraId}`, jpeg);
+  // volatile = drop this frame for any viewer whose socket is still busy
+  // sending the previous one. Without it, a viewer slower than the camera
+  // (a phone, a weak link) has every frame queued for it, so the picture falls
+  // further and further behind live. Live video wants the newest frame, never
+  // a backlog.
+  io.to(`stream:${cameraId}`).volatile.emit(`camera_frame:${cameraId}`, jpeg);
   if (isFirst) logger.info(`📹 Camera ${cameraId} — Socket.IO stream live`);
   setCameraOnline(cameraId, isFirst).catch(() => {});
   resetFrameTimeout(cameraId);

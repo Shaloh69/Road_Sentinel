@@ -51,6 +51,35 @@ export const VideoFeed = ({
   const frameTimestamps = useRef<number[]>([]);
   const lastFrameAt = useRef<number>(0);
 
+  // One frame decoding at a time; while it does, only the NEWEST arrival waits.
+  // Assigning img.src mid-decode aborts the previous frame, so a burst of
+  // frames (common through the tunnel) used to show only its last one.
+  const decodingRef = useRef(false);
+  const pendingUrlRef = useRef<string | null>(null);
+
+  const showFrame = useCallback((url: string) => {
+    decodingRef.current = true;
+    if (imgRef.current) {
+      imgRef.current.src = url;
+    }
+    // Revoke the previously displayed frame's blob URL to free memory
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+    }
+    blobUrlRef.current = url;
+  }, []);
+
+  // Called when the WS <img> finishes (or fails) a frame: show the waiting one.
+  const releaseDecode = useCallback(() => {
+    decodingRef.current = false;
+    const next = pendingUrlRef.current;
+
+    if (next) {
+      pendingUrlRef.current = null;
+      showFrame(next);
+    }
+  }, [showFrame]);
+
   const [liveFps, setLiveFps] = useState<number | null>(null);
   const [frameIntervalMs, setFrameIntervalMs] = useState<number | null>(null);
   const [lastFrameAge, setLastFrameAge] = useState<number>(0);
@@ -144,16 +173,14 @@ export const VideoFeed = ({
       const blob = new Blob([data], { type: "image/jpeg" });
       const url = URL.createObjectURL(blob);
 
-      if (imgRef.current) {
-        imgRef.current.src = url;
+      if (decodingRef.current) {
+        if (pendingUrlRef.current) {
+          URL.revokeObjectURL(pendingUrlRef.current);
+        }
+        pendingUrlRef.current = url;
+      } else {
+        showFrame(url);
       }
-
-      // Revoke previous blob URL to free memory
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-      }
-
-      blobUrlRef.current = url;
       setHasFrames(true);
     };
 
@@ -169,8 +196,13 @@ export const VideoFeed = ({
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
       }
+      if (pendingUrlRef.current) {
+        URL.revokeObjectURL(pendingUrlRef.current);
+        pendingUrlRef.current = null;
+      }
+      decodingRef.current = false;
     };
-  }, [cameraId, isLive]);
+  }, [cameraId, isLive, showFrame]);
 
   const displayFps = liveFps ?? fps;
   const displayLatency = frameIntervalMs ?? latency;
@@ -251,7 +283,11 @@ export const VideoFeed = ({
             className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${hasFrames && isLive && !useMjpegFallback ? "opacity-100" : "opacity-0"}`}
             decoding="async"
             fetchPriority="high"
-            onLoad={handleLoad}
+            onError={releaseDecode}
+            onLoad={() => {
+              handleLoad();
+              releaseDecode();
+            }}
           />
 
           {/* MJPEG fallback — used when server not yet updated with WS support */}
