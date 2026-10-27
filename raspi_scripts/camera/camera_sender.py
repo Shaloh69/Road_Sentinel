@@ -402,6 +402,8 @@ class Recorder:
         self._path: Optional[Path] = None
         self._start_time: Optional[datetime] = None
         self._frame_size: Optional[tuple] = None
+        self._frames_written = 0
+        self._codec = ""
         self._vehicle_count = 0
         self._incident_count = 0
         self._frames_with_vehicle: set = set()  # dedupe within a segment, approx
@@ -428,9 +430,18 @@ class Recorder:
             return
         if self._writer is None:
             self._start_segment(frame)
-        if self._writer is not None:
+        if self._writer is not None and self._start_time is not None:
+            # Pace by wall clock, not by frames received. The file is stamped
+            # at self._fps, but the camera delivered ~16 fps (325 frames in
+            # 20 s, measured 2026-10-27), so writing each frame once made
+            # clips play back at roughly double speed. Repeating or skipping
+            # frames to match elapsed time keeps playback at real speed.
+            elapsed = (datetime.now(timezone.utc) - self._start_time).total_seconds()
+            due = int(elapsed * self._fps) + 1
             try:
-                self._writer.write(frame)
+                while self._frames_written < due:
+                    self._writer.write(frame)
+                    self._frames_written += 1
             except Exception as exc:
                 log.warning("[%s] Recording write failed: %s", self._camera_id, exc)
 
@@ -439,12 +450,28 @@ class Recorder:
         self._frame_size = (w, h)
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         self._path = self._dir / f"{self._camera_id}_{ts}.mp4"
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        self._writer = cv2.VideoWriter(str(self._path), fourcc, self._fps, (w, h))
+        # H.264 first: browsers cannot play mp4v (MPEG-4 Part 2) in <video>, so
+        # History showed a dead player, and it was ~3.5x larger (20 s measured
+        # at 4.40 MB mp4v vs ~1.2 MB avc1 on Pi 5). mp4v stays as a fallback
+        # for an OpenCV build without an H.264 encoder.
+        self._writer = None
+        for codec in ("avc1", "mp4v"):
+            writer = cv2.VideoWriter(str(self._path), cv2.VideoWriter_fourcc(*codec),
+                                     self._fps, (w, h))
+            if writer.isOpened():
+                self._writer = writer
+                break
+            writer.release()
+        if self._writer is None:
+            log.warning("[%s] No video codec available — recording skipped", self._camera_id)
+            return
+        self._codec = codec
+        self._frames_written = 0
         self._start_time = datetime.now(timezone.utc)
         self._vehicle_count = 0
         self._incident_count = 0
-        log.info("[%s] Recording segment started: %s", self._camera_id, self._path.name)
+        log.info("[%s] Recording segment started: %s (%s)", self._camera_id,
+                 self._path.name, self._codec)
 
     async def maybe_rotate(self) -> None:
         if self._writer is None or self._start_time is None:
@@ -504,7 +531,11 @@ class Recorder:
                 async with self._ai_session.post(
                     f"{self._ai_url}/api/storage/upload",
                     data=data,
-                    timeout=aiohttp.ClientTimeout(total=60.0),
+                    # Sized to the file: a flat 60 s failed any segment over
+                    # ~5 MB on the 4G uplink (64-95 KB/s measured), and a
+                    # failed upload deletes the segment. Assumes >= 20 KB/s.
+                    timeout=aiohttp.ClientTimeout(
+                        total=max(60.0, (file_size_mb or 0) * 1024 * 1024 / 20_000)),
                 ) as resp:
                     if resp.status == 200:
                         payload = await resp.json()
