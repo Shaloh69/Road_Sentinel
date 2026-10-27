@@ -162,10 +162,17 @@ io.on("connection", (socket) => {
   });
 
   // Pi camera frame via Socket.IO — zero RTT, no HTTP PUT overhead
-  socket.on("pi_frame", (payload: { camera_id: string; data: Buffer }) => {
-    if (!payload?.camera_id || !Buffer.isBuffer(payload.data)) return;
-    handlePiFrame(payload.camera_id, payload.data);
-  });
+  // The ack lets the sender pace itself to the link: it sends the next frame
+  // only once this one has arrived (see camera_sender._push_raw).
+  socket.on(
+    "pi_frame",
+    (payload: { camera_id: string; data: Buffer }, ack?: () => void) => {
+      if (payload?.camera_id && Buffer.isBuffer(payload.data)) {
+        handlePiFrame(payload.camera_id, payload.data);
+      }
+      if (typeof ack === "function") ack();
+    },
+  );
 
   socket.on("subscribe_incidents", () => {
     socket.join("incidents");

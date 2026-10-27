@@ -58,6 +58,7 @@ NODE_TIMEOUT             = 5.0
 DETECTION_WRITE_INTERVAL = 1.0   # write at most 1 detection per second to Node
 INCIDENT_DEDUP_WINDOW    = 30.0  # suppress repeat incident type within this window (s)
 FRAME_PUSH_INTERVAL      = 1.0 / 30  # push MJPEG frame to Node at up to 30 FPS
+PUSH_ACK_TIMEOUT         = 3.0       # max wait for Node's ack of one live frame
 
 # Auto-discovery
 DISCOVERY_AFTER_FAILURES = 3     # consecutive open failures before triggering discovery
@@ -269,12 +270,21 @@ class NodeForwarder:
     async def _push_raw(self, jpeg_bytes: bytes) -> None:
         """Push frame via Socket.IO (zero RTT) or HTTP PUT fallback."""
         if self._sio.connected:
+            # call(), not emit(): wait for Node's ack before the next frame.
+            # emit() returns as soon as the bytes are buffered, so on a slow
+            # uplink (4G measured at 64-95 KB/s on 2026-10-27, i.e. ~3-4
+            # frames/s) the push loop kept offering ~30 fps, the modem queued
+            # it, and frames arrived in bursts of 12 then stalls of 7+ s.
+            # Waiting for the ack sends exactly as fast as the link delivers;
+            # frame_q (maxsize 1) meanwhile keeps only the newest frame.
             try:
-                await self._sio.emit("pi_frame", {
+                await self._sio.call("pi_frame", {
                     "camera_id": self._camera_id,
                     "data":      jpeg_bytes,
-                })
+                }, timeout=PUSH_ACK_TIMEOUT)
                 return
+            except sio_lib.exceptions.TimeoutError:
+                return  # link stalled — drop this frame, the next is newer
             except Exception:
                 pass  # fall through to HTTP
 
