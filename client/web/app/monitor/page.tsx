@@ -58,7 +58,9 @@ export default function MonitorPage() {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [speeds, setSpeeds] = useState<Record<string, number | undefined>>({});
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [showBoxes, setShowBoxes] = useState(false);
+  // On by default: this is the page people open to watch detections, and an
+  // off-by-default switch read as "boxes are broken" (2026-10-27).
+  const [showBoxes, setShowBoxes] = useState(true);
   const [viewMode, setViewMode] = useState("grid");
   // Shared with the dashboard so the two cannot drift. Also accumulates:
   // detections arrive one event per vehicle, so the previous single-box state
