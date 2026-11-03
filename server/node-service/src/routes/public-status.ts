@@ -24,9 +24,13 @@ const router = Router();
 //     Lighting both would train drivers to ignore a sign that is often lit for
 //     something happening where they cannot see it.
 //
-//   * A vehicle on BOTH approaches at once is the case neither driver can see
-//     around the curve, and the reason this system exists. Both signs show
-//     VEHICLE INCOMING together.
+//   * A vehicle seen by ONE camera is hidden from the driver on the OTHER
+//     side of the curve, so it lights only the OPPOSITE sign: camera A sees a
+//     car coming -> sign B shows VEHICLE INCOMING, sign A stays SAFE (and the
+//     reverse). Changed 2026-11-03 at the user's request; it used to light
+//     BOTH signs, and only when both approaches had a vehicle at once.
+//     Vehicles marked "leaving" do not count (see the detection query): a car
+//     driving away past camera A has already come through the curve.
 //
 // `state` remains the overall figure for the public web page; `signs` carries
 // the per-approach state the bridges follow.
@@ -115,8 +119,6 @@ router.get("/", async (_req: Request, res: Response) => {
       ]);
 
     const camerasWithVehicles = new Set(detectionRows.map((d) => d.camera_id));
-    // Both approaches occupied is what makes this a blind-curve conflict.
-    const bothApproaches = camerasWithVehicles.size >= 2;
 
     const incidentByCamera = new Map(incidentRows.map((i) => [i.camera_id, i]));
 
@@ -128,15 +130,21 @@ router.get("/", async (_req: Request, res: Response) => {
       let signState = "clear";
       const signDetail: Record<string, unknown> = {};
 
+      // Vehicles coming from the OTHER side of the curve — what this sign's
+      // driver cannot see.
+      const fromOtherSide = [...camerasWithVehicles].filter(
+        (id) => id !== cam.id,
+      );
+
       if (inc) {
-        // An incident on THIS approach outranks the converging-vehicle case:
-        // it is more specific, and more urgent to the driver in front of it.
+        // An incident on THIS approach outranks an oncoming vehicle: it is
+        // more specific, and more urgent to the driver in front of it.
         signState = INCIDENT_SIGN_STATE[inc.incident_type] ?? "incident";
         signDetail.incident_type = inc.incident_type;
         signDetail.severity = inc.severity;
-      } else if (bothApproaches) {
+      } else if (fromOtherSide.length > 0) {
         signState = "vehicle";
-        signDetail.approaches = camerasWithVehicles.size;
+        signDetail.seen_by = fromOtherSide;
       }
 
       // An admin can blank a sign without stopping its camera. The bridge reads
@@ -163,9 +171,11 @@ router.get("/", async (_req: Request, res: Response) => {
         severity: first.severity,
         camera_id: first.camera_id,
       };
-    } else if (bothApproaches) {
+    } else if (camerasWithVehicles.size > 0) {
+      // Any oncoming vehicle now lights a sign (the opposite one), so the
+      // public page reports it whenever a camera sees one.
       state = "vehicle_incoming";
-      detail = { approaches: camerasWithVehicles.size };
+      detail = { seen_by: [...camerasWithVehicles] };
     }
 
     res.json({

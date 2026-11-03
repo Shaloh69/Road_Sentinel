@@ -24,7 +24,7 @@ const DEFAULT_CAMERAS: CameraRow[] = [
   {
     id: "CAM-A-001",
     name: "Camera A",
-    location: "Busay Blind Curve — Approach",
+    location: "Busay Blind Curve",
     rtsp_url:
       process.env.CAM_A_RTSP ?? "rtsp://192.168.8.104:554/cam/realmonitor",
     fps: 15,
@@ -36,7 +36,7 @@ const DEFAULT_CAMERAS: CameraRow[] = [
   {
     id: "CAM-B-002",
     name: "Camera B",
-    location: "Busay Blind Curve — Exit",
+    location: "Busay Blind Curve",
     rtsp_url:
       process.env.CAM_B_RTSP ?? "rtsp://192.168.8.108:554/cam/realmonitor",
     fps: 15,

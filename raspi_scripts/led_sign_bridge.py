@@ -394,8 +394,10 @@ def road_state(api: str, session: requests.Session, camera_id: str | None) -> st
 
       * An incident on this approach shows here and only here — the driver in
         front of this sign is the one it concerns.
-      * A vehicle on BOTH approaches shows on both signs. That is the case
-        neither driver can see around the curve, and the reason for the system.
+      * A vehicle seen by the OTHER camera shows here as VEHICLE INCOMING —
+        it is coming around the curve toward this sign's driver, who cannot
+        see it. Only the opposite sign lights (changed 2026-11-03; it used to
+        light both, and only when both approaches had a vehicle).
 
     The server does the deciding and returns a ready `signs` map; this reads
     its own entry. Recomputing the rule here would let the sign and the public

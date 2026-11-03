@@ -322,7 +322,7 @@ export default function Home() {
             cameraName={
               camA
                 ? `${camA.name} — ${camA.location}`
-                : "Camera A — North Approach"
+                : "Camera A — Busay Blind Curve"
             }
             fps={camA?.fps ?? 30}
             isLive={camA?.status === "online"}
@@ -336,7 +336,7 @@ export default function Home() {
             cameraName={
               camB
                 ? `${camB.name} — ${camB.location}`
-                : "Camera B — South Approach"
+                : "Camera B — Busay Blind Curve"
             }
             fps={camB?.fps ?? 30}
             isLive={camB?.status === "online"}
@@ -374,7 +374,7 @@ export default function Home() {
                   fps={0}
                   id="CAM-A-001"
                   isOnline={false}
-                  location="North Approach"
+                  location="Busay Blind Curve"
                   name="Camera A"
                   resolution="—"
                 />
@@ -383,7 +383,7 @@ export default function Home() {
                   fps={0}
                   id="CAM-B-002"
                   isOnline={false}
-                  location="South Approach"
+                  location="Busay Blind Curve"
                   name="Camera B"
                   resolution="—"
                 />
