@@ -484,6 +484,9 @@ def main() -> int:
                     help="This sign's camera id (e.g. CAM-A-001). Selects the "
                          "per-approach state; without it the bridge follows "
                          "the overall road state instead.")
+    ap.add_argument("--show-delay", type=float, default=1.0,
+                    help="Seconds a new road state must persist before the sign "
+                         "shows it (default 1.0; 0 = switch immediately)")
     ap.add_argument("--rotate", type=int, choices=(0, 180), default=0,
                     help="Rotate this sign's picture 180 degrees, for a panel "
                          "mounted the other way up (default 0)")
@@ -629,6 +632,19 @@ def main() -> int:
                         else VEHICLE_HOLD_SECS)
                 if now - last_change < hold:
                     state = last_state
+
+            # Requested 2026-11-03: wait SHOW_DELAY_SECS before showing a NEW
+            # road state, then show it only if the server still says so — a
+            # one-poll blip never reaches the panel. This also delays warnings
+            # by that much; --show-delay 0 restores immediate switching.
+            if state != last_state and last_state is not None and args.show_delay > 0:
+                time.sleep(args.show_delay)
+                confirm = road_state(args.api, session, args.camera_id)
+                if confirm != state:
+                    log.info("state %s not confirmed after %.1fs (now %s) — keeping %s",
+                             state, args.show_delay, confirm, last_state)
+                    state = last_state
+                now = time.monotonic()
 
             if state != last_state:
                 log.info("state -> %s", state)
