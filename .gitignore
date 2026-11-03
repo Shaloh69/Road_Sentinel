@@ -447,3 +447,6 @@ esp32_display/.pio/
 # PlatformIO build output
 .pio/
 **/.pio/
+
+# AI service upload spool (server/ai-service/.tmp)
+server/ai-service/.tmp/

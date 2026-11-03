@@ -41,6 +41,16 @@ def _resolve_model_path(raw_path: str) -> str:
 # Files are saved here and served publicly via Cloudflare tunnel.
 # Set STORAGE_BASE_URL to your Cloudflare tunnel URL, e.g.:
 #   STORAGE_BASE_URL=https://your-pc.trycloudflare.com
+# Spool uploads next to the service, not in the OS temp dir. Starlette writes
+# any multipart upload over 1 MB to tempfile's directory, which on irm-pc is
+# C:\...\AppData\Local\Temp — and C: has been seen at 0 bytes free (owner's
+# drive, 2026-11-03), while every 14-19 MB recording upload that evening came
+# back 400. Keeping the spool on the repo's drive removes that dependency.
+import tempfile
+UPLOAD_TMP_DIR = Path(os.getenv("UPLOAD_TMP_DIR", "./.tmp")).resolve()
+UPLOAD_TMP_DIR.mkdir(parents=True, exist_ok=True)
+tempfile.tempdir = str(UPLOAD_TMP_DIR)
+
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", "./media"))
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 (MEDIA_DIR / "incidents").mkdir(exist_ok=True)
