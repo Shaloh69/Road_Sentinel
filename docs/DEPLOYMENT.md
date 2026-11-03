@@ -216,4 +216,8 @@ SSH works from the development laptop (key-based, no prompt):
 
 ## Disk space
 
-MySQL data is a bind mount at `.\.data\mysql`, and recorded video segments land in `server\ai-service\media\recordings\` — both on whatever drive the repo is cloned to. Detections and recordings only grow, so clone the repo to the drive with the most free space and check it periodically.
+MySQL data is a bind mount at `.\.data\mysql`. Recorded clips and snapshots go to `MEDIA_DIR`, which defaults to `server\ai-service\media\` inside the repo. Detections and recordings only grow, so check free space periodically.
+
+**On `irm-pc`, clips live on E:** — `MEDIA_DIR=E:\RoadSentinel\media` is set in **both** `server\ai-service\.env` (it writes them) and `server\node-service\.env` (it serves them at `/media`). Both must agree, or new clips save to one place while the dashboard looks in another. Moved from D: on 2026-11-03 (15 files, 238 MB, count and size verified; old clips still play through the public URL). Clip URLs in the database are relative (`/media/recordings/...`), so moving the folder needs no database change — stop AI + Node, move, set both `.env`s, restart.
+
+Uploads are spooled in `server\ai-service\.tmp\` (`UPLOAD_TMP_DIR`), not the Windows temp folder: `irm-pc`'s **C: is the owner's system drive and has been seen at 0 bytes free**, which coincided with every recording upload failing (HTTP 400) on 2026-11-03.
