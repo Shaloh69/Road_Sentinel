@@ -65,7 +65,15 @@ DISCOVERY_AFTER_FAILURES = 3     # consecutive open failures before triggering d
 ONVIF_MULTICAST          = "239.255.255.250"
 ONVIF_PROBE_PORT         = 3702
 ONVIF_TIMEOUT            = 3.0   # seconds to wait for WS-Discovery responses
-RTSP_PORT_SCAN_TIMEOUT   = 0.5   # seconds per port-554 probe
+# Per port-554 probe. Must cover ARP resolution, not just the TCP handshake:
+# the kernel sends 3 ARP requests 1 s apart (mcast_solicit=3,
+# retrans_time_ms=1000 on the Pis), so a host that answers late takes up to
+# ~3 s to resolve. At 0.5 s the probe gave up mid-ARP and the kernel then
+# cached the address as FAILED: Camera B sat at 192.168.8.103 with RTSP open
+# while discovery reported "0 host(s) with port 554 open" for 25+ minutes
+# (2026-10-27 and 2026-11-03), connecting only seconds after a manual arping.
+# Probes run in parallel, so a full /24 scan still takes ~this long in total.
+RTSP_PORT_SCAN_TIMEOUT   = 3.5
 RTSP_CAP_TEST_TIMEOUT    = 6.0   # seconds to test an RTSP URL with cv2
 
 INCIDENT_TITLES = {
