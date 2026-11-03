@@ -50,6 +50,7 @@ log = logging.getLogger("cam_sender")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 JPEG_QUALITY             = 50
+LIVE_WIDTH               = 480   # live-view frame width; AI keeps full size (see encode_live)
 TARGET_FPS               = 30
 FRAME_INTERVAL           = 1.0 / TARGET_FPS
 RECONNECT_WAIT           = 3.0
@@ -1006,6 +1007,27 @@ def encode_jpeg(frame) -> bytes:
     return buf.tobytes()
 
 
+def encode_live(frame) -> bytes:
+    """JPEG for the live view only, downscaled to LIVE_WIDTH.
+
+    The live view was ~70% of each Pi's upload (measured 2026-11-03: Pi 4
+    138 of 199 KB/s, Pi 5 117 of 164 KB/s) at ~38 KB per 640x480 night frame.
+    480x360 measured 19.9 KB at the same quality, and since the push is
+    ack-paced, halving the frame roughly doubles the live frame rate on the
+    same link. JPEG quality barely helped (q35 only -8%: night noise). The AI
+    still gets the full-resolution frame from encode_jpeg; the dashboard places
+    boxes as percentages, so they still line up on the smaller picture.
+    """
+    h, w = frame.shape[:2]
+    if LIVE_WIDTH and w > LIVE_WIDTH:
+        frame = cv2.resize(frame, (LIVE_WIDTH, round(h * LIVE_WIDTH / w)),
+                           interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    if not ok:
+        raise RuntimeError("JPEG encode failed")
+    return buf.tobytes()
+
+
 # ── AI service POST ───────────────────────────────────────────────────────────
 async def post_frame(
     session: aiohttp.ClientSession,
@@ -1086,8 +1108,14 @@ async def run(
 
     ai_connector   = aiohttp.TCPConnector(limit=2,  keepalive_timeout=30)
     node_connector = aiohttp.TCPConnector(limit=10, keepalive_timeout=30)
+    # Recording uploads get their own pool. They used ai_session, whose limit=2
+    # pool a 19 MB segment held for minutes on 4G, so detection requests queued
+    # behind video uploads (Camera A: AI errors 0 -> 39 and nothing analysed
+    # for ~2 min during an upload, 2026-10-27).
+    upload_connector = aiohttp.TCPConnector(limit=1, keepalive_timeout=30)
 
-    async with aiohttp.ClientSession(connector=ai_connector) as ai_session:
+    async with aiohttp.ClientSession(connector=ai_connector) as ai_session, \
+               aiohttp.ClientSession(connector=upload_connector) as upload_session:
         async with aiohttp.ClientSession(connector=node_connector) as node_session:
             forwarder: Optional[NodeForwarder] = None
             homography_points: Optional[dict] = None
@@ -1118,7 +1146,7 @@ async def run(
                     camera_id=camera_id,
                     ai_url=ai_url,
                     node_url=node_url,
-                    ai_session=ai_session,
+                    ai_session=upload_session,  # uploads only — see upload_connector
                     node_session=node_session if node_url else None,
                     record_dir=os.path.expanduser(record_dir),
                     segment_secs=record_segment_secs,
@@ -1136,7 +1164,7 @@ async def run(
                     camera_id=camera_id,
                     ai_url=ai_url,
                     node_url=node_url,
-                    ai_session=ai_session,
+                    ai_session=upload_session,  # uploads only — see upload_connector
                     node_session=node_session,
                     record_dir=os.path.expanduser(record_dir),
                     fps=TARGET_FPS,
@@ -1280,16 +1308,18 @@ async def run(
                             # A strict >= rejected every frame that arrived a hair
                             # early — measured 15.0 fps reaching Node from a 30 fps
                             # camera (2026-10-27).
-                            if _now - last_frame_push >= FRAME_PUSH_INTERVAL * 0.75:
+                            # Encode the live frame only when the push loop has
+                            # taken the previous one: the push is ack-paced, so on
+                            # a slow link most frames would be encoded only to be
+                            # replaced before they were sent.
+                            if (frame_q.empty() and
+                                    _now - last_frame_push >= FRAME_PUSH_INTERVAL * 0.75):
                                 last_frame_push = _now
-                                if frame_q.full():
-                                    try:
-                                        frame_q.get_nowait()
-                                    except asyncio.QueueEmpty:
-                                        pass
                                 try:
-                                    frame_q.put_nowait(jpeg)
-                                except asyncio.QueueFull:
+                                    live = await asyncio.get_event_loop().run_in_executor(
+                                        None, encode_live, frame)
+                                    frame_q.put_nowait(live)
+                                except (asyncio.QueueFull, RuntimeError):
                                     pass
 
                         # Send to AI only if the previous request finished AND the
@@ -1339,7 +1369,7 @@ async def run(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main():
-    global TARGET_FPS, FRAME_INTERVAL, JPEG_QUALITY
+    global TARGET_FPS, FRAME_INTERVAL, JPEG_QUALITY, LIVE_WIDTH
 
     parser = argparse.ArgumentParser(
         description="Road Sentinel camera frame sender — Pi 4 & Pi 5",
@@ -1379,6 +1409,8 @@ scan to locate the camera's new DHCP IP, then switches the RTSP URL silently.
                         help="Node service URL for DB forwarding (e.g. http://localhost:3001)")
     parser.add_argument("--fps",       type=int,   default=TARGET_FPS,
                         help=f"Target capture FPS (default: {TARGET_FPS})")
+    parser.add_argument("--live-width", type=int, default=LIVE_WIDTH,
+                        help=f"Live-view frame width, 0 = full size (default: {LIVE_WIDTH})")
     parser.add_argument("--quality",   type=int,   default=JPEG_QUALITY,
                         help=f"JPEG quality 1-100 (default: {JPEG_QUALITY})")
     parser.add_argument("--ppm",       type=float, default=25.5,
@@ -1417,6 +1449,7 @@ scan to locate the camera's new DHCP IP, then switches the RTSP URL silently.
     TARGET_FPS     = args.fps
     FRAME_INTERVAL = 1.0 / TARGET_FPS
     JPEG_QUALITY   = args.quality
+    LIVE_WIDTH     = args.live_width
 
     log.info("Road Sentinel Camera Sender")
     log.info("  camera_id : %s", args.camera_id)
@@ -1425,6 +1458,7 @@ scan to locate the camera's new DHCP IP, then switches the RTSP URL silently.
     log.info("  node_url  : %s", args.node or "(disabled)")
     log.info("  target_fps: %d", TARGET_FPS)
     log.info("  jpeg_q    : %d%%", JPEG_QUALITY)
+    log.info("  live_width: %s", LIVE_WIDTH or "full")
     log.info("  ppm       : %.1f (may be overridden by Node DB)", args.ppm)
     log.info("  speed_lim : %.0f km/h (may be overridden by Node DB)", args.speed_limit)
     log.info("  confidence: %.2f (may be overridden by Node DB)", args.confidence)
