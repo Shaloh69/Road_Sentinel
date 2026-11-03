@@ -484,9 +484,11 @@ def main() -> int:
                     help="This sign's camera id (e.g. CAM-A-001). Selects the "
                          "per-approach state; without it the bridge follows "
                          "the overall road state instead.")
-    ap.add_argument("--show-delay", type=float, default=1.0,
+    # Default 0 (immediate) at the user's request, 2026-11-03 — the 1 s delay
+    # added earlier that day was asked to be removed again.
+    ap.add_argument("--show-delay", type=float, default=0.0,
                     help="Seconds a new road state must persist before the sign "
-                         "shows it (default 1.0; 0 = switch immediately)")
+                         "shows it (default 0 = switch immediately)")
     ap.add_argument("--rotate", type=int, choices=(0, 180), default=0,
                     help="Rotate this sign's picture 180 degrees, for a panel "
                          "mounted the other way up (default 0)")
