@@ -60,6 +60,9 @@ DETECTION_WRITE_INTERVAL = 1.0   # write at most 1 detection per second to Node
 INCIDENT_DEDUP_WINDOW    = 30.0  # suppress repeat incident type within this window (s)
 FRAME_PUSH_INTERVAL      = 1.0 / 30  # push MJPEG frame to Node at up to 30 FPS
 PUSH_ACK_TIMEOUT         = 3.0       # max wait for Node's ack of one live frame
+PUSH_IN_FLIGHT           = 2         # live frames awaiting ack at once (see frame_push_loop)
+UPLOAD_ATTEMPTS          = 3         # recording upload tries before the segment is dropped
+UPLOAD_RETRY_SECS        = 30.0
 
 # Auto-discovery
 DISCOVERY_AFTER_FAILURES = 3     # consecutive open failures before triggering discovery
@@ -563,32 +566,41 @@ class Recorder:
         except OSError:
             file_size_mb = None
 
+        # Retried, because a failed upload loses the segment (the file is
+        # deleted below). Every segment from 20:46-21:05 on 2026-11-03 failed
+        # on its single attempt with HTTP 400 and was gone. The server's reply
+        # is logged too: the status alone could not say why.
         video_url = None
-        try:
-            with open(path, "rb") as f:
-                data = aiohttp.FormData()
-                data.add_field("file", f, filename=path.name, content_type="video/mp4")
-                data.add_field(
-                    "path",
-                    f"recordings/{self._camera_id}/{recording_id}.mp4",
-                )
-                async with self._ai_session.post(
-                    f"{self._ai_url}/api/storage/upload",
-                    data=data,
-                    # Sized to the file: a flat 60 s failed any segment over
-                    # ~5 MB on the 4G uplink (64-95 KB/s measured), and a
-                    # failed upload deletes the segment. Assumes >= 20 KB/s.
-                    timeout=aiohttp.ClientTimeout(
-                        total=max(60.0, (file_size_mb or 0) * 1024 * 1024 / 20_000)),
-                ) as resp:
-                    if resp.status == 200:
-                        payload = await resp.json()
-                        video_url = payload.get("url")
-                    else:
-                        log.warning("[%s] Recording upload failed (status %d)",
-                                    self._camera_id, resp.status)
-        except Exception as exc:
-            log.warning("[%s] Recording upload error: %s", self._camera_id, exc)
+        for attempt in range(1, UPLOAD_ATTEMPTS + 1):
+            try:
+                with open(path, "rb") as f:
+                    data = aiohttp.FormData()
+                    data.add_field("file", f, filename=path.name, content_type="video/mp4")
+                    data.add_field(
+                        "path",
+                        f"recordings/{self._camera_id}/{recording_id}.mp4",
+                    )
+                    async with self._ai_session.post(
+                        f"{self._ai_url}/api/storage/upload",
+                        data=data,
+                        # Sized to the file: a flat 60 s failed any segment over
+                        # ~5 MB on the 4G uplink (64-95 KB/s measured).
+                        # Assumes >= 20 KB/s.
+                        timeout=aiohttp.ClientTimeout(
+                            total=max(60.0, (file_size_mb or 0) * 1024 * 1024 / 20_000)),
+                    ) as resp:
+                        if resp.status == 200:
+                            payload = await resp.json()
+                            video_url = payload.get("url")
+                            break
+                        body = (await resp.text())[:200]
+                        log.warning("[%s] Recording upload failed (status %d, attempt %d/%d): %s",
+                                    self._camera_id, resp.status, attempt, UPLOAD_ATTEMPTS, body)
+            except Exception as exc:
+                log.warning("[%s] Recording upload error (attempt %d/%d): %s",
+                            self._camera_id, attempt, UPLOAD_ATTEMPTS, exc)
+            if attempt < UPLOAD_ATTEMPTS:
+                await asyncio.sleep(UPLOAD_RETRY_SECS)
 
         if self._node_url and self._node_session:
             try:
@@ -1181,21 +1193,36 @@ async def run(
 
                 asyncio.create_task(clip_poll_loop())
 
-            # Sequential frame push loop — one PUT at a time so frames always
-            # arrive at Node in the order they were captured (no revert glitch).
+            # Frame push loop. Up to PUSH_IN_FLIGHT frames await Node's ack at
+            # once. With exactly one (stop-and-wait), each frame cost a full
+            # round trip, capping the live view at 1/RTT: measured 4.3 and
+            # 3.9 fps at ~163/187 ms RTT once smaller frames had freed the
+            # upload (2026-11-03). Two in flight lets the link carry about
+            # twice that while still bounding the backlog to two frames, so
+            # lag cannot build up. Socket.IO writes go out over one ordered
+            # connection in call order, so frames still arrive in capture order.
             frame_q: asyncio.Queue = asyncio.Queue(maxsize=1)
             last_frame_push = 0.0
+            push_slots = asyncio.Semaphore(PUSH_IN_FLIGHT)
+
+            async def push_one(jpeg: bytes):
+                try:
+                    await forwarder._push_raw(jpeg)
+                except Exception as exc:
+                    log.debug("[%s] Frame push error: %s", camera_id, exc)
+                finally:
+                    push_slots.release()
 
             async def frame_push_loop():
                 while not shutdown.is_set():
                     try:
                         jpeg = await asyncio.wait_for(frame_q.get(), timeout=1.0)
-                        if forwarder:
-                            await forwarder._push_raw(jpeg)
                     except asyncio.TimeoutError:
                         continue
-                    except Exception as exc:
-                        log.debug("[%s] Frame push error: %s", camera_id, exc)
+                    if not forwarder:
+                        continue
+                    await push_slots.acquire()
+                    asyncio.create_task(push_one(jpeg))
 
             asyncio.create_task(frame_push_loop())
 
