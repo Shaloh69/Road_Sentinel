@@ -65,15 +65,17 @@ DISCOVERY_AFTER_FAILURES = 3     # consecutive open failures before triggering d
 ONVIF_MULTICAST          = "239.255.255.250"
 ONVIF_PROBE_PORT         = 3702
 ONVIF_TIMEOUT            = 3.0   # seconds to wait for WS-Discovery responses
-# Per port-554 probe. Must cover ARP resolution, not just the TCP handshake:
-# the kernel sends 3 ARP requests 1 s apart (mcast_solicit=3,
-# retrans_time_ms=1000 on the Pis), so a host that answers late takes up to
-# ~3 s to resolve. At 0.5 s the probe gave up mid-ARP and the kernel then
-# cached the address as FAILED: Camera B sat at 192.168.8.103 with RTSP open
-# while discovery reported "0 host(s) with port 554 open" for 25+ minutes
-# (2026-10-27 and 2026-11-03), connecting only seconds after a manual arping.
-# Probes run in parallel, so a full /24 scan still takes ~this long in total.
+# Per port-554 probe. Covers ARP resolution as well as the TCP handshake: the
+# kernel sends 3 ARP requests 1 s apart (mcast_solicit=3, retrans_time_ms=1000
+# on the Pis), so an on-link host can take up to ~3 s to resolve. The old
+# 0.5 s gave up mid-ARP. On its own this did NOT fix the missed camera — the
+# burst was the cause; see RTSP_PORT_SCAN_BATCH.
 RTSP_PORT_SCAN_TIMEOUT   = 3.5
+# Hosts probed at once. Measured against Camera B, cache flushed before each
+# trial, 3 rounds (2026-11-03): 16 at once -> silent 3/3, 4 -> answered 3/3,
+# 1 -> answered 3/3. Dead hosts cost ~3 s each batch, so a full /24 would take
+# ~3 min — the scan therefore stops at the first batch that finds something.
+RTSP_PORT_SCAN_BATCH     = 4
 RTSP_CAP_TEST_TIMEOUT    = 6.0   # seconds to test an RTSP URL with cv2
 
 INCIDENT_TITLES = {
@@ -797,11 +799,24 @@ def _scan_subnet_for_rtsp(subnet: str, exclude_ip: str) -> list:
                 found.append(ip)
                 log.debug("Port scan: port 554 open at %s", ip)
 
-    threads = [threading.Thread(target=probe, args=(i,), daemon=True) for i in range(1, 255)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=RTSP_PORT_SCAN_TIMEOUT + 0.5)
+    # In small batches, not all 254 at once. Camera B does not answer ARP that
+    # arrives in a burst: it sat at .103 with RTSP open while every parallel
+    # sweep found nothing, and a packet trace showed it ignore three ARP
+    # requests from the scan, then answer the identical request from a lone
+    # probe within 10 ms. Neither a longer timeout nor batches of 16 helped
+    # (both tested); see RTSP_PORT_SCAN_BATCH for the measurement.
+    # Start at .100: the routers' DHCP has given these cameras .101-.127, so
+    # the likely hosts come first, and stop at the first batch with a hit.
+    order = list(range(100, 255)) + list(range(1, 100))
+    for start in range(0, len(order), RTSP_PORT_SCAN_BATCH):
+        threads = [threading.Thread(target=probe, args=(i,), daemon=True)
+                   for i in order[start:start + RTSP_PORT_SCAN_BATCH]]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=RTSP_PORT_SCAN_TIMEOUT + 0.5)
+        if found:
+            break
     return found
 
 
