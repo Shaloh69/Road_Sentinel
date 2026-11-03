@@ -187,6 +187,12 @@ async def detect_all(
         # Auto-generate speeding incidents from speed estimates
         if speed_limit > 0:
             for det in traffic_results:
+                # The sign under this camera faces ONCOMING traffic, so a car
+                # already driving away from it cannot be warned — and its
+                # speeding incident held the sign on SLOW DOWN for a vehicle
+                # that had gone (2026-11-03). Unknown direction still counts.
+                if det.get("direction") == "leaving":
+                    continue
                 spd = det.get("speed")
                 if spd and spd > speed_limit:
                     over  = spd - speed_limit

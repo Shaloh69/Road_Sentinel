@@ -152,6 +152,66 @@ class TrafficDetector:
 
         return round(statistics.median(window), 1)
 
+    # ── Direction (approaching vs leaving) ────────────────────────────────────
+    # Each camera faces OUTWARD from the blind curve, so one car driving
+    # through is seen by BOTH: approaching camera B, then leaving past camera A
+    # seconds later. Without direction, that single car looked like vehicles
+    # on both approaches at once and lit both signs VEHICLE INCOMING (reported
+    # 2026-11-03). A vehicle driving toward an outward-facing camera grows in
+    # the frame; one driving away shrinks. Compared against the box height when
+    # the track was first seen, so one jittery frame cannot flip it.
+    APPROACH_GROWTH = 1.15   # height >= 115% of first sighting -> approaching
+    LEAVE_SHRINK    = 0.87   # height <= 87% of first sighting  -> leaving
+    # A box touching the frame edge shows only part of the vehicle, so its size
+    # says nothing about distance. Checked on a real Camera B clip: vehicles
+    # passing UNDER the camera from behind (i.e. leaving) enter at the bottom
+    # edge and their visible part grows, and were labelled "approaching" — one
+    # even showed its red tail light. Edge boxes are therefore never used,
+    # neither as the first sighting nor as a comparison.
+    EDGE_MARGIN = 4          # px, top/left/right
+    # The bottom edge needs far more: it is where vehicles emerge from under the
+    # camera, and a 4 px margin still let one through (box bottom at 473 of 480
+    # px, rear still out of frame) labelled "approaching" one second before the
+    # same vehicle was correctly "leaving". An approaching car has already shown
+    # its growth from far away before it gets this low, so nothing is lost.
+    EDGE_MARGIN_BOTTOM = 0.08   # fraction of frame height
+
+    # Second cue, steadier than size: where the box BOTTOM moves. With these
+    # outward-facing cameras a vehicle driving away climbs the frame and one
+    # coming closer descends. Size alone mislabelled two vehicles that were
+    # visibly leaving (tail lights, number plate) as "approaching" — a turning
+    # car's box changes shape.
+    MOVE_FRAC = 0.04         # bottom moved >= 4% of frame height
+
+    def _note_direction(self, track: dict, det: dict) -> None:
+        """Label a track 'leaving' / 'approaching' from its full-view history.
+
+        Asymmetric on purpose. Only 'leaving' changes behaviour (Node and the
+        speeding check skip those vehicles); 'approaching' is treated like
+        unknown. A false 'leaving' would hide a real oncoming car, so it needs
+        an unambiguous signal: moved up OR shrank, and NOT moving down.
+        """
+        if det.get('_edge'):
+            return
+        b = det['bbox']
+        curr_h, curr_bottom = b['height'], b['y'] + b['height']
+        if not track.get('first_h'):
+            track['first_h'] = curr_h            # first FULLY visible sighting
+            track['first_bottom'] = curr_bottom
+            return
+        if curr_h <= 0:
+            return
+        ratio = curr_h / track['first_h']
+        moved = (curr_bottom - track['first_bottom']) / max(det.get('_fh', 480), 1)
+        down, up = moved >= self.MOVE_FRAC, moved <= -self.MOVE_FRAC
+
+        if (up or ratio <= self.LEAVE_SHRINK) and not down:
+            track['direction'] = 'leaving'
+        elif down and ratio >= 1.0:
+            track['direction'] = 'approaching'
+        if track.get('direction'):
+            det['direction'] = track['direction']
+
     def _update_tracks(self, camera_id: str, detections: list, ppm: float) -> None:
         """Match detections to existing tracks via IoU; attach speed; prune stale tracks."""
         now    = time.time()
@@ -181,6 +241,7 @@ class TrafficDetector:
                         track, self._center_speed(track['bbox'], det['bbox'], dt, ppm))
                     if smoothed is not None:
                         det['speed'] = smoothed
+                self._note_direction(track, det)
                 track['bbox'] = det['bbox']
                 track['time'] = now
                 matched.add(best_id)
@@ -188,6 +249,7 @@ class TrafficDetector:
                 new_id = str(self._next_id.get(camera_id, 0))
                 self._next_id[camera_id] = int(new_id) + 1
                 tracks[new_id] = {'bbox': det['bbox'], 'time': now, 'class': det['class']}
+                self._note_direction(tracks[new_id], det)  # records first full sighting
 
     # ── Homography (perspective-corrected) speed ──────────────────────────────
     # Raw pixel-distance speed (_update_tracks above) is systematically wrong
@@ -280,6 +342,7 @@ class TrafficDetector:
                     if smoothed is not None:
                         det['speed'] = smoothed
                         det['speed_source'] = 'homography'
+                self._note_direction(track, det)
                 track['bbox'] = det['bbox']
                 track['time'] = now
                 matched.add(best_id)
@@ -287,6 +350,7 @@ class TrafficDetector:
                 new_id = str(self._next_id.get(camera_id, 0))
                 self._next_id[camera_id] = int(new_id) + 1
                 tracks[new_id] = {'bbox': det['bbox'], 'time': now, 'class': det['class']}
+                self._note_direction(tracks[new_id], det)  # records first full sighting
 
     def detect(self, image_bytes: bytes, confidence: float = None,
                camera_id: str = "default", pixels_per_meter: float = 0.0,
@@ -371,14 +435,32 @@ class TrafficDetector:
             # Speed estimation via per-camera IoU tracker — homography (if
             # calibrated) takes priority over the simpler pixels_per_meter estimate.
             if detections:
+                # Flag boxes cut off by the frame edge; _note_direction ignores
+                # them (see EDGE_MARGIN). Internal only, removed before return.
+                fh, fw = image.shape[:2]
+                m = self.EDGE_MARGIN
+                for d in detections:
+                    b = d['bbox']
+                    d['_fh'] = fh
+                    d['_edge'] = (b['x'] <= m or b['y'] <= m or
+                                  b['x'] + b['width'] >= fw - m or
+                                  b['y'] + b['height'] >= fh * (1 - self.EDGE_MARGIN_BOTTOM))
+
                 matrix = (
                     self._get_homography_matrix(camera_id, homography_points)
                     if homography_points else None
                 )
                 if matrix is not None:
                     self._update_tracks_homography(camera_id, detections, matrix)
-                elif pixels_per_meter > 0:
+                else:
+                    # Runs even with pixels_per_meter == 0: speed then stays
+                    # None (_center_speed returns None), but the tracker still
+                    # supplies direction, which the signs need regardless.
                     self._update_tracks(camera_id, detections, pixels_per_meter)
+
+                for d in detections:
+                    d.pop('_edge', None)
+                    d.pop('_fh', None)
 
             return detections
 

@@ -246,7 +246,12 @@ class NodeForwarder:
         # Throttled detection write — one per second, highest confidence first
         if detections and (now - self._last_det) >= DETECTION_WRITE_INTERVAL:
             self._last_det = now
-            best = max(detections, key=lambda d: d.get("confidence", 0))
+            # Only one detection per interval reaches Node, and Node ignores
+            # vehicles marked "leaving" when deciding VEHICLE INCOMING. So a
+            # leaving car must never take the slot from one that is not
+            # leaving, or an approaching car in the same frame would vanish.
+            pool = [d for d in detections if d.get("direction") != "leaving"] or detections
+            best = max(pool, key=lambda d: d.get("confidence", 0))
             await self._post_detection(best)
 
         # Incident forwarding — filter by confidence, deduplicated per type
@@ -333,6 +338,8 @@ class NodeForwarder:
             "bbox_y":       int(bbox.get("y", 0)),
             "bbox_width":   int(bbox.get("width", 0)),
             "bbox_height":  int(bbox.get("height", 0)),
+            # "approaching" / "leaving" from the AI tracker; None until known.
+            "direction":    det.get("direction"),
         }
         try:
             async with self._session.post(

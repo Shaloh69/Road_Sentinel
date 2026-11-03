@@ -89,9 +89,18 @@ router.get("/", async (_req: Request, res: Response) => {
         ),
         // Grouped by camera so this counts DISTINCT approaches — twenty
         // detections from one camera must not look like two cameras agreeing.
+        //
+        // Vehicles LEAVING the curve are excluded. The cameras face outward,
+        // so one car driving through is seen approaching on one side and
+        // leaving on the other seconds later; counting both made a single car
+        // look like a two-approach conflict and lit both signs. Only a
+        // confirmed "leaving" is dropped: no direction yet (seen in one frame,
+        // or crossing sideways) still counts, so an approaching car is never
+        // missed for want of tracking.
         query<{ camera_id: string; last_seen: string }[]>(
           `SELECT camera_id, MAX(timestamp) AS last_seen FROM detections
            WHERE timestamp >= NOW() - INTERVAL ? SECOND
+             AND (direction IS NULL OR direction <> 'leaving')
            GROUP BY camera_id`,
           [VEHICLE_ALERT_SECS],
         ),
