@@ -57,7 +57,10 @@ class TrafficDetector:
     # can no longer become a "critical speeding" incident on its own — which is
     # exactly how the bogus incidents were being generated.
     SPEED_WINDOW      = 5
-    MIN_SPEED_SAMPLES = 3
+    # 2, not 3: at the ~1-4 fps the AI actually gets per camera, a vehicle is
+    # in view for only a handful of analysed frames, and 3 pairs were almost
+    # never reached (2026-11-17: 3 of 300 detections had a speed).
+    MIN_SPEED_SAMPLES = 2
 
     def __init__(self, model_path: str, device: str = 'cuda', confidence: float = 0.75):
         self.device = device
@@ -152,6 +155,23 @@ class TrafficDetector:
 
         return round(statistics.median(window), 1)
 
+    # Showing a speed and ACTING on it are separate. A speed is shown after
+    # MIN_SPEED_SAMPLES (2), but a speeding incident — which lights SLOW DOWN —
+    # needs a "stable" speed: >= STABLE_SAMPLES samples all within
+    # STABLE_SPREAD of their median. Measured on a road clip at 2 fps, the
+    # nearest-centre matching took coverage from 4% to 33% but also produced a
+    # 92 km/h reading (two same-class vehicles linked); a single mismatch is one
+    # wild sample beside sane ones, which this rejects.
+    STABLE_SAMPLES = 3
+    STABLE_SPREAD  = 0.25
+
+    def _speed_stable(self, track: dict) -> bool:
+        window = track.get('speeds') or []
+        if len(window) < self.STABLE_SAMPLES:
+            return False
+        med = statistics.median(window)
+        return med > 0 and all(abs(v - med) <= self.STABLE_SPREAD * med for v in window)
+
     # ── Direction (approaching vs leaving) ────────────────────────────────────
     # Each camera faces OUTWARD from the blind curve, so one car driving
     # through is seen by BOTH: approaching camera B, then leaving past camera A
@@ -212,9 +232,51 @@ class TrafficDetector:
         if track.get('direction'):
             det['direction'] = track['direction']
 
-    def _update_tracks(self, camera_id: str, detections: list, ppm: float) -> None:
-        """Match detections to existing tracks via IoU; attach speed; prune stale tracks."""
-        now    = time.time()
+    # Nearest-centre fallback for matching. Overlap (IoU) alone fails at the
+    # ~1 fps the AI gets per camera: a passing vehicle moves further than its own
+    # width between analysed frames, so consecutive boxes barely overlap, every
+    # frame started a new track, and no speed was ever measured (2026-11-17).
+    MATCH_DIST_FACTOR = 1.5   # max centre jump, in multiples of the larger box side
+
+    def _match_track(self, det: dict, tracks: dict, matched: set):
+        """Best existing track for det: highest IoU above IOU_THRESH, else the
+        nearest track centre within MATCH_DIST_FACTOR box sizes, of plausible
+        size and the same class."""
+        best_id, best_iou = None, self.IOU_THRESH
+        for tid, track in tracks.items():
+            if tid in matched:
+                continue
+            iou = self._iou(det['bbox'], track['bbox'])
+            if iou > best_iou:
+                best_iou, best_id = iou, tid
+        if best_id:
+            return best_id
+
+        b = det['bbox']
+        cx, cy = b['x'] + b['width'] / 2, b['y'] + b['height'] / 2
+        best_d = None
+        for tid, track in tracks.items():
+            if tid in matched or track.get('class') != det.get('class'):
+                continue
+            t = track['bbox']
+            pa = max(t['width'] * t['height'], 1e-6)
+            ca = max(b['width'] * b['height'], 1e-6)
+            if max(pa / ca, ca / pa) > self.MAX_SIZE_RATIO:
+                continue
+            d = math.hypot(cx - (t['x'] + t['width'] / 2), cy - (t['y'] + t['height'] / 2))
+            limit = self.MATCH_DIST_FACTOR * max(t['width'], t['height'], b['width'], b['height'])
+            if d <= limit and (best_d is None or d < best_d):
+                best_d, best_id = d, tid
+        return best_id
+
+    def _update_tracks(self, camera_id: str, detections: list, ppm: float,
+                       now: Optional[float] = None) -> None:
+        """Match detections to existing tracks; attach speed; prune stale tracks.
+
+        `now` is the frame's CAPTURE time when the Pi sends one. Using arrival
+        time folded 100-400 ms of network jitter into every dt, and so into
+        every speed."""
+        now    = now or time.time()
         tracks = self._trackers.setdefault(camera_id, {})
 
         # Prune tracks older than TTL
@@ -224,15 +286,13 @@ class TrafficDetector:
 
         matched: set[str] = set()
         for det in detections:
-            best_id, best_iou = None, self.IOU_THRESH
-            for tid, track in tracks.items():
-                if tid in matched:
-                    continue
-                iou = self._iou(det['bbox'], track['bbox'])
-                if iou > best_iou:
-                    best_iou = iou
-                    best_id  = tid
+            best_id = self._match_track(det, tracks, matched)
 
+            if best_id and now <= tracks[best_id]['time']:
+                # Older than what this track already holds (two frames were in
+                # flight and arrived out of order): skip, keep the newer state.
+                matched.add(best_id)
+                continue
             if best_id:
                 track = tracks[best_id]
                 dt    = now - track['time']
@@ -241,6 +301,7 @@ class TrafficDetector:
                         track, self._center_speed(track['bbox'], det['bbox'], dt, ppm))
                     if smoothed is not None:
                         det['speed'] = smoothed
+                        det['speed_stable'] = self._speed_stable(track)
                 self._note_direction(track, det)
                 track['bbox'] = det['bbox']
                 track['time'] = now
@@ -310,11 +371,11 @@ class TrafficDetector:
         return round((distance_m / dt) * 3.6, 1)  # km/h
 
     def _update_tracks_homography(self, camera_id: str, detections: list,
-                                   matrix: np.ndarray) -> None:
-        """Same IoU-matching/track-lifecycle logic as _update_tracks, but speed
+                                   matrix: np.ndarray, now: Optional[float] = None) -> None:
+        """Same matching/track-lifecycle logic as _update_tracks, but speed
         is computed from homography-transformed (real-world meter) coordinates
         instead of raw pixel distance / pixels_per_meter."""
-        now    = time.time()
+        now    = now or time.time()
         tracks = self._trackers.setdefault(camera_id, {})
 
         stale = [tid for tid, t in tracks.items() if now - t['time'] > self.TRACK_TTL]
@@ -323,15 +384,13 @@ class TrafficDetector:
 
         matched: set[str] = set()
         for det in detections:
-            best_id, best_iou = None, self.IOU_THRESH
-            for tid, track in tracks.items():
-                if tid in matched:
-                    continue
-                iou = self._iou(det['bbox'], track['bbox'])
-                if iou > best_iou:
-                    best_iou = iou
-                    best_id  = tid
+            best_id = self._match_track(det, tracks, matched)
 
+            if best_id and now <= tracks[best_id]['time']:
+                # Older than what this track already holds (two frames were in
+                # flight and arrived out of order): skip, keep the newer state.
+                matched.add(best_id)
+                continue
             if best_id:
                 track = tracks[best_id]
                 dt    = now - track['time']
@@ -341,6 +400,7 @@ class TrafficDetector:
                         self._homography_speed(matrix, track['bbox'], det['bbox'], dt))
                     if smoothed is not None:
                         det['speed'] = smoothed
+                        det['speed_stable'] = self._speed_stable(track)
                         det['speed_source'] = 'homography'
                 self._note_direction(track, det)
                 track['bbox'] = det['bbox']
@@ -354,7 +414,8 @@ class TrafficDetector:
 
     def detect(self, image_bytes: bytes, confidence: float = None,
                camera_id: str = "default", pixels_per_meter: float = 0.0,
-               homography_points: Optional[dict] = None) -> List[Dict[str, Any]]:
+               homography_points: Optional[dict] = None,
+               captured_at: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         Detect vehicles in image. Speed is attached to each detection as
         'speed' (km/h) when either calibration is available:
@@ -451,12 +512,12 @@ class TrafficDetector:
                     if homography_points else None
                 )
                 if matrix is not None:
-                    self._update_tracks_homography(camera_id, detections, matrix)
+                    self._update_tracks_homography(camera_id, detections, matrix, captured_at)
                 else:
                     # Runs even with pixels_per_meter == 0: speed then stays
                     # None (_center_speed returns None), but the tracker still
                     # supplies direction, which the signs need regardless.
-                    self._update_tracks(camera_id, detections, pixels_per_meter)
+                    self._update_tracks(camera_id, detections, pixels_per_meter, captured_at)
 
                 for d in detections:
                     d.pop('_edge', None)

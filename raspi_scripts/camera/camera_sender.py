@@ -61,6 +61,7 @@ INCIDENT_DEDUP_WINDOW    = 30.0  # suppress repeat incident type within this win
 FRAME_PUSH_INTERVAL      = 1.0 / 30  # push MJPEG frame to Node at up to 30 FPS
 PUSH_ACK_TIMEOUT         = 3.0       # max wait for Node's ack of one live frame
 PUSH_IN_FLIGHT           = 2         # live frames awaiting ack at once (see frame_push_loop)
+AI_IN_FLIGHT             = 2         # AI requests at once (see ai_task); ai_connector limit is 2
 UPLOAD_ATTEMPTS          = 3         # recording upload tries before the segment is dropped
 UPLOAD_RETRY_SECS        = 30.0
 
@@ -1076,9 +1077,14 @@ async def post_frame(
     speed_limit: float = 0.0,
     confidence_threshold: Optional[float] = None,
     homography_points: Optional[dict] = None,
+    captured_at: Optional[float] = None,
 ) -> dict:
     data = aiohttp.FormData()
     data.add_field("camera_id", camera_id)
+    if captured_at is not None:
+        # Capture time, so the AI's tracker measures speed over the real time
+        # between frames rather than their (jittery) arrival times.
+        data.add_field("captured_at", f"{captured_at:.3f}")
     data.add_field("image", jpeg_bytes, filename="frame.jpg", content_type="image/jpeg")
     if pixels_per_meter > 0:
         data.add_field("pixels_per_meter", str(pixels_per_meter))
@@ -1295,12 +1301,17 @@ async def run(
                 log.info("[%s] Streaming → AI:%s", camera_id, ai_url)
 
                 # AI runs as a fire-and-forget background task so it never
-                # blocks the frame-read loop. Only one AI request at a time.
-                ai_busy = False
+                # blocks the frame-read loop. Up to AI_IN_FLIGHT at once: with
+                # one, each analysed frame cost a full round trip (~1 fps per
+                # camera on the hotspot), too few for the tracker to measure
+                # speed. Frames carry their capture time, and the tracker
+                # ignores one older than what it already holds, so two in
+                # flight arriving out of order cannot corrupt a track.
+                ai_inflight = 0
                 sampler = AdaptiveSampler(enabled=adaptive_sampling)
 
-                async def ai_task(jpeg_bytes: bytes):
-                    nonlocal ai_busy
+                async def ai_task(jpeg_bytes: bytes, captured_at: float):
+                    nonlocal ai_inflight
                     try:
                         result = await post_frame(
                             ai_session, ai_url, camera_id, jpeg_bytes,
@@ -1308,6 +1319,7 @@ async def run(
                             speed_limit=speed_limit,
                             confidence_threshold=confidence,
                             homography_points=homography_points,
+                            captured_at=captured_at,
                         )
                         stats.record_send(True)
                         sampler.note_result(result)
@@ -1323,7 +1335,7 @@ async def run(
                         log.debug("[%s] AI POST error: %s", camera_id, exc)
                         stats.record_send(False)
                     finally:
-                        ai_busy = False
+                        ai_inflight -= 1
 
                 try:
                     while not shutdown.is_set():
@@ -1332,6 +1344,7 @@ async def run(
                         ret, frame = await asyncio.get_event_loop().run_in_executor(
                             None, cap.read
                         )
+                        captured_at = time.time()
                         if not ret or frame is None:
                             log.warning("[%s] Frame read failed — reconnecting", camera_id)
                             break
@@ -1378,9 +1391,9 @@ async def run(
                         # Send to AI only if the previous request finished AND the
                         # adaptive sampler says this frame is due (always true while
                         # a vehicle was seen recently; throttled during idle stretches).
-                        if not ai_busy and sampler.should_sample():
-                            ai_busy = True
-                            asyncio.create_task(ai_task(jpeg))
+                        if ai_inflight < AI_IN_FLIGHT and sampler.should_sample():
+                            ai_inflight += 1
+                            asyncio.create_task(ai_task(jpeg, captured_at))
                         else:
                             stats.record_drop()
 

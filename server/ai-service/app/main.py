@@ -147,6 +147,9 @@ async def detect_all(
     pixels_per_meter: float = Form(0.0),
     speed_limit: float = Form(0.0),
     homography_points: Optional[str] = Form(None),
+    # Pi wall-clock time the frame was captured; tracks use it instead of
+    # arrival time so network jitter does not distort speed.
+    captured_at: Optional[float] = Form(None),
 ):
     """
     Detect both traffic and incidents in an image.
@@ -179,6 +182,7 @@ async def detect_all(
             camera_id=camera_id,
             pixels_per_meter=pixels_per_meter,
             homography_points=homography,
+            captured_at=captured_at,
         )
 
         # Incident detections from incident model
@@ -194,7 +198,10 @@ async def detect_all(
                 if det.get("direction") == "leaving":
                     continue
                 spd = det.get("speed")
-                if spd and spd > speed_limit:
+                # Only a stable speed may raise a speeding incident (see
+                # TrafficDetector.STABLE_SAMPLES): one mismatched frame pair
+                # must not light SLOW DOWN.
+                if spd and spd > speed_limit and det.get("speed_stable"):
                     over  = spd - speed_limit
                     sev   = "critical" if over > 30 else ("high" if over > 15 else "medium")
                     cls   = det.get("class", "Vehicle").capitalize()
