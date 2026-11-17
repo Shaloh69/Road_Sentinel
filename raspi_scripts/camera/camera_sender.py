@@ -805,14 +805,20 @@ def _port_open(host: str, port: int, timeout: float = RTSP_PORT_SCAN_TIMEOUT) ->
         return False
 
 
-def _scan_subnet_for_rtsp(subnet: str, exclude_ip: str) -> list:
+# ip -> monotonic time it failed this camera's RTSP login. Expires so an
+# address DHCP later hands to the right camera is not skipped forever.
+_REJECTED_RTSP: dict = {}
+REJECTED_RTSP_TTL = 600  # s
+
+
+def _scan_subnet_for_rtsp(subnet: str, exclude: set) -> list:
     """Threaded scan of subnet/24 for hosts with port 554 open."""
     found: list = []
     lock = threading.Lock()
 
     def probe(i: int):
         ip = f"{subnet}.{i}"
-        if ip == exclude_ip:
+        if ip in exclude:
             return
         if _port_open(ip, 554):
             with lock:
@@ -905,9 +911,20 @@ def discover_camera_ip(original_rtsp: str, camera_id: str) -> Optional[str]:
              camera_id, len(candidates),
              f": {candidates}" if candidates else " (none or multicast blocked)")
 
+    # Skip hosts that recently failed THIS camera's RTSP login. Since 2026-11-17
+    # both cameras share one router, and the scan stops at its first batch with
+    # a hit: Camera A (.115) answered first, failed Camera B's password, and
+    # Camera B at .116 was never reached — every cycle, indefinitely.
+    now = time.monotonic()
+    for ip, t in list(_REJECTED_RTSP.items()):
+        if now - t > REJECTED_RTSP_TTL:
+            del _REJECTED_RTSP[ip]
+    skip = {old_ip, *_REJECTED_RTSP}
+    candidates = [ip for ip in candidates if ip not in skip]
+
     # Step 2: Port scan — merge new hits
     log.info("[%s] Scanning %s.0/24 for port 554 …", camera_id, subnet)
-    scan_hits = _scan_subnet_for_rtsp(subnet, old_ip)
+    scan_hits = _scan_subnet_for_rtsp(subnet, skip)
     log.info("[%s] Port scan: %d host(s) with port 554 open%s",
              camera_id, len(scan_hits),
              f": {scan_hits}" if scan_hits else "")
@@ -929,7 +946,9 @@ def discover_camera_ip(original_rtsp: str, camera_id: str) -> Optional[str]:
         if _test_rtsp_url(new_url):
             log.info("[%s] ✅ Camera found at new IP: %s → %s", camera_id, ip, new_url)
             return new_url
-        log.debug("[%s] %s: no RTSP response", camera_id, ip)
+        log.info("[%s] %s: RTSP refused this camera's login — skipping it for %d min",
+                 camera_id, ip, REJECTED_RTSP_TTL // 60)
+        _REJECTED_RTSP[ip] = time.monotonic()
 
     log.warning("[%s] ❌ Auto-discovery: none of the %d candidate(s) responded to RTSP",
                 camera_id, len(candidates))
