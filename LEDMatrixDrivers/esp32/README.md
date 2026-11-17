@@ -7,9 +7,14 @@ panels as one 128x32 sign, taking state from a Raspberry Pi over USB serial.
 identical firmware. Flash the same build to both ESP32s; nothing in the build
 distinguishes them.
 
-**Orientation is per sign, at runtime.** The Pi 4 sign is mounted the other way
-up, so its bridge runs with `--rotate 180` and sends `ROTATE:180` on every
-connect (the firmware does not persist it). The bridge logs the board's reply
+**Orientation is per sign, at runtime.** One sign is mounted the other way up;
+whichever Pi drives it runs its bridge with `--rotate 180`, which sends
+`ROTATE:180` on every connect (the firmware does not persist it). That was Pi 4
+until 2026-11-17, when the sign boards were swapped between the Pis: the
+upside-down sign and its ROTATE-capable board are now on **Pi 5**, which has
+`--rotate 180`; Pi 4's unit no longer passes it. Pi 4's current board runs
+older firmware without `ROTATE:` (it answers `ERR unknown command`) — reflash
+it before relying on rotation there. The bridge logs the board's reply
 as `rotate -> 180 (board: OK)`. Do not toggle `FLIP_X`/`FLIP_Y` for this — that
 would flip the Pi 5 sign too.
 
